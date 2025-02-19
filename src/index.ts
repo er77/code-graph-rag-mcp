@@ -88,6 +88,11 @@ const FileMapArgsSchema = z.object({
   path: z.string().describe("relative path of the file"),
 });
 
+const ListEntityRelationshipsArgsSchema = z.object({
+  path: z.string().describe("relative path of the file entity appears in"),
+  name: z.string().describe("name of entity"),
+});
+
 const ToolInputSchema = ToolSchema.shape.inputSchema;
 type ToolInput = z.infer<typeof ToolInputSchema>;
 
@@ -108,6 +113,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: "file_map",
         description: "Lists all the entities in the file",
         inputSchema: zodToJsonSchema(FileMapArgsSchema) as ToolInput,
+      },
+      {
+        name: "list_entity_relationships",
+        description: "Lists the relationships of entity. This includes Calls, Inheritance, Implementations.",
+        inputSchema: zodToJsonSchema(ListEntityRelationshipsArgsSchema) as ToolInput,
       },
     ],
   };
@@ -182,6 +192,87 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         return {
           content: [{ type: "text", text: JSON.stringify(entities, null, 2) }],
+        };
+      }
+      case "list_entity_relationships": {
+        const parsedArgs = ListEntityRelationshipsArgsSchema.safeParse(args);
+        if (!parsedArgs.success) {
+          throw new Error(`Invalid arguments for file_map: ${parsedArgs.error}`);
+        }
+        const filename = parsedArgs.data.path;
+        const entity_name = parsedArgs.data.name;
+        const indexPath = join(directory, "index.json");
+        const graph = JSON.parse(readFileSync(indexPath, "utf-8"));
+
+        // biome-ignore lint/suspicious/noExplicitAny: types are temporary
+        const fileNode = graph.nodes.find((node: any) => node.type === "File" && node.name === filename);
+
+        if (!fileNode) {
+          return {
+            content: [{ type: "text", text: `File not found: ${filename}` }],
+            isError: true,
+          };
+        }
+
+        // biome-ignore lint/suspicious/noExplicitAny: types are temporary
+        const entityNode = graph.nodes.find((node: any) => {
+          return node.name === entity_name && node.file_id === fileNode.id;
+        });
+        if (!entityNode) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Entity not found: ${entity_name}} in ${filename}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        const relationships = graph.links
+          // biome-ignore lint/suspicious/noExplicitAny: types are temporary
+          .filter((link: any) => link.source_id === entityNode.id || link.target_id === entityNode.id)
+          // biome-ignore lint/suspicious/noExplicitAny: types are temporary
+          .map((link: any) => {
+            // biome-ignore lint/suspicious/noExplicitAny: types are temporary
+            const sourceNode = graph.nodes.find((node: any) => node.id === link.source_id);
+            // biome-ignore lint/suspicious/noExplicitAny: types are temporary
+            const targetNode = graph.nodes.find((node: any) => node.id === link.target_id);
+            // biome-ignore lint/suspicious/noExplicitAny: types are temporary
+            const sourceFileNode = graph.nodes.find((node: any) => node.id === sourceNode.file_id);
+            // biome-ignore lint/suspicious/noExplicitAny: types are temporary
+            const targetFileNode = graph.nodes.find((node: any) => node.id === targetNode.file_id);
+
+            if (!sourceNode || !targetNode) {
+              console.warn(`Source or target node not found for link: ${JSON.stringify(link)}`);
+              return null;
+            }
+
+            return {
+              type: link.type,
+              source: {
+                name: sourceNode.name,
+                type: sourceNode.type,
+                start: sourceNode.data.start,
+                end: sourceNode.data.end,
+                file: sourceFileNode.name,
+              },
+              target: {
+                name: targetNode.name,
+                type: targetNode.type,
+                start: targetNode.data.start,
+                end: targetNode.data.end,
+                file: targetFileNode.name,
+              },
+              data: link.data,
+            };
+          })
+          // biome-ignore lint/suspicious/noExplicitAny: types are temporary
+          .filter((rel: any) => rel !== null); // Remove null entries;
+
+        return {
+          content: [{ type: "text", text: JSON.stringify(relationships, null, 2) }],
         };
       }
       default:
