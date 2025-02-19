@@ -84,7 +84,7 @@ const server = new Server(
   },
 );
 
-const FileMapArgsSchema = z.object({
+const ListFileEntitiesArgsSchema = z.object({
   path: z.string().describe("relative path of the file"),
 });
 
@@ -110,10 +110,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "file_map",
+        name: "list_file_entities",
         description:
           "Provides a list of all entities within a specified file. Returns a list of entities, including their names, types (e.g., Function, Class, Import), and locations (start and end lines). Use this to explore the contents of a file.",
-        inputSchema: zodToJsonSchema(FileMapArgsSchema) as ToolInput,
+        inputSchema: zodToJsonSchema(ListFileEntitiesArgsSchema) as ToolInput,
       },
       {
         name: "list_entity_relationships",
@@ -148,10 +148,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [{ type: "text", text: `stdout: ${stdout}\nstderr: ${stderr}` }],
         };
       }
-      case "file_map": {
-        const parsedArgs = FileMapArgsSchema.safeParse(args);
+      case "list_file_entities": {
+        const parsedArgs = ListFileEntitiesArgsSchema.safeParse(args);
         if (!parsedArgs.success) {
-          throw new Error(`Invalid arguments for file_map: ${parsedArgs.error}`);
+          throw new Error(`Invalid arguments for list_file_entities: ${parsedArgs.error}`);
         }
         const filename = parsedArgs.data.path;
         const indexPath = join(directory, "index.json");
@@ -199,7 +199,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "list_entity_relationships": {
         const parsedArgs = ListEntityRelationshipsArgsSchema.safeParse(args);
         if (!parsedArgs.success) {
-          throw new Error(`Invalid arguments for file_map: ${parsedArgs.error}`);
+          throw new Error(`Invalid arguments for list_entity_relationships: ${parsedArgs.error}`);
         }
         const filename = parsedArgs.data.path;
         const entity_name = parsedArgs.data.name;
