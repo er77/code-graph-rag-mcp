@@ -2,16 +2,33 @@ import { exec } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { chmod, mkdir } from "node:fs/promises";
 import https from "node:https";
-import { join } from "node:path";
+import os from "node:os";
+import { join, normalize, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, ToolSchema } from "@modelcontextprotocol/sdk/types.js";
-import { z } from "zod";
+import type { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 
 const BINARY_URL = "https://github.com/CartographAI/graph/releases/download/v0.1.0/graph";
 const BINARY_PATH = "./bin/graph";
+
+// Command line argument parsing
+const args = process.argv.slice(2);
+if (args.length !== 1) {
+  console.error("Usage: mcp-server-codegraph <directory>");
+  process.exit(1);
+}
+
+function expandHome(filepath: string): string {
+  if (filepath.startsWith("~/") || filepath === "~") {
+    return join(os.homedir(), filepath.slice(1));
+  }
+  return filepath;
+}
+
+const directory = normalize(resolve(expandHome(args[0])));
 
 // Function to download the binary
 async function downloadBinary() {
@@ -67,10 +84,6 @@ const server = new Server(
   },
 );
 
-const IndexArgsSchema = z.object({
-  path: z.string().describe("Directory of codebase to index"),
-});
-
 const ToolInputSchema = ToolSchema.shape.inputSchema;
 type ToolInput = z.infer<typeof ToolInputSchema>;
 
@@ -80,7 +93,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "index",
         description: "Index the codebase",
-        inputSchema: zodToJsonSchema(IndexArgsSchema) as ToolInput,
+        inputSchema: {
+          type: "object",
+          properties: {},
+          required: [],
+          additionalProperties: false,
+        },
       },
     ],
   };
@@ -92,25 +110,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     switch (name) {
       case "index": {
-        const parsedArgs = IndexArgsSchema.safeParse(args);
-        if (!parsedArgs.success) {
-          throw new Error(`Invalid arguments for index: ${parsedArgs.error}`);
-        }
-
         const { stdout, stderr } = await new Promise<{
           stdout: string;
           stderr: string;
         }>((resolve, reject) => {
-          exec(
-            `${BINARY_PATH} ${parsedArgs.data.path} ${join(parsedArgs.data.path, "index.json")}`,
-            (error, stdout, stderr) => {
-              if (error) {
-                reject({ error, stdout, stderr });
-              } else {
-                resolve({ stdout, stderr });
-              }
-            },
-          );
+          exec(`${BINARY_PATH} ${directory} ${join(directory, "index.json")}`, (error, stdout, stderr) => {
+            if (error) {
+              reject({ error, stdout, stderr });
+            } else {
+              resolve({ stdout, stderr });
+            }
+          });
         });
 
         return {
@@ -140,6 +150,7 @@ async function runServer() {
     const transport = new StdioServerTransport();
     await server.connect(transport);
     console.error("MCP Server CodeGraph running on stdio");
+    console.error("directory:", directory);
   } catch (error) {
     console.error("Error during server setup:", error);
     process.exit(1);
