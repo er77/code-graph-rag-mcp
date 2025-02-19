@@ -1,10 +1,59 @@
 import { exec } from "node:child_process";
+import { createWriteStream } from "node:fs";
+import { chmod, mkdir } from "node:fs/promises";
+import https from "node:https";
 import { join } from "node:path";
+import { pipeline } from "node:stream/promises";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, ToolSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
+
+const BINARY_URL = "https://github.com/CartographAI/graph/releases/download/v0.1.0/graph";
+const BINARY_PATH = "./bin/graph";
+
+// Function to download the binary
+async function downloadBinary() {
+  try {
+    // Create bin directory if it doesn't exist
+    await mkdir("./bin", { recursive: true });
+
+    // Download the binary
+    await new Promise<void>((resolve, reject) => {
+      https
+        .get(BINARY_URL, (response) => {
+          if (response.statusCode === 302 || response.statusCode === 301) {
+            const redirectLocation = response.headers.location;
+
+            if (!redirectLocation) {
+              reject(new Error("redirect location is missing"));
+              return;
+            }
+            // Handle redirect
+            https
+              .get(redirectLocation, async (redirectedResponse) => {
+                const fileStream = createWriteStream(BINARY_PATH);
+                await pipeline(redirectedResponse, fileStream);
+                resolve();
+              })
+              .on("error", reject);
+          } else {
+            const fileStream = createWriteStream(BINARY_PATH);
+            pipeline(response, fileStream).then(resolve).catch(reject);
+          }
+        })
+        .on("error", reject);
+    });
+
+    // Make the binary executable
+    await chmod(BINARY_PATH, 0o755);
+    console.error("Binary downloaded and made executable successfully");
+  } catch (error) {
+    console.error("Error downloading binary:", error);
+    throw error;
+  }
+}
 
 const server = new Server(
   {
@@ -53,7 +102,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           stderr: string;
         }>((resolve, reject) => {
           exec(
-            `./graph ${parsedArgs.data.path} ${join(parsedArgs.data.path, "index.json")}`,
+            `${BINARY_PATH} ${parsedArgs.data.path} ${join(parsedArgs.data.path, "index.json")}`,
             (error, stdout, stderr) => {
               if (error) {
                 reject({ error, stdout, stderr });
@@ -85,9 +134,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 // Start server
 async function runServer() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error("MCP Server CodeGraph running on stdio");
+  try {
+    await downloadBinary();
+
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.error("MCP Server CodeGraph running on stdio");
+  } catch (error) {
+    console.error("Error during server setup:", error);
+    process.exit(1);
+  }
 }
 
 runServer().catch((error) => {
