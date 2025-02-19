@@ -101,7 +101,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: "index",
-        description: "Index the codebase",
+        description: "Indexes the codebase to create a graph of entities and relationships.",
         inputSchema: {
           type: "object",
           properties: {},
@@ -111,12 +111,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "file_map",
-        description: "Lists all the entities in the file",
+        description:
+          "Provides a list of all entities within a specified file. Returns a list of entities, including their names, types (e.g., Function, Class, Import), and locations (start and end lines). Use this to explore the contents of a file.",
         inputSchema: zodToJsonSchema(FileMapArgsSchema) as ToolInput,
       },
       {
         name: "list_entity_relationships",
-        description: "Lists the relationships of entity. This includes Calls, Inheritance, Implementations.",
+        description:
+          "Lists the relationships (Calls, Inheritance, Implementations) of a specify entity. Returns details about the related entities (source and target) and the type of relationship. Use this to understand how an entity interacts with other parts of the code.",
         inputSchema: zodToJsonSchema(ListEntityRelationshipsArgsSchema) as ToolInput,
       },
     ],
