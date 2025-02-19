@@ -1,5 +1,5 @@
 import { exec } from "node:child_process";
-import { createWriteStream } from "node:fs";
+import { createWriteStream, readFileSync } from "node:fs";
 import { chmod, mkdir } from "node:fs/promises";
 import https from "node:https";
 import os from "node:os";
@@ -8,7 +8,7 @@ import { pipeline } from "node:stream/promises";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, ToolSchema } from "@modelcontextprotocol/sdk/types.js";
-import type { z } from "zod";
+import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 
 const BINARY_URL = "https://github.com/CartographAI/graph/releases/download/v0.1.0/graph";
@@ -84,6 +84,10 @@ const server = new Server(
   },
 );
 
+const FileMapArgsSchema = z.object({
+  path: z.string().describe("relative path of the file"),
+});
+
 const ToolInputSchema = ToolSchema.shape.inputSchema;
 type ToolInput = z.infer<typeof ToolInputSchema>;
 
@@ -99,6 +103,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: [],
           additionalProperties: false,
         },
+      },
+      {
+        name: "file_map",
+        description: "Lists all the entities in the file",
+        inputSchema: zodToJsonSchema(FileMapArgsSchema) as ToolInput,
       },
     ],
   };
@@ -125,6 +134,54 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         return {
           content: [{ type: "text", text: `stdout: ${stdout}\nstderr: ${stderr}` }],
+        };
+      }
+      case "file_map": {
+        const parsedArgs = FileMapArgsSchema.safeParse(args);
+        if (!parsedArgs.success) {
+          throw new Error(`Invalid arguments for file_map: ${parsedArgs.error}`);
+        }
+        const filename = parsedArgs.data.path;
+        const indexPath = join(directory, "index.json");
+        const graph = JSON.parse(readFileSync(indexPath, "utf-8"));
+
+        // biome-ignore lint/suspicious/noExplicitAny: types are temporary
+        const fileNode = graph.nodes.find((node: any) => node.type === "File" && node.name === filename);
+
+        if (!fileNode) {
+          return {
+            content: [{ type: "text", text: `File not found: ${filename}` }],
+            isError: true,
+          };
+        }
+
+        // biome-ignore lint/suspicious/noExplicitAny: types are temporary
+        const getEntitiesRecursively = (nodeId: string, graph: any) => {
+          // biome-ignore lint/suspicious/noExplicitAny: types are temporary
+          const node = graph.nodes.find((n: any) => n.id === nodeId);
+
+          if (!node) {
+            console.warn(`Node with ID ${nodeId} not found in graph.`);
+            return null;
+          }
+
+          const entity = {
+            name: node.name,
+            type: node.type,
+            start: node.data.start,
+            end: node.data.end,
+          };
+
+          return entity;
+        };
+
+        const entities = fileNode.data.children
+          .map((childId: string) => getEntitiesRecursively(childId, graph))
+          // biome-ignore lint/suspicious/noExplicitAny: types are temporary
+          .filter((entity: any) => entity.name);
+
+        return {
+          content: [{ type: "text", text: JSON.stringify(entities, null, 2) }],
         };
       }
       default:
