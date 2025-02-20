@@ -25,5 +25,24 @@ A [Model Context Protocol](https://github.com/modelcontextprotocol) server that 
 ## Usage
 
 ```sh
-bun run src/index.ts <directory>
+npx @cartographai/mcp-server-codegraph /path/to/directory
+```
+
+### Claude Desktop
+
+Add this to your `claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "codegraph": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@cartographai/mcp-server-codegraph",
+        "/path/to/directory",
+      ]
+    }
+  }
+}
 ```
