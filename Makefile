@@ -24,3 +24,9 @@ install-hooks: .git/hooks/pre-commit ## Install pre-commit hooks
 
 .git/hooks/pre-commit: .pre-commit-config.yaml
 	pre-commit install
+
+.PHONY: package
+package: dist/index.js ## Package using tsup
+
+dist/index.js: src/*.ts package.json tsconfig.json tsup.config.ts
+	bun run tsup
