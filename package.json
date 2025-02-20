@@ -1,7 +1,10 @@
 {
   "name": "mcp-server-codegraph",
-  "module": "src/index.ts",
   "type": "module",
+  "bin": {
+    "mcp-server-filesystem": "dist/index.js"
+  },
+  "files": ["dist"],
   "devDependencies": {
     "@types/bun": "latest",
     "tsup": "^8.3.6"

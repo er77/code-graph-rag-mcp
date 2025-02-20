@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 import { exec } from "node:child_process";
 import { createWriteStream, readFileSync } from "node:fs";
 import { chmod, mkdir } from "node:fs/promises";
