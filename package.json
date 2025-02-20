@@ -1,5 +1,9 @@
 {
-  "name": "mcp-server-codegraph",
+  "name": "@cartographai/mcp-server-codegraph",
+  "version": "0.1.0",
+  "description": "MCP server for graph representation of a codebase",
+  "license": "MIT",
+  "keywords": ["agents", "llm", "model-context-protocol"],
   "type": "module",
   "bin": {
     "mcp-server-filesystem": "dist/index.js"
