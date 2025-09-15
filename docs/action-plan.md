@@ -1,4 +1,4 @@
-# MCP Server Codegraph - Ultra-Detailed Project Plan
+# Code Graph RAG MCP - Ultra-Detailed Project Plan
 
 Last updated: 2025-09-14
 
@@ -68,7 +68,7 @@ This plan references separate documentation files for each external library and 
 - Corrected CLI entry points
 
 **Tasks**:
-1. Change bin name from `mcp-server-filesystem` to `mcp-server-codegraph`
+1. Change bin name from `mcp-server-filesystem` to `code-graph-rag-mcp`
 2. Update all references in documentation and scripts
 3. Verify CLI functionality works correctly
 4. Test installation and execution flow

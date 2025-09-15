@@ -1,0 +1,593 @@
+/**
+ * Conductor Orchestrator Agent - MANDATORY DELEGATION VERSION
+ * 
+ * This agent MUST delegate all implementation tasks to specialized agents:
+ * - dev-agent: For ALL code implementation tasks
+ * - Dora: For research, documentation, and analysis tasks
+ * 
+ * The Conductor NEVER implements directly, only orchestrates.
+ */
+
+import { BaseAgent } from './base.js';
+import { 
+  AgentType, 
+  AgentTask, 
+  AgentMessage, 
+  Agent,
+  AgentPool,
+  ResourceConstraints,
+  AgentStatus
+} from '../types/agent.js';
+
+interface ConductorConfig {
+  resourceConstraints: ResourceConstraints;
+  taskQueueLimit: number;
+  loadBalancingStrategy: 'round-robin' | 'least-loaded' | 'priority';
+  complexityThreshold: number; // Complexity threshold for approval workflow
+  mandatoryDelegation: boolean; // Force delegation to specialized agents
+}
+
+interface TaskComplexityAnalysis {
+  score: number; // 1-10 scale
+  factors: string[];
+  requiresApproval: boolean;
+  delegationStrategy: 'dev-agent' | 'dora' | 'multi-agent';
+  subtasks: SubTask[];
+}
+
+interface SubTask {
+  id: string;
+  description: string;
+  targetAgent: 'dev-agent' | 'dora';
+  dependencies: string[];
+  priority: number;
+}
+
+interface MethodProposal {
+  id: string;
+  name: string;
+  description: string;
+  pros: string[];
+  cons: string[];
+  timeline: string;
+  riskLevel: 'low' | 'medium' | 'high' | 'very-high';
+  recommended: boolean;
+}
+
+export class ConductorOrchestrator extends BaseAgent implements AgentPool {
+  public agents: Map<string, Agent> = new Map();
+  private config: ConductorConfig;
+  private roundRobinIndex: Map<AgentType, number> = new Map();
+  private pendingTasks: Map<string, AgentTask> = new Map();
+  private taskComplexityCache: Map<string, TaskComplexityAnalysis> = new Map();
+  private methodProposals: Map<string, MethodProposal[]> = new Map();
+  private approvalRequired: Set<string> = new Set();
+  
+  // Tracking for delegation enforcement
+  private delegationLog: Map<string, { agent: string; timestamp: number }[]> = new Map();
+  private directImplementationAttempts = 0;
+  
+  constructor(config: Partial<ConductorConfig> = {}) {
+    super(AgentType.COORDINATOR, {
+      maxConcurrency: 100,
+      memoryLimit: 128,
+      priority: 10
+    });
+    
+    this.config = {
+      resourceConstraints: config.resourceConstraints || {
+        maxMemoryMB: 1024,
+        maxCpuPercent: 80,
+        maxConcurrentAgents: 10,
+        maxTaskQueueSize: 100
+      },
+      taskQueueLimit: config.taskQueueLimit || 100,
+      loadBalancingStrategy: config.loadBalancingStrategy || 'least-loaded',
+      complexityThreshold: config.complexityThreshold || 5,
+      mandatoryDelegation: config.mandatoryDelegation !== false // Default true
+    };
+  }
+  
+  protected async onInitialize(): Promise<void> {
+    console.log(`[CONDUCTOR] Initializing with MANDATORY DELEGATION enabled`);
+    console.log(`[CONDUCTOR] Complexity threshold: ${this.config.complexityThreshold}/10`);
+    console.log(`[CONDUCTOR] All tasks MUST be delegated to dev-agent or Dora`);
+    
+    this.startHealthMonitoring();
+    this.initializeDelegationEnforcement();
+  }
+  
+  protected async onShutdown(): Promise<void> {
+    console.log(`[CONDUCTOR] Shutting down orchestrator and all managed agents...`);
+    
+    // Log delegation statistics
+    console.log(`[CONDUCTOR] Delegation Statistics:`);
+    console.log(`  - Direct implementation attempts blocked: ${this.directImplementationAttempts}`);
+    console.log(`  - Total delegations: ${this.delegationLog.size}`);
+    
+    const shutdownPromises = Array.from(this.agents.values()).map(agent => 
+      agent.shutdown().catch(err => 
+        console.error(`Failed to shutdown agent ${agent.id}:`, err)
+      )
+    );
+    await Promise.all(shutdownPromises);
+    this.agents.clear();
+  }
+  
+  protected canProcessTask(task: AgentTask): boolean {
+    return this.pendingTasks.size < this.config.taskQueueLimit;
+  }
+  
+  protected async processTask(task: AgentTask): Promise<unknown> {
+    console.log(`[CONDUCTOR] Processing task ${task.id} of type ${task.type}`);
+    
+    // CRITICAL: Enforce delegation
+    if (this.config.mandatoryDelegation) {
+      return this.processThroughDelegation(task);
+    }
+    
+    // This path should never be reached with mandatory delegation
+    throw new Error('[CONDUCTOR] Direct implementation is FORBIDDEN. All tasks must be delegated.');
+  }
+  
+  private async processThroughDelegation(task: AgentTask): Promise<unknown> {
+    // Step 1: Analyze task complexity
+    const complexity = await this.analyzeTaskComplexity(task);
+    this.taskComplexityCache.set(task.id, complexity);
+    
+    console.log(`[CONDUCTOR] Task complexity: ${complexity.score}/10`);
+    console.log(`[CONDUCTOR] Delegation strategy: ${complexity.delegationStrategy}`);
+    
+    // Step 2: Generate method proposals if complexity > threshold
+    if (complexity.requiresApproval) {
+      const proposals = await this.generateMethodProposals(task, complexity);
+      this.methodProposals.set(task.id, proposals);
+      
+      console.log(`[CONDUCTOR] Generated ${proposals.length} method proposals`);
+      console.log(`[CONDUCTOR] APPROVAL REQUIRED for complexity ${complexity.score}/10`);
+      
+      // Mark for approval and return proposals
+      this.approvalRequired.add(task.id);
+      
+      return {
+        status: 'approval_required',
+        complexity: complexity.score,
+        proposals,
+        message: `Task complexity ${complexity.score}/10 exceeds threshold. Please review proposals and approve.`
+      };
+    }
+    
+    // Step 3: Decompose into subtasks
+    const subtasks = complexity.subtasks.length > 0 
+      ? complexity.subtasks 
+      : await this.decomposeTask(task, complexity);
+    
+    console.log(`[CONDUCTOR] Decomposed into ${subtasks.length} subtasks`);
+    
+    // Step 4: Delegate subtasks to appropriate agents
+    const results = [];
+    for (const subtask of subtasks) {
+      const result = await this.delegateSubtask(task.id, subtask);
+      results.push(result);
+    }
+    
+    // Step 5: Synthesize results
+    return this.synthesizeResults(task, results);
+  }
+  
+  private async analyzeTaskComplexity(task: AgentTask): Promise<TaskComplexityAnalysis> {
+    const factors: string[] = [];
+    let score = 1;
+    
+    // Analyze based on task type
+    if (task.type === 'refactor' || task.type === 'architecture') {
+      score += 3;
+      factors.push('Architectural changes required');
+    }
+    
+    if (task.type === 'multi-file' || task.type === 'cross-module') {
+      score += 2;
+      factors.push('Multiple files affected');
+    }
+    
+    if (task.payload && typeof task.payload === 'object') {
+      const payload = task.payload as any;
+      
+      if (payload.fileCount > 10) {
+        score += 2;
+        factors.push(`Large scope: ${payload.fileCount} files`);
+      }
+      
+      if (payload.requiresResearch) {
+        score += 1;
+        factors.push('Research required');
+      }
+      
+      if (payload.requiresTesting) {
+        score += 1;
+        factors.push('Testing required');
+      }
+    }
+    
+    // Determine delegation strategy
+    let delegationStrategy: 'dev-agent' | 'dora' | 'multi-agent' = 'dev-agent';
+    
+    if (task.type === 'research' || task.type === 'analysis') {
+      delegationStrategy = 'dora';
+    } else if (score >= 7) {
+      delegationStrategy = 'multi-agent';
+    }
+    
+    return {
+      score: Math.min(10, score),
+      factors,
+      requiresApproval: score > this.config.complexityThreshold,
+      delegationStrategy,
+      subtasks: [] // Will be populated during decomposition
+    };
+  }
+  
+  private async generateMethodProposals(
+    task: AgentTask, 
+    complexity: TaskComplexityAnalysis
+  ): Promise<MethodProposal[]> {
+    const proposals: MethodProposal[] = [];
+    
+    // Always generate 5 proposals as per specification
+    proposals.push({
+      id: 'method-1',
+      name: 'Incremental Implementation',
+      description: 'Gradually implement changes with continuous validation',
+      pros: ['Lower risk', 'Continuous testing', 'Easy rollback'],
+      cons: ['Slower completion', 'Potential inconsistencies during transition'],
+      timeline: '1-2 weeks',
+      riskLevel: 'low',
+      recommended: complexity.score <= 6
+    });
+    
+    proposals.push({
+      id: 'method-2',
+      name: 'Parallel Development',
+      description: 'Multiple agents work on independent components simultaneously',
+      pros: ['Faster completion', 'Efficient resource usage'],
+      cons: ['Coordination complexity', 'Integration challenges'],
+      timeline: '3-5 days',
+      riskLevel: 'medium',
+      recommended: complexity.delegationStrategy === 'multi-agent'
+    });
+    
+    proposals.push({
+      id: 'method-3',
+      name: 'Research-First Approach',
+      description: 'Dora conducts comprehensive research before implementation',
+      pros: ['Well-informed decisions', 'Best practices applied'],
+      cons: ['Longer initial phase', 'Potential over-engineering'],
+      timeline: '1 week',
+      riskLevel: 'low',
+      recommended: complexity.factors.includes('Research required')
+    });
+    
+    proposals.push({
+      id: 'method-4',
+      name: 'Rapid Prototyping',
+      description: 'Quick implementation followed by iterative refinement',
+      pros: ['Fast initial results', 'Early feedback'],
+      cons: ['Technical debt', 'Requires refactoring'],
+      timeline: '2-3 days',
+      riskLevel: 'medium',
+      recommended: false
+    });
+    
+    proposals.push({
+      id: 'method-5',
+      name: 'Comprehensive Refactor',
+      description: 'Complete restructuring with modern patterns',
+      pros: ['Optimal final architecture', 'Long-term maintainability'],
+      cons: ['High complexity', 'Risk of breaking changes'],
+      timeline: '2-3 weeks',
+      riskLevel: 'high',
+      recommended: complexity.score >= 8
+    });
+    
+    return proposals;
+  }
+  
+  private async decomposeTask(
+    task: AgentTask, 
+    complexity: TaskComplexityAnalysis
+  ): Promise<SubTask[]> {
+    const subtasks: SubTask[] = [];
+    
+    // Always start with research if needed
+    if (complexity.factors.includes('Research required') || 
+        complexity.delegationStrategy === 'dora') {
+      subtasks.push({
+        id: `${task.id}-research`,
+        description: 'Research best practices and patterns',
+        targetAgent: 'dora',
+        dependencies: [],
+        priority: 10
+      });
+    }
+    
+    // Add implementation subtasks
+    if (complexity.delegationStrategy !== 'dora') {
+      subtasks.push({
+        id: `${task.id}-implement`,
+        description: 'Implement core functionality',
+        targetAgent: 'dev-agent',
+        dependencies: subtasks.length > 0 ? [`${task.id}-research`] : [],
+        priority: 8
+      });
+    }
+    
+    // Add testing if required
+    if (complexity.factors.includes('Testing required')) {
+      subtasks.push({
+        id: `${task.id}-test`,
+        description: 'Write and run tests',
+        targetAgent: 'dev-agent',
+        dependencies: [`${task.id}-implement`],
+        priority: 6
+      });
+    }
+    
+    // Add documentation
+    if (complexity.score >= 5) {
+      subtasks.push({
+        id: `${task.id}-document`,
+        description: 'Update documentation',
+        targetAgent: 'dora',
+        dependencies: [`${task.id}-implement`],
+        priority: 4
+      });
+    }
+    
+    return subtasks;
+  }
+  
+  private async delegateSubtask(taskId: string, subtask: SubTask): Promise<unknown> {
+    console.log(`[CONDUCTOR] Delegating subtask ${subtask.id} to ${subtask.targetAgent}`);
+    
+    // Track delegation
+    if (!this.delegationLog.has(taskId)) {
+      this.delegationLog.set(taskId, []);
+    }
+    this.delegationLog.get(taskId)!.push({
+      agent: subtask.targetAgent,
+      timestamp: Date.now()
+    });
+    
+    // Check if target agent is available
+    const agent = this.getAgentByName(subtask.targetAgent);
+    if (!agent) {
+      console.log(`[CONDUCTOR] ${subtask.targetAgent} not available, queuing for later`);
+      
+      // Queue for when agent becomes available
+      this.pendingTasks.set(subtask.id, {
+        id: subtask.id,
+        type: subtask.targetAgent === 'dora' ? 'research' : 'implementation',
+        priority: subtask.priority,
+        payload: subtask,
+        createdAt: Date.now()
+      });
+      
+      return {
+        status: 'queued',
+        message: `Subtask queued for ${subtask.targetAgent}`
+      };
+    }
+    
+    // Create agent task
+    const agentTask: AgentTask = {
+      id: subtask.id,
+      type: subtask.targetAgent === 'dora' ? 'research' : 'implementation',
+      priority: subtask.priority,
+      payload: subtask,
+      createdAt: Date.now()
+    };
+    
+    // Process through agent
+    try {
+      const result = await agent.process(agentTask);
+      console.log(`[CONDUCTOR] Subtask ${subtask.id} completed by ${subtask.targetAgent}`);
+      return result;
+    } catch (error) {
+      console.error(`[CONDUCTOR] Subtask ${subtask.id} failed:`, error);
+      throw error;
+    }
+  }
+  
+  private async synthesizeResults(task: AgentTask, results: unknown[]): Promise<unknown> {
+    console.log(`[CONDUCTOR] Synthesizing ${results.length} results for task ${task.id}`);
+    
+    return {
+      taskId: task.id,
+      status: 'completed',
+      complexity: this.taskComplexityCache.get(task.id)?.score,
+      delegations: this.delegationLog.get(task.id),
+      results,
+      synthesizedAt: Date.now()
+    };
+  }
+  
+  private getAgentByName(name: 'dev-agent' | 'dora'): Agent | undefined {
+    // Map agent names to types
+    const nameToType: Record<string, AgentType> = {
+      'dev-agent': AgentType.DEV,
+      'dora': AgentType.DORA
+    };
+    
+    const type = nameToType[name];
+    if (!type) return undefined;
+    
+    return this.getAvailableAgent(type);
+  }
+  
+  private initializeDelegationEnforcement(): void {
+    // Override any attempt to bypass delegation
+    const originalProcess = this.process.bind(this);
+    this.process = async (task: AgentTask) => {
+      if (this.isDirectImplementation(task)) {
+        this.directImplementationAttempts++;
+        console.error(`[CONDUCTOR] BLOCKED: Direct implementation attempt #${this.directImplementationAttempts}`);
+        throw new Error(
+          'CONDUCTOR VIOLATION: Direct implementation is FORBIDDEN. ' +
+          'All tasks MUST be delegated to dev-agent or Dora. ' +
+          'This is attempt #' + this.directImplementationAttempts
+        );
+      }
+      return originalProcess(task);
+    };
+  }
+  
+  private isDirectImplementation(task: AgentTask): boolean {
+    // Check if task is trying to bypass delegation
+    const payload = task.payload as any;
+    return payload?.directImplementation === true || 
+           payload?.bypassDelegation === true ||
+           task.type === 'direct';
+  }
+  
+  // AgentPool implementation (inherited from original)
+  register(agent: Agent): void {
+    if (this.agents.size >= this.config.resourceConstraints.maxConcurrentAgents) {
+      throw new Error(`Maximum number of agents (${this.config.resourceConstraints.maxConcurrentAgents}) reached`);
+    }
+    
+    this.agents.set(agent.id, agent);
+    console.log(`[CONDUCTOR] Registered agent ${agent.id} of type ${agent.type}`);
+    
+    agent.on('task:completed', this.handleTaskCompleted.bind(this));
+    agent.on('task:failed', this.handleTaskFailed.bind(this));
+    
+    this.emit('agent:registered', agent.id);
+  }
+  
+  unregister(agentId: string): void {
+    const agent = this.agents.get(agentId);
+    if (agent) {
+      this.agents.delete(agentId);
+      console.log(`[CONDUCTOR] Unregistered agent ${agentId}`);
+      this.emit('agent:unregistered', agentId);
+    }
+  }
+  
+  getAgent(id: string): Agent | undefined {
+    return this.agents.get(id);
+  }
+  
+  getAgentsByType(type: AgentType): Agent[] {
+    return Array.from(this.agents.values()).filter(agent => agent.type === type);
+  }
+  
+  getAvailableAgent(type: AgentType): Agent | undefined {
+    const agents = this.getAgentsByType(type);
+    const availableAgents = agents.filter(agent => 
+      agent.status === AgentStatus.IDLE &&
+      agent.getMemoryUsage() < agent.capabilities.memoryLimit * 0.8
+    );
+    
+    if (availableAgents.length === 0) return undefined;
+    
+    switch (this.config.loadBalancingStrategy) {
+      case 'round-robin':
+        return this.selectRoundRobin(type, availableAgents);
+      case 'least-loaded':
+        return this.selectLeastLoaded(availableAgents);
+      case 'priority':
+        return this.selectByPriority(availableAgents);
+      default:
+        return availableAgents[0];
+    }
+  }
+  
+  async broadcast(message: AgentMessage): Promise<void> {
+    const promises = Array.from(this.agents.values()).map(agent =>
+      agent.receive(message).catch(err => 
+        console.error(`Failed to deliver message to agent ${agent.id}:`, err)
+      )
+    );
+    await Promise.all(promises);
+  }
+  
+  async route(task: AgentTask): Promise<Agent | undefined> {
+    // CRITICAL: Force delegation through proper channels
+    if (this.config.mandatoryDelegation) {
+      console.warn(`[CONDUCTOR] Route called directly - redirecting to delegation system`);
+      await this.processThroughDelegation(task);
+      return undefined; // Don't return an agent for direct processing
+    }
+    
+    return undefined;
+  }
+  
+  // Private helper methods (inherited)
+  private selectRoundRobin(type: AgentType, agents: Agent[]): Agent {
+    const index = this.roundRobinIndex.get(type) || 0;
+    const selected = agents[index % agents.length];
+    this.roundRobinIndex.set(type, index + 1);
+    return selected;
+  }
+  
+  private selectLeastLoaded(agents: Agent[]): Agent {
+    return agents.reduce((least, agent) => {
+      const leastLoad = least.getTaskQueue().length + least.getMemoryUsage() / 100;
+      const agentLoad = agent.getTaskQueue().length + agent.getMemoryUsage() / 100;
+      return agentLoad < leastLoad ? agent : least;
+    });
+  }
+  
+  private selectByPriority(agents: Agent[]): Agent {
+    return agents.sort((a, b) => b.capabilities.priority - a.capabilities.priority)[0];
+  }
+  
+  private startHealthMonitoring(): void {
+    setInterval(() => {
+      this.checkAgentHealth();
+    }, 5000);
+  }
+  
+  private checkAgentHealth(): void {
+    for (const [agentId, agent] of this.agents) {
+      if (agent.status === AgentStatus.ERROR) {
+        console.warn(`[CONDUCTOR] Agent ${agentId} is in error state`);
+        this.emit('agent:unhealthy', agentId);
+      }
+      
+      if (agent.getMemoryUsage() > agent.capabilities.memoryLimit) {
+        console.warn(`[CONDUCTOR] Agent ${agentId} exceeds memory limit`);
+        this.emit('agent:memory-exceeded', agentId);
+      }
+    }
+  }
+  
+  protected async handleMessage(message: AgentMessage): Promise<void> {
+    switch (message.type) {
+      case 'register':
+        console.log(`[CONDUCTOR] Registration request from ${message.from}`);
+        break;
+      case 'health':
+        console.log(`[CONDUCTOR] Health update from ${message.from}:`, message.payload);
+        break;
+      case 'broadcast':
+        await this.broadcast(message);
+        break;
+      default:
+        const targetAgent = this.agents.get(message.to);
+        if (targetAgent) {
+          await targetAgent.receive(message);
+        }
+    }
+  }
+  
+  private handleTaskCompleted(data: any): void {
+    console.log(`[CONDUCTOR] Task ${data.task.id} completed by agent ${data.agentId}`);
+    this.emit('task:routed:completed', data);
+  }
+  
+  private handleTaskFailed(data: any): void {
+    console.error(`[CONDUCTOR] Task ${data.task.id} failed on agent ${data.agentId}:`, data.error);
+    this.emit('task:routed:failed', data);
+  }
+}

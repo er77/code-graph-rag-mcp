@@ -1,22 +1,87 @@
 {
-  "name": "@cartographai/mcp-server-codegraph",
-  "version": "0.1.0",
-  "description": "MCP server for graph representation of a codebase",
+  "name": "@er77/code-graph-rag-mcp",
+  "version": "2.0.0",
+  "description": "Multi-agent LiteRAG MCP server for advanced code graph analysis",
   "license": "MIT",
-  "keywords": ["agents", "llm", "model-context-protocol"],
+  "author": "er77",
+  "homepage": "https://github.com/er77/code-graph-rag-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/er77/code-graph-rag-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/er77/code-graph-rag-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "code-analysis",
+    "graph",
+    "rag",
+    "llm",
+    "agents",
+    "literag",
+    "typescript",
+    "sqlite",
+    "vector-search",
+    "semantic-search",
+    "claude",
+    "tree-sitter"
+  ],
   "type": "module",
+  "main": "dist/index.js",
   "bin": {
-    "mcp-server-filesystem": "dist/index.js"
+    "code-graph-rag-mcp": "dist/index.js"
   },
-  "files": ["dist"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "PERFORMANCE_GUIDE.md",
+    "SQLITE_VEC_INSTALLATION.md",
+    "CLAUDE.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "build:watch": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check --apply .",
+    "format": "biome format --write .",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
   "devDependencies": {
+    "@biomejs/biome": "^2.2.4",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/bun": "latest",
-    "tsup": "^8.3.6"
-  },
-  "peerDependencies": {
+    "@types/jest": "^29.0.0",
+    "@types/node": "^20.0.0",
+    "jest": "^29.0.0",
+    "ts-jest": "^29.0.0",
+    "tsup": "^8.3.6",
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.5.0"
+    "@modelcontextprotocol/sdk": "^1.5.0",
+    "better-sqlite3": "^11.0.0",
+    "lru-cache": "^10.0.0",
+    "nanoid": "^5.0.0",
+    "sqlite-vec": "^0.1.6",
+    "tree-sitter-javascript": "^0.21.0",
+    "tree-sitter-typescript": "^0.21.0",
+    "web-tree-sitter": "^0.22.0",
+    "xxhash-wasm": "^1.0.2",
+    "zod": "^3.23.0",
+    "zod-to-json-schema": "^3.23.0"
+  },
+  "optionalDependencies": {
+    "@xenova/transformers": "^2.17.0",
+    "onnxruntime-node": "^1.19.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

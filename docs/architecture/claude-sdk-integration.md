@@ -2,7 +2,7 @@
 
 ## Architecture Placement
 
-The Claude SDK integration forms the communication bridge between the MCP Server Codegraph and Claude-based AI assistants. It implements the Model Context Protocol (MCP) standard, enabling seamless tool discovery, execution, and result formatting for LLM consumption.
+The Claude SDK integration forms the communication bridge between the Code Graph RAG MCP and Claude-based AI assistants. It implements the Model Context Protocol (MCP) standard, enabling seamless tool discovery, execution, and result formatting for LLM consumption.
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
@@ -34,7 +34,7 @@ export class CodeGraphMCPServer {
   constructor(private graphDatabase: GraphDatabase) {
     this.server = new Server(
       {
-        name: "mcp-server-codegraph",
+        name: "code-graph-rag-mcp",
         version: "0.1.0",
       },
       {
