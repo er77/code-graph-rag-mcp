@@ -14,14 +14,15 @@
 // =============================================================================
 import Parser from 'web-tree-sitter';
 import { LRUCache } from 'lru-cache';
-import type { 
-  ParseResult, 
-  ParsedEntity, 
+import type {
+  ParseResult,
+  ParsedEntity,
   SupportedLanguage,
   TreeSitterTree,
   TreeSitterNode,
   TreeSitterEdit
 } from '../types/parser.js';
+import { createPythonAnalyzer } from './python-analyzer.js';
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -34,7 +35,8 @@ const LANGUAGE_WASM_PATHS: Record<SupportedLanguage, string> = {
   javascript: 'tree-sitter-javascript.wasm',
   typescript: 'tree-sitter-typescript.wasm',
   tsx: 'tree-sitter-tsx.wasm',
-  jsx: 'tree-sitter-javascript.wasm'
+  jsx: 'tree-sitter-javascript.wasm',
+  python: 'tree-sitter-python.wasm'
 };
 
 // =============================================================================
@@ -69,6 +71,10 @@ function detectLanguage(filePath: string): SupportedLanguage {
       return 'tsx';
     case 'jsx':
       return 'jsx';
+    case 'py':
+    case 'pyi':
+    case 'pyw':
+      return 'python';
     default:
       return 'javascript';
   }
@@ -104,6 +110,7 @@ export class TreeSitterParser {
   private languages: Map<SupportedLanguage, Parser.Language> = new Map();
   private cache: LRUCache<string, ParseCacheEntry>;
   private initialized = false;
+  private pythonAnalyzer = createPythonAnalyzer();
 
   constructor() {
     // TASK-001: Initialize LRU cache with size-based eviction
@@ -201,8 +208,19 @@ export class TreeSitterParser {
       tree = this.parser.parse(content) as unknown as TreeSitterTree;
     }
 
-    // Extract entities
-    const entities = await this.extractEntities(tree.rootNode, content);
+    // Extract entities - use enhanced Python analysis for Python files
+    let entities: ParsedEntity[];
+    if (language === 'python') {
+      // Use enhanced Python analyzer for comprehensive analysis
+      const pythonAnalysis = await this.pythonAnalyzer.analyzePythonCode(filePath, tree.rootNode, content);
+      entities = pythonAnalysis.entities;
+
+      // Log enhanced analysis metrics
+      console.log(`[TreeSitterParser] Python analysis: ${entities.length} entities, ${pythonAnalysis.relationships.length} relationships`);
+    } else {
+      // Use standard extraction for JavaScript/TypeScript
+      entities = await this.extractEntities(tree.rootNode, content);
+    }
 
     // Cache the result
     this.cache.set(cacheKey, {
@@ -266,6 +284,7 @@ export class TreeSitterParser {
 
     // Process based on node type
     switch (node.type) {
+      // JavaScript/TypeScript functions
       case 'function_declaration':
       case 'function_expression':
       case 'arrow_function':
@@ -273,8 +292,16 @@ export class TreeSitterParser {
         entities.push(this.extractFunction(node, source));
         break;
 
+      // Python functions
+      case 'function_definition':
+      case 'async_function_definition':
+        entities.push(this.extractPythonFunction(node, source));
+        break;
+
+      // Classes (JavaScript/TypeScript and Python)
       case 'class_declaration':
       case 'class_expression':
+      case 'class_definition': // Python
         entities.push(this.extractClass(node, source, depth));
         break;
 
@@ -283,23 +310,36 @@ export class TreeSitterParser {
         break;
 
       case 'type_alias_declaration':
+      case 'type_alias_statement': // Python
         entities.push(this.extractTypeAlias(node, source));
         break;
 
+      // Imports
       case 'import_statement':
       case 'import_declaration':
+      case 'import_from_statement': // Python
         entities.push(this.extractImport(node, source));
         break;
 
+      // Exports
       case 'export_statement':
       case 'export_declaration':
         const exportEntity = this.extractExport(node, source);
         if (exportEntity) entities.push(exportEntity);
         break;
 
+      // Variables
       case 'variable_declaration':
       case 'lexical_declaration':
+      case 'assignment': // Python
+      case 'augmented_assignment': // Python
+      case 'annotated_assignment': // Python
         entities.push(...this.extractVariables(node, source));
+        break;
+
+      // Python-specific: lambda functions
+      case 'lambda':
+        entities.push(this.extractPythonLambda(node, source));
         break;
     }
 
@@ -559,5 +599,117 @@ export class TreeSitterParser {
       calculatedSize: this.cache.calculatedSize,
       maxSize: CACHE_MAX_SIZE
     };
+  }
+
+  // =============================================================================
+  // PYTHON-SPECIFIC EXTRACTORS
+  // =============================================================================
+
+  /**
+   * Extract Python function entity
+   */
+  private extractPythonFunction(node: TreeSitterNode, source: string): ParsedEntity {
+    const nameNode = node.namedChildren.find(c => c.type === 'identifier');
+    const name = nameNode?.text || '<anonymous>';
+    const modifiers: string[] = [];
+
+    // Check for async
+    if (node.type === 'async_function_definition') {
+      modifiers.push('async');
+    }
+
+    // Check for decorators
+    const decorators = this.extractPythonDecorators(node);
+    modifiers.push(...decorators);
+
+    // Extract parameters
+    const parameters = this.extractPythonParameters(node, source);
+
+    return {
+      name,
+      type: 'function',
+      location: convertPosition(node),
+      modifiers,
+      parameters
+    };
+  }
+
+  /**
+   * Extract Python lambda function
+   */
+  private extractPythonLambda(node: TreeSitterNode, source: string): ParsedEntity {
+    return {
+      name: '<lambda>',
+      type: 'function',
+      location: convertPosition(node),
+      modifiers: ['lambda'],
+      parameters: this.extractPythonParameters(node, source)
+    };
+  }
+
+  /**
+   * Extract Python decorators
+   */
+  private extractPythonDecorators(node: TreeSitterNode): string[] {
+    const decorators: string[] = [];
+    let current = node.previousSibling;
+
+    while (current && current.type === 'decorator') {
+      const decoratorName = current.descendantsOfType('identifier')[0]?.text;
+      if (decoratorName) {
+        decorators.unshift(decoratorName); // Add to front to maintain order
+      }
+      current = current.previousSibling;
+    }
+
+    return decorators;
+  }
+
+  /**
+   * Extract Python function parameters
+   */
+  private extractPythonParameters(
+    node: TreeSitterNode,
+    _source: string
+  ): ParsedEntity['parameters'] {
+    const params: NonNullable<ParsedEntity['parameters']> = [];
+    const paramList = node.descendantsOfType('parameters')[0];
+
+    if (!paramList) return params;
+
+    for (const param of paramList.namedChildren) {
+      let name: string | undefined;
+      let optional = false;
+      let type: string | undefined;
+
+      switch (param.type) {
+        case 'identifier':
+          name = param.text;
+          break;
+        case 'default_parameter':
+          name = param.child(0)?.text;
+          optional = true;
+          break;
+        case 'typed_parameter':
+          name = param.child(0)?.text;
+          type = param.child(2)?.text; // type annotation after ':'
+          break;
+        case 'typed_default_parameter':
+          name = param.child(0)?.text;
+          type = param.child(2)?.text;
+          optional = true;
+          break;
+      }
+
+      if (name) {
+        params.push({
+          name,
+          type,
+          optional
+        });
+      }
+    }
+
+    return params;
   }
 }

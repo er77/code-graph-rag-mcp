@@ -1,12 +1,15 @@
 /**
- * TASK-001: Parser Agent Type Definitions
- * 
+ * TASK-003B: Enhanced Parser Agent Type Definitions
+ *
  * Type definitions for the tree-sitter based parser agent.
  * Provides interfaces for parsing, entity extraction, and incremental processing.
- * 
+ * Enhanced for TASK-003B with advanced Python language support across 4 layers.
+ *
  * Architecture References:
  * - Agent Types: src/types/agent.ts
  * - Base Agent: src/agents/base.ts
+ * - Python Analyzer: src/parsers/python-analyzer.ts
+ * - ADR-003B: Advanced Python Features Implementation
  */
 
 // =============================================================================
@@ -17,7 +20,7 @@ import type { AgentTask } from './agent.js';
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
 // =============================================================================
-export const SUPPORTED_LANGUAGES = ['javascript', 'typescript', 'tsx', 'jsx'] as const;
+export const SUPPORTED_LANGUAGES = ['javascript', 'typescript', 'tsx', 'jsx', 'python'] as const;
 export type SupportedLanguage = typeof SUPPORTED_LANGUAGES[number];
 
 // =============================================================================
@@ -31,8 +34,10 @@ export interface ParsedEntity {
   /** Entity name (function name, class name, etc.) */
   name: string;
   
-  /** Type of the entity */
-  type: 'function' | 'class' | 'method' | 'interface' | 'type' | 'import' | 'export' | 'variable' | 'constant';
+  /** Type of the entity - enhanced for TASK-003B Python features */
+  type: 'function' | 'class' | 'method' | 'interface' | 'type' | 'import' | 'export' | 'variable' | 'constant' |
+        'property' | 'magic_method' | 'async_function' | 'generator' | 'lambda' | 'decorator' | 'context_manager' |
+        'dataclass' | 'namedtuple' | 'enum' | 'protocol' | 'abstract_method' | 'class_method' | 'static_method';
   
   /** Source location */
   location: {
@@ -46,8 +51,34 @@ export interface ParsedEntity {
   /** References to other entities */
   references?: string[];
   
-  /** Modifiers (e.g., async, static, private) */
+  /** Modifiers (e.g., async, static, private) - enhanced for Python */
   modifiers?: string[];
+
+  /** Python-specific method classification */
+  methodType?: 'instance' | 'class' | 'static' | 'property' | 'abstract' | 'magic';
+
+  /** Decorator information for Python entities */
+  decorators?: Array<{
+    name: string;
+    arguments?: string[];
+    isBuiltin?: boolean;
+  }>;
+
+  /** Inheritance information for classes */
+  inheritance?: {
+    baseClasses: string[];
+    mro?: string[]; // Method Resolution Order
+    isAbstract?: boolean;
+    interfaces?: string[];
+  };
+
+  /** Async/generator patterns */
+  asyncInfo?: {
+    isAsync?: boolean;
+    isGenerator?: boolean;
+    isAsyncGenerator?: boolean;
+    yieldsFrom?: string[];
+  };
   
   /** Return type for functions/methods */
   returnType?: string;
@@ -60,13 +91,35 @@ export interface ParsedEntity {
     defaultValue?: string;
   }>;
   
-  /** Import/export specific data */
+  /** Import/export specific data - enhanced for Python */
   importData?: {
     source: string;
-    specifiers: Array<{ local: string; imported?: string }>;
+    specifiers: Array<{ local: string; imported?: string; alias?: string }>;
     isDefault?: boolean;
     isNamespace?: boolean;
+    isRelative?: boolean;
+    fromModule?: string;
   };
+
+  /** Pattern recognition data for Layer 4 */
+  patterns?: {
+    isContextManager?: boolean;
+    exceptionHandling?: {
+      hasTryExcept?: boolean;
+      exceptTypes?: string[];
+      hasFinally?: boolean;
+    };
+    designPatterns?: string[]; // e.g., ['singleton', 'observer', 'factory']
+    pythonIdioms?: string[]; // e.g., ['comprehension', 'with_statement', 'duck_typing']
+  };
+
+  /** Relationship data for Layer 3 */
+  relationships?: Array<{
+    type: 'inherits' | 'implements' | 'overrides' | 'calls' | 'imports' | 'decorates' | 'contains';
+    target: string;
+    targetFile?: string;
+    metadata?: Record<string, any>;
+  }>;
 }
 
 /**
@@ -81,6 +134,12 @@ export interface ParseResult {
   
   /** Extracted entities */
   entities: ParsedEntity[];
+
+  /** Relationship graph for Layer 3 analysis */
+  relationships?: EntityRelationship[];
+
+  /** Pattern analysis results for Layer 4 */
+  patterns?: PatternAnalysis;
   
   /** File content hash for caching */
   contentHash: string;
@@ -149,6 +208,21 @@ export interface ParserOptions {
   
   /** Extract references between entities */
   extractReferences?: boolean;
+
+  /** Extract inheritance hierarchies (Layer 3) */
+  extractInheritance?: boolean;
+
+  /** Extract method overrides (Layer 3) */
+  extractOverrides?: boolean;
+
+  /** Detect design patterns (Layer 4) */
+  detectPatterns?: boolean;
+
+  /** Analyze async/await patterns (Layer 2) */
+  analyzeAsync?: boolean;
+
+  /** Extract magic methods (Layer 2) */
+  extractMagicMethods?: boolean;
   
   /** Include source code snippets */
   includeSourceSnippets?: boolean;
@@ -259,4 +333,271 @@ export interface TreeSitterCursor {
   gotoFirstChild(): boolean;
   gotoNextSibling(): boolean;
   gotoParent(): boolean;
+}
+
+// =============================================================================
+// TASK-003B: ENHANCED PYTHON TYPE DEFINITIONS
+// =============================================================================
+
+/**
+ * Entity relationship for Layer 3 relationship mapping
+ */
+export interface EntityRelationship {
+  /** Source entity name */
+  from: string;
+
+  /** Target entity name */
+  to: string;
+
+  /** Relationship type */
+  type: 'inherits' | 'implements' | 'overrides' | 'calls' | 'imports' | 'decorates' | 'contains' | 'references';
+
+  /** Source file path */
+  sourceFile: string;
+
+  /** Target file path (for cross-file relationships) */
+  targetFile?: string;
+
+  /** Additional metadata */
+  metadata?: {
+    line?: number;
+    confidence?: number;
+    isDirectRelation?: boolean;
+    mroPosition?: number; // For inheritance MRO
+  };
+}
+
+/**
+ * Pattern analysis results for Layer 4
+ */
+export interface PatternAnalysis {
+  /** Context manager patterns detected */
+  contextManagers: Array<{
+    entity: string;
+    type: 'class_based' | 'function_based' | 'async';
+    methods: string[]; // __enter__, __exit__, __aenter__, __aexit__
+  }>;
+
+  /** Exception handling patterns */
+  exceptionHandling: Array<{
+    location: { line: number; column: number };
+    type: 'try_except' | 'try_finally' | 'try_except_finally';
+    exceptTypes: string[];
+    hasElse?: boolean;
+    hasFinally?: boolean;
+  }>;
+
+  /** Design patterns detected */
+  designPatterns: Array<{
+    pattern: 'singleton' | 'observer' | 'factory' | 'builder' | 'strategy' | 'decorator';
+    entities: string[];
+    confidence: number;
+    description: string;
+  }>;
+
+  /** Python idioms detected */
+  pythonIdioms: Array<{
+    idiom: 'list_comprehension' | 'dict_comprehension' | 'generator_expression' | 'context_manager' | 'duck_typing';
+    locations: Array<{ line: number; column: number }>;
+    usage: string;
+  }>;
+
+  /** Circular dependencies detected */
+  circularDependencies: Array<{
+    cycle: string[]; // List of files/modules in the cycle
+    type: 'import' | 'inheritance' | 'reference';
+    severity: 'warning' | 'error';
+  }>;
+}
+
+/**
+ * Python-specific analysis configuration
+ */
+export interface PythonAnalysisConfig {
+  /** Enable Layer 1: Enhanced basic parsing */
+  enhancedBasicParsing: boolean;
+
+  /** Enable Layer 2: Advanced feature analysis */
+  advancedFeatureAnalysis: boolean;
+
+  /** Enable Layer 3: Relationship mapping */
+  relationshipMapping: boolean;
+
+  /** Enable Layer 4: Pattern recognition */
+  patternRecognition: boolean;
+
+  /** Extract all magic methods */
+  extractAllMagicMethods: boolean;
+
+  /** Analyze property decorators */
+  analyzePropertyDecorators: boolean;
+
+  /** Build inheritance hierarchies */
+  buildInheritanceHierarchies: boolean;
+
+  /** Detect circular dependencies */
+  detectCircularDependencies: boolean;
+
+  /** Pattern detection thresholds */
+  patternConfidenceThreshold: number;
+}
+
+/**
+ * Enhanced Python method information
+ */
+export interface PythonMethodInfo {
+  /** Method classification */
+  classification: 'instance' | 'class' | 'static' | 'property' | 'abstract' | 'magic';
+
+  /** Is this method async */
+  isAsync: boolean;
+
+  /** Is this a generator method */
+  isGenerator: boolean;
+
+  /** Decorator stack */
+  decorators: Array<{
+    name: string;
+    module?: string;
+    arguments?: string[];
+    line: number;
+  }>;
+
+  /** Magic method type (if applicable) */
+  magicType?: 'init' | 'str' | 'repr' | 'call' | 'enter' | 'exit' | 'iter' | 'next' | 'len' | 'getitem' | 'setitem' | 'delitem' | 'contains';
+
+  /** Property information (if property) */
+  propertyInfo?: {
+    hasGetter: boolean;
+    hasSetter: boolean;
+    hasDeleter: boolean;
+    getterName?: string;
+    setterName?: string;
+    deleterName?: string;
+  };
+
+  /** Override information */
+  overrideInfo?: {
+    overrides: string; // Parent method being overridden
+    parentClass: string;
+    callsSuper: boolean;
+    changeSignature: boolean;
+  };
+}
+
+/**
+ * Enhanced Python class information
+ */
+export interface PythonClassInfo {
+  /** Class type */
+  classType: 'regular' | 'abstract' | 'dataclass' | 'namedtuple' | 'enum' | 'protocol';
+
+  /** Base classes */
+  baseClasses: string[];
+
+  /** Method Resolution Order */
+  mro: string[];
+
+  /** Abstract methods that need implementation */
+  abstractMethods: string[];
+
+  /** Magic methods implemented */
+  magicMethods: string[];
+
+  /** Properties defined */
+  properties: Array<{
+    name: string;
+    hasGetter: boolean;
+    hasSetter: boolean;
+    hasDeleter: boolean;
+  }>;
+
+  /** Metaclass information */
+  metaclass?: string;
+
+  /** Decorator information */
+  classDecorators: Array<{
+    name: string;
+    arguments?: string[];
+  }>;
+}
+
+/**
+ * Import dependency information for Layer 3
+ */
+export interface ImportDependency {
+  /** Source file */
+  sourceFile: string;
+
+  /** Target module/file */
+  targetModule: string;
+
+  /** Import type */
+  importType: 'absolute' | 'relative' | 'conditional' | 'dynamic';
+
+  /** Imported symbols */
+  symbols: Array<{
+    name: string;
+    alias?: string;
+    isDefault?: boolean;
+  }>;
+
+  /** Line number of import */
+  line: number;
+
+  /** Is this import used */
+  isUsed: boolean;
+
+  /** Usage locations */
+  usageLocations: Array<{ line: number; column: number; context: string }>;
+}
+
+/**
+ * Performance metrics for enhanced Python parsing
+ */
+export interface PythonParserMetrics {
+  /** Layer 1 metrics */
+  basicParsing: {
+    methodsClassified: number;
+    typeHintsProcessed: number;
+    decoratorsExtracted: number;
+    parseTimeMs: number;
+  };
+
+  /** Layer 2 metrics */
+  advancedFeatures: {
+    magicMethodsFound: number;
+    propertiesAnalyzed: number;
+    asyncPatternsDetected: number;
+    generatorsFound: number;
+    dataclassesProcessed: number;
+    analysisTimeMs: number;
+  };
+
+  /** Layer 3 metrics */
+  relationshipMapping: {
+    inheritanceHierarchiesBuilt: number;
+    methodOverridesDetected: number;
+    crossFileReferencesResolved: number;
+    circularDependenciesFound: number;
+    mappingTimeMs: number;
+  };
+
+  /** Layer 4 metrics */
+  patternRecognition: {
+    contextManagersDetected: number;
+    exceptionPatternsFound: number;
+    designPatternsIdentified: number;
+    pythonIdiomsDetected: number;
+    recognitionTimeMs: number;
+  };
+
+  /** Overall metrics */
+  overall: {
+    totalEntities: number;
+    totalRelationships: number;
+    totalPatterns: number;
+    totalTimeMs: number;
+    memoryUsedMB: number;
+  };
 }
