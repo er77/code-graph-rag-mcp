@@ -176,3 +176,10 @@ dist
 CLAUDE.md
 /.claude
 /logs_llm
+vec0.so
+vectors.db
+vectors.db-shm
+vectors.db-wal
+./node_modules
+./dist
+
