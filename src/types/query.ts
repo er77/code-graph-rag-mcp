@@ -37,6 +37,9 @@ export const DEFAULT_TTL_MS = 300000; // 5 minutes
 // 3. DATA MODELS AND TYPE DEFINITIONS
 // =============================================================================
 
+// Re-export Entity and Relationship for external usage
+export type { Entity, Relationship } from './storage.js';
+
 /**
  * Filter for entity queries
  */

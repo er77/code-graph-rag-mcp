@@ -1,12 +1,15 @@
 /**
- * TASK-001: Language Configuration Module
- * 
+ * TASK-003B: Enhanced Language Configuration Module
+ *
  * Provides language-specific configurations for the parser.
  * Defines patterns, keywords, and extraction rules for each supported language.
- * 
+ * Enhanced for TASK-003B with advanced Python language support across 4 layers.
+ *
  * Architecture References:
- * - Parser Types: src/types/parser.ts
+ * - Enhanced Parser Types: src/types/parser.ts
  * - Tree-sitter Parser: src/parsers/tree-sitter-parser.ts
+ * - Python Analyzer: src/parsers/python-analyzer.ts
+ * - ADR-003B: Advanced Python Features Implementation
  */
 
 // =============================================================================
@@ -26,15 +29,20 @@ export const FILE_EXTENSIONS: Record<string, SupportedLanguage> = {
   'js': 'javascript',
   'mjs': 'javascript',
   'cjs': 'javascript',
-  
+
   // TypeScript
   'ts': 'typescript',
   'mts': 'typescript',
   'cts': 'typescript',
-  
+
   // JSX/TSX
   'jsx': 'jsx',
-  'tsx': 'tsx'
+  'tsx': 'tsx',
+
+  // Python
+  'py': 'python',
+  'pyi': 'python',
+  'pyw': 'python'
 };
 
 /**
@@ -54,7 +62,7 @@ export const LANGUAGE_KEYWORDS: Record<SupportedLanguage, {
     exports: ['export', 'module.exports'],
     types: []
   },
-  
+
   typescript: {
     functions: ['function', 'async', 'generator', '=>'],
     classes: ['class', 'constructor', 'extends', 'implements'],
@@ -62,7 +70,7 @@ export const LANGUAGE_KEYWORDS: Record<SupportedLanguage, {
     exports: ['export', 'module.exports'],
     types: ['interface', 'type', 'enum', 'namespace']
   },
-  
+
   jsx: {
     functions: ['function', 'async', 'generator', '=>'],
     classes: ['class', 'constructor', 'extends', 'Component'],
@@ -70,13 +78,21 @@ export const LANGUAGE_KEYWORDS: Record<SupportedLanguage, {
     exports: ['export', 'module.exports'],
     types: []
   },
-  
+
   tsx: {
     functions: ['function', 'async', 'generator', '=>'],
     classes: ['class', 'constructor', 'extends', 'implements', 'Component'],
     imports: ['import', 'require'],
     exports: ['export', 'module.exports'],
     types: ['interface', 'type', 'enum', 'namespace']
+  },
+
+  python: {
+    functions: ['def', 'async', 'lambda', 'yield', 'yield_from', 'await'],
+    classes: ['class', 'dataclass', 'NamedTuple', 'Enum', 'Protocol', 'ABC'],
+    imports: ['import', 'from', 'as', '__import__'],
+    exports: ['__all__', '__version__', '__author__'],
+    types: ['typing', 'Union', 'Optional', 'List', 'Dict', 'Tuple', 'Generic', 'TypeVar', 'Callable', 'Any', 'ClassVar', 'Final']
   }
 };
 
@@ -341,6 +357,161 @@ const TSX_CONFIG: LanguageConfig = {
   }
 };
 
+/**
+ * Enhanced Python configuration - TASK-003B 4-Layer Architecture Support
+ */
+const PYTHON_CONFIG: LanguageConfig = {
+  language: 'python',
+  extensions: ['py', 'pyi', 'pyw'],
+  keywords: LANGUAGE_KEYWORDS.python,
+  nodeTypes: {
+    // Layer 1: Enhanced Basic Parsing - Comprehensive function types
+    functions: [
+      'function_definition',
+      'async_function_definition',
+      'lambda',
+      'generator_expression',
+      'list_comprehension',
+      'set_comprehension',
+      'dictionary_comprehension'
+    ],
+    // Layer 1: Enhanced class types including special classes
+    classes: [
+      'class_definition',
+      'decorated_definition' // for @dataclass and other decorated classes
+    ],
+    // Layer 1: Comprehensive method types with decorators
+    methods: [
+      'function_definition', // methods are function_definition inside class_definition
+      'decorated_definition', // decorated methods (@property, @staticmethod, etc.)
+      'property_definition' // property definitions
+    ],
+    // Layer 1: Enhanced import patterns
+    imports: [
+      'import_statement',
+      'import_from_statement',
+      'aliased_import',
+      'dotted_name',
+      'relative_import',
+      'import_list',
+      'wildcard_import'
+    ],
+    // Layer 1: Export patterns
+    exports: [
+      'expression_statement', // for __all__ assignments
+      'assignment', // module-level assignments that act as exports
+      'augmented_assignment'
+    ],
+    // Layer 1: Variable and assignment patterns
+    variables: [
+      'assignment',
+      'augmented_assignment',
+      'annotated_assignment',
+      'named_expression', // walrus operator :=
+      'pattern_list',
+      'tuple_pattern',
+      'list_pattern'
+    ],
+    // Layer 1: Type definitions and annotations
+    types: [
+      'type_alias_statement',
+      'generic_type',
+      'union_type',
+      'subscript', // for List[int], Dict[str, Any], etc.
+      'attribute', // for module.TypeName
+      'type_parameter'
+    ],
+    // Layer 2: Protocol support for structural subtyping
+    interfaces: [
+      'class_definition' // protocols are classes with typing.Protocol base
+    ]
+  },
+  extractors: {
+    extractName: (nodeType: string) => {
+      switch (nodeType) {
+        // Layer 1: Enhanced function name extraction
+        case 'function_definition':
+        case 'async_function_definition':
+          return ['identifier'];
+        case 'lambda':
+          return ['lambda']; // special case - lambdas don't have names
+
+        // Layer 1: Enhanced class name extraction
+        case 'class_definition':
+          return ['identifier'];
+        case 'decorated_definition':
+          return ['identifier']; // extract from the underlying definition
+
+        // Layer 1: Enhanced import name extraction
+        case 'import_statement':
+          return ['dotted_name', 'identifier'];
+        case 'import_from_statement':
+          return ['import_list', 'identifier', 'aliased_import'];
+        case 'aliased_import':
+          return ['identifier']; // both original and alias
+        case 'wildcard_import':
+          return ['*'];
+
+        // Layer 1: Enhanced variable/assignment name extraction
+        case 'assignment':
+        case 'augmented_assignment':
+        case 'annotated_assignment':
+          return ['identifier', 'pattern_list', 'tuple_pattern', 'subscript', 'attribute'];
+        case 'named_expression': // walrus operator
+          return ['identifier'];
+
+        // Layer 1: Type hint name extraction
+        case 'type_alias_statement':
+          return ['identifier'];
+        case 'generic_type':
+        case 'subscript':
+          return ['identifier', 'attribute'];
+        case 'union_type':
+          return ['identifier']; // extract all union members
+
+        // Layer 2: Comprehension name extraction
+        case 'list_comprehension':
+        case 'set_comprehension':
+        case 'dictionary_comprehension':
+        case 'generator_expression':
+          return ['identifier']; // iterator variables
+
+        default:
+          return ['identifier'];
+      }
+    },
+    extractModifiers: (nodeType: string) => {
+      // Layer 1 & 2: Enhanced modifier extraction for Python
+      const baseModifiers = ['async', 'staticmethod', 'classmethod', 'property'];
+
+      switch (nodeType) {
+        case 'function_definition':
+        case 'async_function_definition':
+          return [...baseModifiers,
+            'abstractmethod', 'cached_property', 'lru_cache',
+            'singledispatch', 'contextmanager', 'asynccontextmanager',
+            'wraps', 'dataclass', 'final', 'overload'
+          ];
+
+        case 'class_definition':
+          return ['dataclass', 'final', 'runtime_checkable', 'total',
+                 'frozen', 'eq', 'order', 'unsafe_hash', 'init'];
+
+        case 'decorated_definition':
+          // Extract from actual decorators
+          return [...baseModifiers, 'dataclass', 'final', 'overload',
+                 'abstractmethod', 'cached_property'];
+
+        default:
+          return baseModifiers;
+      }
+    },
+    extractParameters: true,
+    extractReturnType: true, // Python has comprehensive type hints
+    extractReferences: true
+  }
+};
+
 // =============================================================================
 // 6. API ENDPOINTS AND ROUTES
 // =============================================================================
@@ -352,7 +523,8 @@ export const LANGUAGE_CONFIGS: Record<SupportedLanguage, LanguageConfig> = {
   javascript: JAVASCRIPT_CONFIG,
   typescript: TYPESCRIPT_CONFIG,
   jsx: JSX_CONFIG,
-  tsx: TSX_CONFIG
+  tsx: TSX_CONFIG,
+  python: PYTHON_CONFIG
 };
 
 /**
@@ -407,8 +579,138 @@ export function isExportNode(nodeType: string, language: SupportedLanguage): boo
  */
 export function isTypeNode(nodeType: string, language: SupportedLanguage): boolean {
   const config = getLanguageConfig(language);
-  return config.nodeTypes.types.includes(nodeType) || 
+  return config.nodeTypes.types.includes(nodeType) ||
          config.nodeTypes.interfaces.includes(nodeType);
+}
+
+// =============================================================================
+// TASK-003B: ENHANCED PYTHON NODE TYPE DETECTION
+// =============================================================================
+
+/**
+ * Check if a node type represents a magic/dunder method (Layer 2)
+ */
+export function isMagicMethodNode(nodeType: string, nodeName: string, language: SupportedLanguage): boolean {
+  if (language !== 'python') return false;
+  if (nodeType !== 'function_definition' && nodeType !== 'async_function_definition') return false;
+
+  return nodeName.startsWith('__') && nodeName.endsWith('__') && nodeName.length > 4;
+}
+
+/**
+ * Check if a node type represents an async pattern (Layer 2)
+ */
+export function isAsyncNode(nodeType: string, language: SupportedLanguage): boolean {
+  if (language !== 'python') return false;
+  return nodeType === 'async_function_definition' ||
+         nodeType === 'async_with_statement' ||
+         nodeType === 'await';
+}
+
+/**
+ * Check if a node type represents a generator pattern (Layer 2)
+ */
+export function isGeneratorNode(nodeType: string, language: SupportedLanguage): boolean {
+  if (language !== 'python') return false;
+  return nodeType === 'yield' ||
+         nodeType === 'yield_from' ||
+         nodeType === 'generator_expression';
+}
+
+/**
+ * Check if a node type represents a comprehension (Layer 2)
+ */
+export function isComprehensionNode(nodeType: string, language: SupportedLanguage): boolean {
+  if (language !== 'python') return false;
+  return nodeType === 'list_comprehension' ||
+         nodeType === 'set_comprehension' ||
+         nodeType === 'dictionary_comprehension' ||
+         nodeType === 'generator_expression';
+}
+
+/**
+ * Check if a node type represents a context manager pattern (Layer 4)
+ */
+export function isContextManagerNode(nodeType: string, language: SupportedLanguage): boolean {
+  if (language !== 'python') return false;
+  return nodeType === 'with_statement' ||
+         nodeType === 'async_with_statement';
+}
+
+/**
+ * Check if a node type represents exception handling (Layer 4)
+ */
+export function isExceptionHandlingNode(nodeType: string, language: SupportedLanguage): boolean {
+  if (language !== 'python') return false;
+  return nodeType === 'try_statement' ||
+         nodeType === 'except_clause' ||
+         nodeType === 'finally_clause' ||
+         nodeType === 'else_clause' ||
+         nodeType === 'raise_statement';
+}
+
+/**
+ * Check if a node type represents a decorator (Layer 1)
+ */
+export function isDecoratorNode(nodeType: string, language: SupportedLanguage): boolean {
+  if (language !== 'python') return false;
+  return nodeType === 'decorator' || nodeType === 'decorated_definition';
+}
+
+/**
+ * Check if a node type represents a dataclass or special class (Layer 2)
+ */
+export function isSpecialClassNode(nodeType: string, className: string, decorators: string[], language: SupportedLanguage): boolean {
+  if (language !== 'python') return false;
+  if (nodeType !== 'class_definition' && nodeType !== 'decorated_definition') return false;
+
+  // Check for dataclass decorator
+  if (decorators.some(d => d === 'dataclass' || d.includes('dataclass'))) return true;
+
+  // Check for special base classes
+  const specialBaseClasses = ['NamedTuple', 'Enum', 'IntEnum', 'Flag', 'IntFlag', 'Protocol', 'Generic', 'ABC'];
+  return specialBaseClasses.some(base => className.includes(base));
+}
+
+/**
+ * Get enhanced node type category for Python (Layer 1-4)
+ */
+export function getPythonNodeCategory(nodeType: string, nodeName: string = '', language: SupportedLanguage = 'python'): string {
+  if (language !== 'python') return 'unknown';
+
+  // Layer 1: Enhanced basic parsing categories
+  if (isFunctionNode(nodeType, language)) {
+    if (nodeType === 'async_function_definition') return 'async_function';
+    if (nodeType === 'lambda') return 'lambda';
+    if (isMagicMethodNode(nodeType, nodeName, language)) return 'magic_method';
+    return 'function';
+  }
+
+  if (isClassNode(nodeType, language)) {
+    if (nodeType === 'decorated_definition') return 'decorated_class';
+    return 'class';
+  }
+
+  if (isImportNode(nodeType, language)) return 'import';
+  if (isExportNode(nodeType, language)) return 'export';
+  if (isTypeNode(nodeType, language)) return 'type';
+
+  // Layer 2: Advanced feature categories
+  if (isAsyncNode(nodeType, language)) return 'async_pattern';
+  if (isGeneratorNode(nodeType, language)) return 'generator_pattern';
+  if (isComprehensionNode(nodeType, language)) return 'comprehension';
+  if (isDecoratorNode(nodeType, language)) return 'decorator';
+
+  // Layer 4: Pattern recognition categories
+  if (isContextManagerNode(nodeType, language)) return 'context_manager';
+  if (isExceptionHandlingNode(nodeType, language)) return 'exception_handling';
+
+  // Layer 1: Variable assignments
+  if (['assignment', 'augmented_assignment', 'annotated_assignment', 'named_expression'].includes(nodeType)) {
+    return 'variable';
+  }
+
+  return 'unknown';
 }
 
 // =============================================================================

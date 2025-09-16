@@ -28,6 +28,7 @@ import { ConductorOrchestrator } from './agents/conductor-orchestrator.js';
 import { knowledgeBus } from './core/knowledge-bus.js';
 import { resourceManager } from './core/resource-manager.js';
 import { AgentTask } from './types/agent.js';
+import { logger, createRequestId } from './utils/logger.js';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -45,8 +46,20 @@ function expandHome(filepath: string): string {
 
 const directory = normalize(resolve(expandHome(args[0] as string)));
 
+// Initialize logging system
+logger.systemEvent('MCP Server Starting', {
+  directory,
+  nodeVersion: process.version,
+  platform: process.platform,
+  pid: process.pid
+});
+
 // Initialize resource manager with commodity hardware constraints
 resourceManager.startMonitoring();
+logger.systemEvent('Resource Manager Started', {
+  maxMemoryMB: 1024,
+  maxCpuPercent: 80
+});
 
 // Initialize conductor orchestrator lazily
 let conductor: ConductorOrchestrator | null = null;
@@ -251,7 +264,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 // Handler for tool execution
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
-  
+  const requestId = createRequestId();
+  const startTime = Date.now();
+
+  logger.mcpRequest(name, args, requestId);
+
   try {
     switch (name) {
       case "index": {
@@ -275,10 +292,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const cond = getConductor();
         await cond.initialize();
         const result = await cond.process(task);
-        
+
+        // Log indexing activity
+        logger.agentActivity('conductor', 'indexing completed', {
+          directory: targetDir,
+          incremental,
+          excludePatterns,
+          entitiesFound: Array.isArray((result as any)?.entities) ? (result as any).entities.length : 0
+        }, requestId);
+
         // Publish to knowledge bus
         knowledgeBus.publish('index:completed', result, 'mcp-server');
-        
+
+        const duration = Date.now() - startTime;
+        logger.mcpResponse(name, result, duration, requestId);
+
         return {
           content: [
             {
@@ -694,6 +722,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
+
+    logger.mcpError(name, error instanceof Error ? error : new Error(errorMessage), requestId);
+
     return {
       content: [
         {
@@ -711,10 +742,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // Graceful shutdown
 process.on('SIGINT', async () => {
   console.log('\nShutting down gracefully...');
+  logger.systemEvent('MCP Server Shutdown Initiated');
+
   if (conductor) {
     await conductor.shutdown();
+    logger.systemEvent('Conductor Shutdown Complete');
   }
+
   resourceManager.stopMonitoring();
+  logger.systemEvent('Resource Manager Stopped');
+  logger.systemEvent('MCP Server Shutdown Complete');
+
   process.exit(0);
 });
 
@@ -723,14 +761,23 @@ async function main() {
   console.log(`Starting MCP Code Graph Server for directory: ${directory}`);
   console.log('Multi-agent LiteRAG architecture initialized');
   console.log(`Resource constraints: 1GB memory, 80% CPU, 10 concurrent agents`);
-  
+
+  logger.systemEvent('MCP Server Transport Connecting', { transport: 'stdio' });
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  
+
   console.log('MCP server running on stdio transport');
+  logger.systemEvent('MCP Server Ready', {
+    directory,
+    transport: 'stdio',
+    toolsCount: 13,
+    readyTime: Date.now()
+  });
 }
 
 main().catch((error) => {
   console.error('Failed to start server:', error);
+  logger.critical('MCP Server Startup Failed', error.message, undefined, undefined, error);
   process.exit(1);
 });
