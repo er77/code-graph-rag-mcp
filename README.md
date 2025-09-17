@@ -1,5 +1,7 @@
 # Code Graph RAG MCP Server
 
+[Sponsor https://accelerator.slider-ai.ru/ ]([url](https://accelerator.slider-ai.ru/))
+
 **Advanced Multi-Language Code Analysis with Semantic Intelligence**
 
 A powerful [Model Context Protocol](https://github.com/modelcontextprotocol) server that creates intelligent graph representations of your codebase with comprehensive semantic analysis capabilities.
