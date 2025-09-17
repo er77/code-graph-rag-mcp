@@ -1,9 +1,9 @@
 /**
  * TASK-001: Parser Agent Implementation
- * 
+ *
  * High-performance parser agent using tree-sitter for code analysis.
  * Achieves 100+ files/second throughput with incremental parsing.
- * 
+ *
  * Architecture References:
  * - Base Agent: src/agents/base.ts
  * - Agent Types: src/types/agent.ts
@@ -11,41 +11,35 @@
  * - Incremental Parser: src/parsers/incremental-parser.ts
  */
 
+import type { EventEmitter } from "node:events";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
-import { Worker } from 'node:worker_threads';
-import { EventEmitter } from 'node:events';
-import { BaseAgent } from './base.js';
-import { AgentType, type AgentMessage, type AgentTask } from '../types/agent.js';
-import type { 
-  ParserTask, 
-  ParseResult, 
-  FileChange,
-  ParserOptions,
-  ParserStats
-} from '../types/parser.js';
-import { IncrementalParser } from '../parsers/incremental-parser.js';
-import { isFileSupported } from '../parsers/language-configs.js';
+import type { Worker } from "node:worker_threads";
+import { IncrementalParser } from "../parsers/incremental-parser.js";
+import { isFileSupported } from "../parsers/language-configs.js";
+import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
+import type { FileChange, ParseResult, ParserOptions, ParserStats, ParserTask } from "../types/parser.js";
+import { BaseAgent } from "./base.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
 // =============================================================================
 const PARSER_CONFIG = {
-  maxConcurrency: 4,    // Parallel file processing
-  memoryLimit: 256,     // MB
-  priority: 8,          // High priority for parsing
-  batchSize: 10,        // Files per batch
+  maxConcurrency: 4, // Parallel file processing
+  memoryLimit: 256, // MB
+  priority: 8, // High priority for parsing
+  batchSize: 10, // Files per batch
   cacheSize: 100 * 1024 * 1024, // 100MB cache
-  workerPoolSize: 2     // Number of worker threads
+  workerPoolSize: 2, // Number of worker threads
 };
 
 // Knowledge Bus topics
 const TOPICS = {
-  PARSE_COMPLETE: 'parse:complete',
-  PARSE_FAILED: 'parse:failed',
-  FILE_CHANGED: 'file:changed',
-  CACHE_UPDATED: 'cache:updated'
+  PARSE_COMPLETE: "parse:complete",
+  PARSE_FAILED: "parse:failed",
+  FILE_CHANGED: "file:changed",
+  CACHE_UPDATED: "cache:updated",
 };
 
 // =============================================================================
@@ -61,7 +55,7 @@ const TOPICS = {
  * Filter files to only supported extensions
  */
 function filterSupportedFiles(files: string[]): string[] {
-  return files.filter(file => isFileSupported(file));
+  return files.filter((file) => isFileSupported(file));
 }
 
 // =============================================================================
@@ -83,7 +77,7 @@ export class ParserAgent extends BaseAgent {
     super(AgentType.PARSER, {
       maxConcurrency: PARSER_CONFIG.maxConcurrency,
       memoryLimit: PARSER_CONFIG.memoryLimit,
-      priority: PARSER_CONFIG.priority
+      priority: PARSER_CONFIG.priority,
     });
 
     this.parser = new IncrementalParser(PARSER_CONFIG.cacheSize);
@@ -97,7 +91,7 @@ export class ParserAgent extends BaseAgent {
       totalParseTimeMs: 0,
       throughput: 0,
       cacheMemoryMB: 0,
-      errorCount: 0
+      errorCount: 0,
     };
 
     this.setupEventHandlers();
@@ -151,11 +145,11 @@ export class ParserAgent extends BaseAgent {
    */
   protected canProcessTask(task: AgentTask): boolean {
     if (!this.isParserTask(task)) return false;
-    
+
     const parserTask = task as ParserTask;
-    
+
     // Check task type
-    if (!['parse:file', 'parse:batch', 'parse:incremental'].includes(parserTask.type)) {
+    if (!["parse:file", "parse:batch", "parse:incremental"].includes(parserTask.type)) {
       return false;
     }
 
@@ -185,37 +179,28 @@ export class ParserAgent extends BaseAgent {
       let results: ParseResult[] = [];
 
       switch (parserTask.type) {
-        case 'parse:file':
+        case "parse:file":
           // Single file parsing
           if (parserTask.payload.files && parserTask.payload.files.length > 0) {
             const filePath = parserTask.payload.files[0];
             if (filePath) {
-              const result = await this.parseFile(
-                filePath,
-                parserTask.payload.options
-              );
+              const result = await this.parseFile(filePath, parserTask.payload.options);
               results = [result];
             }
           }
           break;
 
-        case 'parse:batch':
+        case "parse:batch":
           // Batch parsing with parallelization
           if (parserTask.payload.files) {
-            results = await this.parseBatch(
-              parserTask.payload.files,
-              parserTask.payload.options
-            );
+            results = await this.parseBatch(parserTask.payload.files, parserTask.payload.options);
           }
           break;
 
-        case 'parse:incremental':
+        case "parse:incremental":
           // Incremental parsing for changes
           if (parserTask.payload.changes) {
-            results = await this.processIncremental(
-              parserTask.payload.changes,
-              parserTask.payload.options
-            );
+            results = await this.processIncremental(parserTask.payload.changes, parserTask.payload.options);
           }
           break;
 
@@ -233,26 +218,25 @@ export class ParserAgent extends BaseAgent {
           agentId: this.id,
           taskId: task.id,
           results,
-          stats: this.getParserStats()
+          stats: this.getParserStats(),
         });
       }
 
       console.log(
         `[${this.id}] Task completed: ${results.length} files parsed in ${elapsed}ms ` +
-        `(${Math.round((results.length / elapsed) * 1000)} files/sec)`
+          `(${Math.round((results.length / elapsed) * 1000)} files/sec)`,
       );
 
       return results;
-
     } catch (error) {
       console.error(`[${this.id}] Task failed:`, error);
-      
+
       // Publish error to knowledge bus
       if (this.knowledgeBus) {
         this.knowledgeBus.emit(TOPICS.PARSE_FAILED, {
           agentId: this.id,
           taskId: task.id,
-          error: error instanceof Error ? error.message : String(error)
+          error: error instanceof Error ? error.message : String(error),
         });
       }
 
@@ -267,34 +251,35 @@ export class ParserAgent extends BaseAgent {
     console.log(`[${this.id}] Received message: ${message.type}`);
 
     switch (message.type) {
-      case 'parse:request':
+      case "parse:request": {
         // Handle parse request via message
         const task: ParserTask = {
           id: message.id,
-          type: 'parse:batch',
+          type: "parse:batch",
           priority: 5,
-          payload: message.payload as ParserTask['payload'],
-          createdAt: Date.now()
+          payload: message.payload as ParserTask["payload"],
+          createdAt: Date.now(),
         };
         await this.process(task);
         break;
+      }
 
-      case 'cache:clear':
+      case "cache:clear":
         // Clear parser cache
         this.parser.clearCache();
         console.log(`[${this.id}] Cache cleared`);
         break;
 
-      case 'stats:request':
+      case "stats:request":
         // Return parser statistics
         await this.send({
           id: `${message.id}-response`,
           from: this.id,
           to: message.from,
-          type: 'stats:response',
+          type: "stats:response",
           payload: this.getParserStats(),
           timestamp: Date.now(),
-          correlationId: message.id
+          correlationId: message.id,
         });
         break;
 
@@ -316,7 +301,7 @@ export class ParserAgent extends BaseAgent {
   async parseBatch(files: string[], options?: ParserOptions): Promise<ParseResult[]> {
     // Filter to supported files only
     const supportedFiles = filterSupportedFiles(files);
-    
+
     if (supportedFiles.length === 0) {
       console.warn(`[${this.id}] No supported files to parse`);
       return [];
@@ -339,7 +324,7 @@ export class ParserAgent extends BaseAgent {
    */
   async processIncremental(changes: FileChange[], options?: ParserOptions): Promise<ParseResult[]> {
     console.log(`[${this.id}] Processing ${changes.length} incremental changes...`);
-    
+
     // TASK-001: Use incremental parsing for maximum performance
     const results = await this.parser.processIncremental(changes, options);
 
@@ -347,7 +332,7 @@ export class ParserAgent extends BaseAgent {
     if (this.knowledgeBus) {
       this.knowledgeBus.emit(TOPICS.CACHE_UPDATED, {
         agentId: this.id,
-        cacheStats: this.parser.getStats()
+        cacheStats: this.parser.getStats(),
       });
     }
 
@@ -385,16 +370,16 @@ export class ParserAgent extends BaseAgent {
     // Create incremental parse task
     const task: ParserTask = {
       id: `file-change-${Date.now()}`,
-      type: 'parse:incremental',
+      type: "parse:incremental",
       priority: 7,
       payload: {
-        changes: [change]
+        changes: [change],
       },
-      createdAt: Date.now()
+      createdAt: Date.now(),
     };
 
     // Process asynchronously
-    this.process(task).catch(error => {
+    this.process(task).catch((error) => {
       console.error(`[${this.id}] Failed to process file change:`, error);
     });
   }
@@ -404,7 +389,7 @@ export class ParserAgent extends BaseAgent {
    */
   private setupEventHandlers(): void {
     // Monitor resource usage
-    this.on('resource:warning', (usage) => {
+    this.on("resource:warning", (usage) => {
       if (usage.memory > PARSER_CONFIG.memoryLimit * 0.9) {
         console.warn(`[${this.id}] Memory usage high: ${usage.memory}MB`);
         // Clear some cache to free memory
@@ -413,11 +398,11 @@ export class ParserAgent extends BaseAgent {
     });
 
     // Monitor task completion
-    this.on('task:completed', (event) => {
+    this.on("task:completed", (event) => {
       console.log(`[${this.id}] Task completed: ${event.task.id}`);
     });
 
-    this.on('task:failed', (event) => {
+    this.on("task:failed", (event) => {
       console.error(`[${this.id}] Task failed: ${event.task.id}`, event.error);
       this.stats.errorCount++;
     });
@@ -450,7 +435,7 @@ export class ParserAgent extends BaseAgent {
    * Type guard for parser tasks
    */
   private isParserTask(task: AgentTask): task is ParserTask {
-    return task.type.startsWith('parse:');
+    return task.type.startsWith("parse:");
   }
 
   /**

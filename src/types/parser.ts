@@ -15,16 +15,16 @@
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
-import type { AgentTask } from './agent.js';
+import type { AgentTask } from "./agent.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
 // =============================================================================
-export const SUPPORTED_LANGUAGES = ['javascript', 'typescript', 'tsx', 'jsx', 'python'] as const;
-export type SupportedLanguage = typeof SUPPORTED_LANGUAGES[number];
+export const SUPPORTED_LANGUAGES = ["javascript", "typescript", "tsx", "jsx", "python", "c", "cpp"] as const;
+export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 
 // =============================================================================
-// 3. DATA MODELS AND TYPE DEFINITIONS  
+// 3. DATA MODELS AND TYPE DEFINITIONS
 // =============================================================================
 
 /**
@@ -33,29 +33,50 @@ export type SupportedLanguage = typeof SUPPORTED_LANGUAGES[number];
 export interface ParsedEntity {
   /** Entity name (function name, class name, etc.) */
   name: string;
-  
+
   /** Type of the entity - enhanced for TASK-003B Python features */
-  type: 'function' | 'class' | 'method' | 'interface' | 'type' | 'import' | 'export' | 'variable' | 'constant' |
-        'property' | 'magic_method' | 'async_function' | 'generator' | 'lambda' | 'decorator' | 'context_manager' |
-        'dataclass' | 'namedtuple' | 'enum' | 'protocol' | 'abstract_method' | 'class_method' | 'static_method';
-  
+  type:
+    | "function"
+    | "class"
+    | "method"
+    | "interface"
+    | "type"
+    | "import"
+    | "export"
+    | "variable"
+    | "constant"
+    | "property"
+    | "magic_method"
+    | "async_function"
+    | "generator"
+    | "lambda"
+    | "decorator"
+    | "context_manager"
+    | "dataclass"
+    | "namedtuple"
+    | "enum"
+    | "protocol"
+    | "abstract_method"
+    | "class_method"
+    | "static_method";
+
   /** Source location */
   location: {
     start: { line: number; column: number; index: number };
     end: { line: number; column: number; index: number };
   };
-  
+
   /** Child entities (e.g., methods in a class) */
   children?: ParsedEntity[];
-  
+
   /** References to other entities */
   references?: string[];
-  
+
   /** Modifiers (e.g., async, static, private) - enhanced for Python */
   modifiers?: string[];
 
   /** Python-specific method classification */
-  methodType?: 'instance' | 'class' | 'static' | 'property' | 'abstract' | 'magic';
+  methodType?: "instance" | "class" | "static" | "property" | "abstract" | "magic";
 
   /** Decorator information for Python entities */
   decorators?: Array<{
@@ -79,10 +100,10 @@ export interface ParsedEntity {
     isAsyncGenerator?: boolean;
     yieldsFrom?: string[];
   };
-  
+
   /** Return type for functions/methods */
   returnType?: string;
-  
+
   /** Parameters for functions/methods */
   parameters?: Array<{
     name: string;
@@ -90,7 +111,7 @@ export interface ParsedEntity {
     optional?: boolean;
     defaultValue?: string;
   }>;
-  
+
   /** Import/export specific data - enhanced for Python */
   importData?: {
     source: string;
@@ -115,7 +136,7 @@ export interface ParsedEntity {
 
   /** Relationship data for Layer 3 */
   relationships?: Array<{
-    type: 'inherits' | 'implements' | 'overrides' | 'calls' | 'imports' | 'decorates' | 'contains';
+    type: "inherits" | "implements" | "overrides" | "calls" | "imports" | "decorates" | "contains";
     target: string;
     targetFile?: string;
     metadata?: Record<string, any>;
@@ -128,10 +149,10 @@ export interface ParsedEntity {
 export interface ParseResult {
   /** File path */
   filePath: string;
-  
+
   /** Language detected */
   language: SupportedLanguage;
-  
+
   /** Extracted entities */
   entities: ParsedEntity[];
 
@@ -140,19 +161,19 @@ export interface ParseResult {
 
   /** Pattern analysis results for Layer 4 */
   patterns?: PatternAnalysis;
-  
+
   /** File content hash for caching */
   contentHash: string;
-  
+
   /** Parsing timestamp */
   timestamp: number;
-  
+
   /** Parse time in milliseconds */
   parseTimeMs: number;
-  
+
   /** Whether this was from cache */
   fromCache?: boolean;
-  
+
   /** Any parsing errors */
   errors?: Array<{
     message: string;
@@ -166,16 +187,16 @@ export interface ParseResult {
 export interface FileChange {
   /** File path */
   filePath: string;
-  
+
   /** Type of change */
-  changeType: 'created' | 'modified' | 'deleted';
-  
+  changeType: "created" | "modified" | "deleted";
+
   /** New content (for created/modified) */
   content?: string;
-  
+
   /** Previous content hash (for modified) */
   previousHash?: string;
-  
+
   /** Edit information for incremental parsing */
   edits?: Array<{
     startIndex: number;
@@ -191,7 +212,7 @@ export interface FileChange {
  * Parser task specific to the Parser Agent
  */
 export interface ParserTask extends AgentTask {
-  type: 'parse:file' | 'parse:batch' | 'parse:incremental';
+  type: "parse:file" | "parse:batch" | "parse:incremental";
   payload: {
     files?: string[];
     changes?: FileChange[];
@@ -205,7 +226,7 @@ export interface ParserTask extends AgentTask {
 export interface ParserOptions {
   /** Use cache for unchanged files */
   useCache?: boolean;
-  
+
   /** Extract references between entities */
   extractReferences?: boolean;
 
@@ -223,16 +244,16 @@ export interface ParserOptions {
 
   /** Extract magic methods (Layer 2) */
   extractMagicMethods?: boolean;
-  
+
   /** Include source code snippets */
   includeSourceSnippets?: boolean;
-  
+
   /** Maximum depth for nested entities */
   maxDepth?: number;
-  
+
   /** Batch size for parallel processing */
   batchSize?: number;
-  
+
   /** Timeout per file in milliseconds */
   timeoutMs?: number;
 }
@@ -243,13 +264,13 @@ export interface ParserOptions {
 export interface CacheEntry {
   /** File content hash */
   hash: string;
-  
+
   /** Parsed result */
   result: ParseResult;
-  
+
   /** Cache timestamp */
   cachedAt: number;
-  
+
   /** Size in bytes */
   size: number;
 }
@@ -260,25 +281,25 @@ export interface CacheEntry {
 export interface ParserStats {
   /** Total files parsed */
   filesParsed: number;
-  
+
   /** Cache hits */
   cacheHits: number;
-  
+
   /** Cache misses */
   cacheMisses: number;
-  
+
   /** Average parse time */
   avgParseTimeMs: number;
-  
+
   /** Total parse time */
   totalParseTimeMs: number;
-  
+
   /** Files per second throughput */
   throughput: number;
-  
+
   /** Memory used by cache */
   cacheMemoryMB: number;
-  
+
   /** Errors encountered */
   errorCount: number;
 }
@@ -300,7 +321,7 @@ export interface TreeSitterNode {
   parent: TreeSitterNode | null;
   nextSibling: TreeSitterNode | null;
   previousSibling: TreeSitterNode | null;
-  
+
   child(index: number): TreeSitterNode | null;
   namedChild(index: number): TreeSitterNode | null;
   descendantForPosition(position: { row: number; column: number }): TreeSitterNode;
@@ -350,7 +371,7 @@ export interface EntityRelationship {
   to: string;
 
   /** Relationship type */
-  type: 'inherits' | 'implements' | 'overrides' | 'calls' | 'imports' | 'decorates' | 'contains' | 'references';
+  type: "inherits" | "implements" | "overrides" | "calls" | "imports" | "decorates" | "contains" | "references";
 
   /** Source file path */
   sourceFile: string;
@@ -374,14 +395,14 @@ export interface PatternAnalysis {
   /** Context manager patterns detected */
   contextManagers: Array<{
     entity: string;
-    type: 'class_based' | 'function_based' | 'async';
+    type: "class_based" | "function_based" | "async";
     methods: string[]; // __enter__, __exit__, __aenter__, __aexit__
   }>;
 
   /** Exception handling patterns */
   exceptionHandling: Array<{
     location: { line: number; column: number };
-    type: 'try_except' | 'try_finally' | 'try_except_finally';
+    type: "try_except" | "try_finally" | "try_except_finally";
     exceptTypes: string[];
     hasElse?: boolean;
     hasFinally?: boolean;
@@ -389,7 +410,7 @@ export interface PatternAnalysis {
 
   /** Design patterns detected */
   designPatterns: Array<{
-    pattern: 'singleton' | 'observer' | 'factory' | 'builder' | 'strategy' | 'decorator';
+    pattern: "singleton" | "observer" | "factory" | "builder" | "strategy" | "decorator";
     entities: string[];
     confidence: number;
     description: string;
@@ -397,7 +418,7 @@ export interface PatternAnalysis {
 
   /** Python idioms detected */
   pythonIdioms: Array<{
-    idiom: 'list_comprehension' | 'dict_comprehension' | 'generator_expression' | 'context_manager' | 'duck_typing';
+    idiom: "list_comprehension" | "dict_comprehension" | "generator_expression" | "context_manager" | "duck_typing";
     locations: Array<{ line: number; column: number }>;
     usage: string;
   }>;
@@ -405,8 +426,8 @@ export interface PatternAnalysis {
   /** Circular dependencies detected */
   circularDependencies: Array<{
     cycle: string[]; // List of files/modules in the cycle
-    type: 'import' | 'inheritance' | 'reference';
-    severity: 'warning' | 'error';
+    type: "import" | "inheritance" | "reference";
+    severity: "warning" | "error";
   }>;
 }
 
@@ -447,7 +468,7 @@ export interface PythonAnalysisConfig {
  */
 export interface PythonMethodInfo {
   /** Method classification */
-  classification: 'instance' | 'class' | 'static' | 'property' | 'abstract' | 'magic';
+  classification: "instance" | "class" | "static" | "property" | "abstract" | "magic";
 
   /** Is this method async */
   isAsync: boolean;
@@ -464,7 +485,20 @@ export interface PythonMethodInfo {
   }>;
 
   /** Magic method type (if applicable) */
-  magicType?: 'init' | 'str' | 'repr' | 'call' | 'enter' | 'exit' | 'iter' | 'next' | 'len' | 'getitem' | 'setitem' | 'delitem' | 'contains';
+  magicType?:
+    | "init"
+    | "str"
+    | "repr"
+    | "call"
+    | "enter"
+    | "exit"
+    | "iter"
+    | "next"
+    | "len"
+    | "getitem"
+    | "setitem"
+    | "delitem"
+    | "contains";
 
   /** Property information (if property) */
   propertyInfo?: {
@@ -490,7 +524,7 @@ export interface PythonMethodInfo {
  */
 export interface PythonClassInfo {
   /** Class type */
-  classType: 'regular' | 'abstract' | 'dataclass' | 'namedtuple' | 'enum' | 'protocol';
+  classType: "regular" | "abstract" | "dataclass" | "namedtuple" | "enum" | "protocol";
 
   /** Base classes */
   baseClasses: string[];
@@ -533,7 +567,7 @@ export interface ImportDependency {
   targetModule: string;
 
   /** Import type */
-  importType: 'absolute' | 'relative' | 'conditional' | 'dynamic';
+  importType: "absolute" | "relative" | "conditional" | "dynamic";
 
   /** Imported symbols */
   symbols: Array<{

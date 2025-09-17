@@ -1,36 +1,37 @@
 /**
  * TASK-001: Graph Storage Implementation
- * 
+ *
  * Core graph storage operations for entities and relationships.
  * Provides efficient querying and traversal of the code graph.
- * 
+ *
  * External Dependencies:
  * - nanoid: https://github.com/ai/nanoid - Secure unique ID generation
- * 
+ *
  * Architecture References:
  * - Storage Types: src/types/storage.ts
  * - SQLite Manager: src/storage/sqlite-manager.ts
  * - Schema Migrations: src/storage/schema-migrations.ts
  */
 
+import type Database from "better-sqlite3";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
-import { nanoid } from 'nanoid';
-import type Database from 'better-sqlite3';
-import type { SQLiteManager } from './sqlite-manager.js';
+import { nanoid } from "nanoid";
 import type {
+  BatchResult,
   Entity,
-  Relationship,
+  EntityType,
   FileInfo,
   GraphQuery,
   GraphQueryResult,
   GraphStorage,
-  BatchResult,
-  EntityType,
+  PerformanceMetric,
+  Relationship,
   RelationType,
-  StorageMetrics
-} from '../types/storage.js';
+  StorageMetrics,
+} from "../types/storage.js";
+import type { SQLiteManager } from "./sqlite-manager.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -47,7 +48,7 @@ const MAX_SUBGRAPH_DEPTH = 5;
 
 export class GraphStorageImpl implements GraphStorage {
   private db: Database.Database;
-  
+
   // Prepared statements for performance
   private statements: {
     insertEntity?: Database.Statement;
@@ -58,134 +59,178 @@ export class GraphStorageImpl implements GraphStorage {
     deleteRelationship?: Database.Statement;
     updateFile?: Database.Statement;
     getFile?: Database.Statement;
+    insertPerformanceMetric?: Database.Statement;
   } = {};
-  
+
   constructor(private sqliteManager: SQLiteManager) {
     this.db = sqliteManager.getConnection();
     this.prepareStatements();
   }
-  
+
   /**
    * Prepare frequently used statements
    */
   private prepareStatements(): void {
+    // Enhanced entity operations with v2 fields
     this.statements.insertEntity = this.db.prepare(`
-      INSERT OR REPLACE INTO entities 
-      (id, name, type, file_path, location, metadata, hash, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR REPLACE INTO entities
+      (id, name, type, file_path, location, metadata, hash, created_at, updated_at,
+       complexity_score, language, size_bytes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    
+
     this.statements.updateEntity = this.db.prepare(`
-      UPDATE entities 
-      SET name = ?, type = ?, location = ?, metadata = ?, hash = ?, updated_at = ?
+      UPDATE entities
+      SET name = ?, type = ?, location = ?, metadata = ?, hash = ?, updated_at = ?,
+          complexity_score = ?, language = ?, size_bytes = ?
       WHERE id = ?
     `);
-    
+
     this.statements.deleteEntity = this.db.prepare(`
       DELETE FROM entities WHERE id = ?
     `);
-    
+
     this.statements.getEntity = this.db.prepare(`
       SELECT * FROM entities WHERE id = ?
     `);
-    
+
+    // Enhanced relationship operations with v2 fields
     this.statements.insertRelationship = this.db.prepare(`
-      INSERT OR REPLACE INTO relationships 
-      (id, from_id, to_id, type, metadata)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT OR REPLACE INTO relationships
+      (id, from_id, to_id, type, metadata, weight, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
-    
+
     this.statements.deleteRelationship = this.db.prepare(`
       DELETE FROM relationships WHERE id = ?
     `);
-    
+
     this.statements.updateFile = this.db.prepare(`
-      INSERT OR REPLACE INTO files 
+      INSERT OR REPLACE INTO files
       (path, hash, last_indexed, entity_count)
       VALUES (?, ?, ?, ?)
     `);
-    
+
     this.statements.getFile = this.db.prepare(`
       SELECT * FROM files WHERE path = ?
     `);
+
+    // Performance monitoring statement
+    this.statements.insertPerformanceMetric = this.db.prepare(`
+      INSERT INTO performance_metrics (id, operation, duration_ms, entity_count, memory_usage, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
   }
-  
+
   // =============================================================================
   // 4. ENTITY OPERATIONS
   // =============================================================================
-  
+
   async insertEntity(entity: Entity): Promise<void> {
-    const now = Date.now();
-    const id = entity.id || this.generateId();
-    
-    this.statements.insertEntity!.run(
-      id,
-      entity.name,
-      entity.type,
-      entity.filePath,
-      JSON.stringify(entity.location),
-      JSON.stringify(entity.metadata),
-      entity.hash,
-      entity.createdAt || now,
-      entity.updatedAt || now
+    return this.measureOperation(
+      "insert_entity",
+      () => {
+        const now = Date.now();
+        const id = entity.id || this.generateId();
+
+        // Calculate complexity score and language if not provided
+        const complexityScore = entity.complexityScore ?? this.calculateComplexity(entity);
+        const language = entity.language ?? this.detectLanguage(entity.filePath);
+        const sizeBytes = entity.sizeBytes ?? 0;
+
+        this.statements.insertEntity!.run(
+          id,
+          entity.name,
+          entity.type,
+          entity.filePath,
+          JSON.stringify(entity.location),
+          JSON.stringify(entity.metadata),
+          entity.hash,
+          entity.createdAt || now,
+          entity.updatedAt || now,
+          complexityScore,
+          language,
+          sizeBytes,
+        );
+      },
+      1,
     );
   }
-  
+
   async insertEntities(entities: Entity[]): Promise<BatchResult> {
-    const start = Date.now();
-    const errors: Array<{ item: unknown; error: string }> = [];
-    let processed = 0;
-    
-    const transaction = this.db.transaction((entities: Entity[]) => {
-      for (const entity of entities) {
+    return this.measureOperation(
+      "insert_entities_batch",
+      () => {
+        const start = Date.now();
+        const errors: Array<{ item: unknown; error: string }> = [];
+        let processed = 0;
+
+        const transaction = this.db.transaction((entities: Entity[]) => {
+          for (const entity of entities) {
+            try {
+              const now = Date.now();
+              const id = entity.id || this.generateId();
+
+              // Calculate enhanced fields
+              const complexityScore = entity.complexityScore ?? this.calculateComplexity(entity);
+              const language = entity.language ?? this.detectLanguage(entity.filePath);
+              const sizeBytes = entity.sizeBytes ?? 0;
+
+              this.statements.insertEntity!.run(
+                id,
+                entity.name,
+                entity.type,
+                entity.filePath,
+                JSON.stringify(entity.location),
+                JSON.stringify(entity.metadata),
+                entity.hash,
+                entity.createdAt || now,
+                entity.updatedAt || now,
+                complexityScore,
+                language,
+                sizeBytes,
+              );
+
+              processed++;
+            } catch (error) {
+              errors.push({
+                item: entity,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
+        });
+
         try {
-          const now = Date.now();
-          const id = entity.id || this.generateId();
-          
-          this.statements.insertEntity!.run(
-            id,
-            entity.name,
-            entity.type,
-            entity.filePath,
-            JSON.stringify(entity.location),
-            JSON.stringify(entity.metadata),
-            entity.hash,
-            entity.createdAt || now,
-            entity.updatedAt || now
-          );
-          
-          processed++;
+          transaction(entities);
         } catch (error) {
-          errors.push({
-            item: entity,
-            error: error instanceof Error ? error.message : String(error)
-          });
+          console.error("[GraphStorage] Batch insert failed:", error);
         }
-      }
-    });
-    
-    try {
-      transaction(entities);
-    } catch (error) {
-      console.error('[GraphStorage] Batch insert failed:', error);
-    }
-    
-    return {
-      processed,
-      failed: errors.length,
-      errors,
-      timeMs: Date.now() - start
-    };
+
+        return {
+          processed,
+          failed: errors.length,
+          errors,
+          timeMs: Date.now() - start,
+        };
+      },
+      entities.length,
+    );
   }
-  
+
   async updateEntity(id: string, updates: Partial<Entity>): Promise<void> {
     const existing = await this.getEntity(id);
     if (!existing) {
       throw new Error(`Entity ${id} not found`);
     }
-    
+
     const updated = { ...existing, ...updates, updatedAt: Date.now() };
-    
+
+    // Recalculate enhanced fields if necessary
+    const complexityScore = updated.complexityScore ?? this.calculateComplexity(updated);
+    const language = updated.language ?? this.detectLanguage(updated.filePath);
+    const sizeBytes = updated.sizeBytes ?? 0;
+
     this.statements.updateEntity!.run(
       updated.name,
       updated.type,
@@ -193,328 +238,512 @@ export class GraphStorageImpl implements GraphStorage {
       JSON.stringify(updated.metadata),
       updated.hash,
       updated.updatedAt,
-      id
+      complexityScore,
+      language,
+      sizeBytes,
+      id,
     );
   }
-  
+
   async deleteEntity(id: string): Promise<void> {
     this.statements.deleteEntity!.run(id);
   }
-  
+
   async getEntity(id: string): Promise<Entity | null> {
     const row = this.statements.getEntity!.get(id) as any;
     return row ? this.rowToEntity(row) : null;
   }
-  
+
   async findEntities(query: GraphQuery): Promise<Entity[]> {
-    let sql = 'SELECT * FROM entities WHERE 1=1';
+    let sql = "SELECT * FROM entities WHERE 1=1";
     const params: any[] = [];
-    
+
     // Apply filters
     if (query.filters) {
       if (query.filters.entityType) {
-        const types = Array.isArray(query.filters.entityType) 
-          ? query.filters.entityType 
-          : [query.filters.entityType];
-        sql += ` AND type IN (${types.map(() => '?').join(',')})`;
+        const types = Array.isArray(query.filters.entityType) ? query.filters.entityType : [query.filters.entityType];
+        sql += ` AND type IN (${types.map(() => "?").join(",")})`;
         params.push(...types);
       }
-      
+
       if (query.filters.filePath) {
-        const paths = Array.isArray(query.filters.filePath)
-          ? query.filters.filePath
-          : [query.filters.filePath];
-        sql += ` AND file_path IN (${paths.map(() => '?').join(',')})`;
+        const paths = Array.isArray(query.filters.filePath) ? query.filters.filePath : [query.filters.filePath];
+        sql += ` AND file_path IN (${paths.map(() => "?").join(",")})`;
         params.push(...paths);
       }
-      
+
       if (query.filters.name) {
         if (query.filters.name instanceof RegExp) {
           // Use LIKE for regex-like matching
-          const pattern = query.filters.name.source.replace(/\*/g, '%');
-          sql += ' AND name LIKE ?';
+          const pattern = query.filters.name.source.replace(/\*/g, "%");
+          sql += " AND name LIKE ?";
           params.push(pattern);
         } else {
-          sql += ' AND name = ?';
+          sql += " AND name = ?";
           params.push(query.filters.name);
         }
       }
     }
-    
+
     // Apply limit and offset
     const limit = Math.min(query.limit || DEFAULT_QUERY_LIMIT, MAX_QUERY_LIMIT);
-    sql += ' LIMIT ? OFFSET ?';
+    sql += " LIMIT ? OFFSET ?";
     params.push(limit, query.offset || 0);
-    
+
     const rows = this.db.prepare(sql).all(...params) as any[];
-    return rows.map(row => this.rowToEntity(row));
+    return rows.map((row) => this.rowToEntity(row));
   }
-  
+
   // =============================================================================
   // 5. RELATIONSHIP OPERATIONS
   // =============================================================================
-  
+
   async insertRelationship(relationship: Relationship): Promise<void> {
     const id = relationship.id || this.generateId();
-    
+    const now = Date.now();
+
     this.statements.insertRelationship!.run(
       id,
       relationship.fromId,
       relationship.toId,
       relationship.type,
-      relationship.metadata ? JSON.stringify(relationship.metadata) : null
+      relationship.metadata ? JSON.stringify(relationship.metadata) : null,
+      relationship.weight ?? 1.0,
+      relationship.createdAt ?? now,
     );
   }
-  
+
   async insertRelationships(relationships: Relationship[]): Promise<BatchResult> {
     const start = Date.now();
     const errors: Array<{ item: unknown; error: string }> = [];
     let processed = 0;
-    
+
     const transaction = this.db.transaction((relationships: Relationship[]) => {
       for (const relationship of relationships) {
         try {
           const id = relationship.id || this.generateId();
-          
+          const now = Date.now();
+
           this.statements.insertRelationship!.run(
             id,
             relationship.fromId,
             relationship.toId,
             relationship.type,
-            relationship.metadata ? JSON.stringify(relationship.metadata) : null
+            relationship.metadata ? JSON.stringify(relationship.metadata) : null,
+            relationship.weight ?? 1.0,
+            relationship.createdAt ?? now,
           );
-          
+
           processed++;
         } catch (error) {
           errors.push({
             item: relationship,
-            error: error instanceof Error ? error.message : String(error)
+            error: error instanceof Error ? error.message : String(error),
           });
         }
       }
     });
-    
+
     try {
       transaction(relationships);
     } catch (error) {
-      console.error('[GraphStorage] Batch relationship insert failed:', error);
+      console.error("[GraphStorage] Batch relationship insert failed:", error);
     }
-    
+
     return {
       processed,
       failed: errors.length,
       errors,
-      timeMs: Date.now() - start
+      timeMs: Date.now() - start,
     };
   }
-  
+
   async deleteRelationship(id: string): Promise<void> {
     this.statements.deleteRelationship!.run(id);
   }
-  
-  async getRelationshipsForEntity(
-    entityId: string, 
-    type?: RelationType
-  ): Promise<Relationship[]> {
+
+  async getRelationshipsForEntity(entityId: string, type?: RelationType): Promise<Relationship[]> {
     let sql = `
       SELECT * FROM relationships 
       WHERE (from_id = ? OR to_id = ?)
     `;
     const params: any[] = [entityId, entityId];
-    
+
     if (type) {
-      sql += ' AND type = ?';
+      sql += " AND type = ?";
       params.push(type);
     }
-    
+
     const rows = this.db.prepare(sql).all(...params) as any[];
-    return rows.map(row => this.rowToRelationship(row));
+    return rows.map((row) => this.rowToRelationship(row));
   }
-  
+
   async findRelationships(query: GraphQuery): Promise<Relationship[]> {
-    let sql = 'SELECT * FROM relationships WHERE 1=1';
+    let sql = "SELECT * FROM relationships WHERE 1=1";
     const params: any[] = [];
-    
+
     // Apply filters
     if (query.filters) {
       if (query.filters.relationshipType) {
         const types = Array.isArray(query.filters.relationshipType)
           ? query.filters.relationshipType
           : [query.filters.relationshipType];
-        sql += ` AND type IN (${types.map(() => '?').join(',')})`;
+        sql += ` AND type IN (${types.map(() => "?").join(",")})`;
         params.push(...types);
       }
     }
-    
+
     // Apply limit and offset
     const limit = Math.min(query.limit || DEFAULT_QUERY_LIMIT, MAX_QUERY_LIMIT);
-    sql += ' LIMIT ? OFFSET ?';
+    sql += " LIMIT ? OFFSET ?";
     params.push(limit, query.offset || 0);
-    
+
     const rows = this.db.prepare(sql).all(...params) as any[];
-    return rows.map(row => this.rowToRelationship(row));
+    return rows.map((row) => this.rowToRelationship(row));
   }
-  
+
   // =============================================================================
   // 6. FILE OPERATIONS
   // =============================================================================
-  
+
   async updateFileInfo(info: FileInfo): Promise<void> {
-    this.statements.updateFile!.run(
-      info.path,
-      info.hash,
-      info.lastIndexed,
-      info.entityCount
-    );
+    this.statements.updateFile!.run(info.path, info.hash, info.lastIndexed, info.entityCount);
   }
-  
+
   async getFileInfo(path: string): Promise<FileInfo | null> {
     const row = this.statements.getFile!.get(path) as any;
-    
-    return row ? {
-      path: row.path,
-      hash: row.hash,
-      lastIndexed: row.last_indexed,
-      entityCount: row.entity_count
-    } : null;
+
+    return row
+      ? {
+          path: row.path,
+          hash: row.hash,
+          lastIndexed: row.last_indexed,
+          entityCount: row.entity_count,
+        }
+      : null;
   }
-  
+
   async getOutdatedFiles(since: number): Promise<FileInfo[]> {
-    const rows = this.db.prepare(`
+    const rows = this.db
+      .prepare(`
       SELECT * FROM files 
       WHERE last_indexed < ?
       ORDER BY last_indexed ASC
-    `).all(since) as any[];
-    
-    return rows.map(row => ({
+    `)
+      .all(since) as any[];
+
+    return rows.map((row) => ({
       path: row.path,
       hash: row.hash,
       lastIndexed: row.last_indexed,
-      entityCount: row.entity_count
+      entityCount: row.entity_count,
     }));
   }
-  
+
   // =============================================================================
   // 7. QUERY OPERATIONS
   // =============================================================================
-  
+
   async executeQuery(query: GraphQuery): Promise<GraphQueryResult> {
-    const start = Date.now();
-    
-    const entities = await this.findEntities(query);
-    const relationships = await this.findRelationships(query);
-    
-    // Get total counts
-    const totalEntities = this.db.prepare('SELECT COUNT(*) as count FROM entities').get() as { count: number };
-    const totalRelationships = this.db.prepare('SELECT COUNT(*) as count FROM relationships').get() as { count: number };
-    
-    return {
-      entities,
-      relationships,
-      stats: {
-        totalEntities: totalEntities.count,
-        totalRelationships: totalRelationships.count,
-        queryTimeMs: Date.now() - start
-      }
-    };
+    return this.measureOperation(
+      "execute_query",
+      async () => {
+        const start = Date.now();
+
+        const entities = await this.findEntities(query);
+        const relationships = await this.findRelationships(query);
+
+        // Get total counts
+        const totalEntities = this.db.prepare("SELECT COUNT(*) as count FROM entities").get() as { count: number };
+        const totalRelationships = this.db.prepare("SELECT COUNT(*) as count FROM relationships").get() as {
+          count: number;
+        };
+
+        return {
+          entities,
+          relationships,
+          stats: {
+            totalEntities: totalEntities.count,
+            totalRelationships: totalRelationships.count,
+            queryTimeMs: Date.now() - start,
+          },
+        };
+      },
+      entities?.length,
+    );
   }
-  
+
   async getSubgraph(entityId: string, depth: number): Promise<GraphQueryResult> {
-    const start = Date.now();
-    const maxDepth = Math.min(depth, MAX_SUBGRAPH_DEPTH);
-    
-    const entities = new Map<string, Entity>();
-    const relationships = new Map<string, Relationship>();
-    const visited = new Set<string>();
-    
-    // BFS traversal
-    const queue: Array<{ id: string; level: number }> = [{ id: entityId, level: 0 }];
-    
-    while (queue.length > 0) {
-      const { id, level } = queue.shift()!;
-      
-      if (visited.has(id) || level > maxDepth) continue;
-      visited.add(id);
-      
-      // Get entity
-      const entity = await this.getEntity(id);
-      if (entity) {
-        entities.set(id, entity);
-        
-        // Get relationships
-        const rels = await this.getRelationshipsForEntity(id);
-        for (const rel of rels) {
-          relationships.set(rel.id, rel);
-          
-          // Add connected entities to queue
-          if (level < maxDepth) {
-            const nextId = rel.fromId === id ? rel.toId : rel.fromId;
-            if (!visited.has(nextId)) {
-              queue.push({ id: nextId, level: level + 1 });
+    return this.measureOperation(
+      "get_subgraph",
+      async () => {
+        const start = Date.now();
+        const maxDepth = Math.min(depth, MAX_SUBGRAPH_DEPTH);
+
+        const entities = new Map<string, Entity>();
+        const relationships = new Map<string, Relationship>();
+        const visited = new Set<string>();
+
+        // BFS traversal
+        const queue: Array<{ id: string; level: number }> = [{ id: entityId, level: 0 }];
+
+        while (queue.length > 0) {
+          const { id, level } = queue.shift()!;
+
+          if (visited.has(id) || level > maxDepth) continue;
+          visited.add(id);
+
+          // Get entity
+          const entity = await this.getEntity(id);
+          if (entity) {
+            entities.set(id, entity);
+
+            // Get relationships
+            const rels = await this.getRelationshipsForEntity(id);
+            for (const rel of rels) {
+              relationships.set(rel.id, rel);
+
+              // Add connected entities to queue
+              if (level < maxDepth) {
+                const nextId = rel.fromId === id ? rel.toId : rel.fromId;
+                if (!visited.has(nextId)) {
+                  queue.push({ id: nextId, level: level + 1 });
+                }
+              }
             }
           }
         }
-      }
-    }
-    
-    return {
-      entities: Array.from(entities.values()),
-      relationships: Array.from(relationships.values()),
-      stats: {
-        totalEntities: entities.size,
-        totalRelationships: relationships.size,
-        queryTimeMs: Date.now() - start
-      }
-    };
+
+        return {
+          entities: Array.from(entities.values()),
+          relationships: Array.from(relationships.values()),
+          stats: {
+            totalEntities: entities.size,
+            totalRelationships: relationships.size,
+            queryTimeMs: Date.now() - start,
+          },
+        };
+      },
+      1,
+    );
   }
-  
+
   // =============================================================================
   // 8. MAINTENANCE OPERATIONS
   // =============================================================================
-  
+
   async vacuum(): Promise<void> {
     this.sqliteManager.vacuum();
   }
-  
+
   async analyze(): Promise<void> {
     this.sqliteManager.analyze();
   }
-  
+
   async getMetrics(): Promise<StorageMetrics> {
-    const baseMetrics = await this.sqliteManager.getMetrics();
-    
-    // Get cache metrics
-    const cacheStats = this.db.prepare(`
-      SELECT 
-        COUNT(*) as entries,
-        SUM(hit_count) as hits
-      FROM query_cache
-      WHERE expires_at > ?
-    `).get(Date.now()) as { entries: number; hits: number };
-    
-    // Get last vacuum time (stored as user_version for simplicity)
-    const lastVacuum = this.db.pragma('user_version', { simple: true }) as number;
-    
-    return {
-      ...baseMetrics,
-      cacheHitRate: cacheStats.hits > 0 ? cacheStats.hits / (cacheStats.hits + cacheStats.entries) : 0,
-      lastVacuum
-    } as StorageMetrics;
+    return this.measureOperation("get_metrics", async () => {
+      const baseMetrics = await this.sqliteManager.getMetrics();
+
+      // Get cache metrics with enhanced v2 fields
+      const cacheStats = this.db
+        .prepare(`
+        SELECT
+          COUNT(*) as entries,
+          SUM(hit_count) as hits,
+          SUM(miss_count) as misses
+        FROM query_cache
+        WHERE expires_at > ?
+      `)
+        .get(Date.now()) as { entries: number; hits: number; misses: number };
+
+      // Get embeddings count
+      const embeddingsCount = this.db
+        .prepare(`
+        SELECT COUNT(*) as count FROM embeddings
+      `)
+        .get() as { count: number };
+
+      // Get performance metrics count
+      const perfMetricsCount = this.db
+        .prepare(`
+        SELECT COUNT(*) as count FROM performance_metrics
+      `)
+        .get() as { count: number };
+
+      // Calculate average query time from performance metrics
+      const avgQueryTime = this.db
+        .prepare(`
+        SELECT AVG(duration_ms) as avg_time
+        FROM performance_metrics
+        WHERE operation LIKE '%query%' AND created_at > ?
+      `)
+        .get(Date.now() - 24 * 60 * 60 * 1000) as { avg_time: number }; // Last 24 hours
+
+      // Get last vacuum time (stored as user_version for simplicity)
+      const lastVacuum = this.db.pragma("user_version", { simple: true }) as number;
+
+      // Check if vector search is enabled (sqlite-vec extension)
+      let vectorSearchEnabled = false;
+      try {
+        this.db.prepare("SELECT vec_version()").get();
+        vectorSearchEnabled = true;
+      } catch {
+        // sqlite-vec not available
+      }
+
+      // Get current memory usage
+      const memoryUsage = process.memoryUsage();
+
+      return {
+        ...baseMetrics,
+        cacheHitRate:
+          cacheStats.hits + cacheStats.misses > 0 ? cacheStats.hits / (cacheStats.hits + cacheStats.misses) : 0,
+        lastVacuum,
+
+        // Enhanced v2 metrics
+        totalEmbeddings: embeddingsCount.count,
+        vectorSearchEnabled,
+        performanceMetricsCount: perfMetricsCount.count,
+        memoryUsageMB: Math.round(memoryUsage.heapUsed / 1024 / 1024),
+        concurrentConnections: 1, // Single connection for now
+        averageQueryTimeMs: avgQueryTime.avg_time || 0,
+      } as StorageMetrics;
+    });
   }
-  
+
   // =============================================================================
   // 9. UTILITY METHODS
   // =============================================================================
-  
+
   /**
    * Generate unique ID
    */
   private generateId(): string {
     return nanoid(ID_LENGTH);
   }
-  
+
   /**
-   * Convert database row to Entity
+   * Calculate complexity score for an entity
+   */
+  private calculateComplexity(entity: Entity): number {
+    let score = 1;
+
+    // Base complexity by type
+    switch (entity.type) {
+      case "function":
+        score = 2;
+        break;
+      case "class":
+        score = 3;
+        break;
+      case "method":
+        score = 2;
+        break;
+      case "interface":
+        score = 2;
+        break;
+      default:
+        score = 1;
+    }
+
+    // Add complexity based on parameters
+    if (entity.metadata.parameters?.length) {
+      score += Math.min(entity.metadata.parameters.length * 0.5, 3);
+    }
+
+    // Add complexity based on modifiers
+    if (entity.metadata.modifiers?.length) {
+      score += Math.min(entity.metadata.modifiers.length * 0.3, 2);
+    }
+
+    return Math.round(score);
+  }
+
+  /**
+   * Record performance metric
+   */
+  private recordPerformanceMetric(
+    operation: string,
+    durationMs: number,
+    entityCount?: number,
+    memoryUsage?: number,
+  ): void {
+    try {
+      const id = this.generateId();
+      const now = Date.now();
+
+      this.statements.insertPerformanceMetric?.run(id, operation, durationMs, entityCount ?? 0, memoryUsage ?? 0, now);
+    } catch (error) {
+      // Don't let performance monitoring errors break main operations
+      console.warn("[GraphStorage] Performance metric recording failed:", error);
+    }
+  }
+
+  /**
+   * Measure operation performance
+   */
+  private async measureOperation<T>(operation: string, fn: () => Promise<T> | T, entityCount?: number): Promise<T> {
+    const start = Date.now();
+    const startMemory = process.memoryUsage().heapUsed;
+
+    try {
+      const result = await fn();
+      const duration = Date.now() - start;
+      const memoryDelta = process.memoryUsage().heapUsed - startMemory;
+
+      this.recordPerformanceMetric(operation, duration, entityCount, memoryDelta);
+
+      return result;
+    } catch (error) {
+      const duration = Date.now() - start;
+      this.recordPerformanceMetric(`${operation}_error`, duration, entityCount);
+      throw error;
+    }
+  }
+
+  /**
+   * Detect programming language from file path
+   */
+  private detectLanguage(filePath: string): string {
+    const ext = filePath.split(".").pop()?.toLowerCase();
+
+    switch (ext) {
+      case "ts":
+      case "tsx":
+        return "typescript";
+      case "js":
+      case "jsx":
+      case "mjs":
+        return "javascript";
+      case "py":
+        return "python";
+      case "java":
+        return "java";
+      case "c":
+        return "c";
+      case "cpp":
+      case "cc":
+      case "cxx":
+        return "cpp";
+      case "rs":
+        return "rust";
+      case "go":
+        return "go";
+      case "php":
+        return "php";
+      case "rb":
+        return "ruby";
+      case "swift":
+        return "swift";
+      case "kt":
+        return "kotlin";
+      default:
+        return "unknown";
+    }
+  }
+
+  /**
+   * Convert database row to Entity (enhanced for v2)
    */
   private rowToEntity(row: any): Entity {
     return {
@@ -526,12 +755,15 @@ export class GraphStorageImpl implements GraphStorage {
       metadata: row.metadata ? JSON.parse(row.metadata) : {},
       hash: row.hash,
       createdAt: row.created_at,
-      updatedAt: row.updated_at
+      updatedAt: row.updated_at,
+      complexityScore: row.complexity_score,
+      language: row.language,
+      sizeBytes: row.size_bytes,
     };
   }
-  
+
   /**
-   * Convert database row to Relationship
+   * Convert database row to Relationship (enhanced for v2)
    */
   private rowToRelationship(row: any): Relationship {
     return {
@@ -539,21 +771,23 @@ export class GraphStorageImpl implements GraphStorage {
       fromId: row.from_id,
       toId: row.to_id,
       type: row.type as RelationType,
-      metadata: row.metadata ? JSON.parse(row.metadata) : undefined
+      metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+      weight: row.weight,
+      createdAt: row.created_at,
     };
   }
-  
+
   /**
    * Clear all data (for testing)
    */
   async clear(): Promise<void> {
     const transaction = this.db.transaction(() => {
-      this.db.exec('DELETE FROM relationships');
-      this.db.exec('DELETE FROM entities');
-      this.db.exec('DELETE FROM files');
-      this.db.exec('DELETE FROM query_cache');
+      this.db.exec("DELETE FROM relationships");
+      this.db.exec("DELETE FROM entities");
+      this.db.exec("DELETE FROM files");
+      this.db.exec("DELETE FROM query_cache");
     });
-    
+
     transaction();
   }
 }

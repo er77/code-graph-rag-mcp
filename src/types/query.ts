@@ -1,17 +1,17 @@
 /**
  * TASK-002: Query Type Definitions for QueryAgent
- * 
+ *
  * Type definitions for graph traversal, relationship queries, and query operations.
  * Provides interfaces for query processing, caching, and streaming.
- * 
+ *
  * External Dependencies:
  * - None (pure TypeScript type definitions)
- * 
+ *
  * Architecture References:
  * - Storage Types: src/types/storage.ts
  * - Agent Types: src/types/agent.ts
  * - Graph Storage: src/storage/graph-storage.ts
- * 
+ *
  * @task_id TASK-002
  * @coding_standard Adheres to: doc/CODING_STANDARD.md
  * @history
@@ -21,7 +21,7 @@
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
-import type { Entity, Relationship, EntityType, RelationType } from './storage.js';
+import type { Entity, EntityType, Relationship, RelationType } from "./storage.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -38,7 +38,7 @@ export const DEFAULT_TTL_MS = 300000; // 5 minutes
 // =============================================================================
 
 // Re-export Entity and Relationship for external usage
-export type { Entity, Relationship } from './storage.js';
+export type { Entity, Relationship } from "./storage.js";
 
 /**
  * Filter for entity queries
@@ -94,7 +94,7 @@ export interface DependencyNode {
 export interface Cycle {
   nodes: Entity[];
   edges: Relationship[];
-  type: 'import' | 'inheritance' | 'reference';
+  type: "import" | "inheritance" | "reference";
 }
 
 /**
@@ -119,7 +119,7 @@ export interface ImpactAnalysis {
   impactedEntities: Entity[];
   directImpacts: Entity[];
   indirectImpacts: Entity[];
-  riskLevel: 'low' | 'medium' | 'high' | 'critical';
+  riskLevel: "low" | "medium" | "high" | "critical";
   affectedFiles: string[];
 }
 
@@ -128,17 +128,20 @@ export interface ImpactAnalysis {
  */
 export interface Change {
   entityId: string;
-  type: 'added' | 'modified' | 'deleted';
+  type: "added" | "modified" | "deleted";
   timestamp: number;
 }
 
 export interface RippleEffect {
   changes: Change[];
-  affectedEntities: Map<string, {
-    entity: Entity;
-    impactLevel: number;
-    reason: string;
-  }>;
+  affectedEntities: Map<
+    string,
+    {
+      entity: Entity;
+      impactLevel: number;
+      reason: string;
+    }
+  >;
   estimatedRisk: number;
 }
 
@@ -149,20 +152,20 @@ export interface QueryOperations {
   // Basic queries
   getEntity(id: string): Promise<Entity | null>;
   listEntities(filter: EntityFilter): Promise<Entity[]>;
-  
+
   // Relationship queries
   getRelationships(entityId: string, type?: RelationType): Promise<Relationship[]>;
   getRelatedEntities(entityId: string, depth: number): Promise<Entity[]>;
-  
+
   // Graph traversal
   findPath(fromId: string, toId: string): Promise<Path | null>;
   getSubgraph(rootId: string, depth: number): Promise<Graph>;
-  
+
   // Advanced queries
   findDependencies(entityId: string): Promise<DependencyTree>;
   detectCycles(): Promise<Cycle[]>;
   analyzeHotspots(): Promise<Hotspot[]>;
-  
+
   // Impact analysis
   getImpactedEntities(entityId: string): Promise<ImpactAnalysis>;
   calculateChangeRipple(changes: Change[]): Promise<RippleEffect>;
@@ -173,7 +176,7 @@ export interface QueryOperations {
  */
 export interface GraphQuery {
   id: string;
-  type: 'entity' | 'relationship' | 'traversal' | 'analysis';
+  type: "entity" | "relationship" | "traversal" | "analysis";
   operation: string;
   params: Record<string, unknown>;
   hash: string;
@@ -189,7 +192,7 @@ export interface QueryResult<T = unknown> {
   metadata: {
     executionTimeMs: number;
     fromCache: boolean;
-    cacheLevel?: 'L1' | 'L2' | 'L3';
+    cacheLevel?: "L1" | "L2" | "L3";
   };
 }
 

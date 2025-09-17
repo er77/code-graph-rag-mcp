@@ -4,20 +4,20 @@
  */
 
 export enum AgentType {
-  COORDINATOR = 'coordinator',
-  DEV = 'dev',
-  DORA = 'dora',
-  INDEXER = 'indexer',
-  PARSER = 'parser',
-  QUERY = 'query',
-  SEMANTIC = 'semantic'
+  COORDINATOR = "coordinator",
+  DEV = "dev",
+  DORA = "dora",
+  INDEXER = "indexer",
+  PARSER = "parser",
+  QUERY = "query",
+  SEMANTIC = "semantic",
 }
 
 export enum AgentStatus {
-  IDLE = 'idle',
-  BUSY = 'busy',
-  ERROR = 'error',
-  SHUTDOWN = 'shutdown'
+  IDLE = "idle",
+  BUSY = "busy",
+  ERROR = "error",
+  SHUTDOWN = "shutdown",
 }
 
 export interface AgentCapabilities {
@@ -54,19 +54,19 @@ export interface Agent {
   type: AgentType;
   status: AgentStatus;
   capabilities: AgentCapabilities;
-  
+
   // Lifecycle methods
   initialize(): Promise<void>;
   shutdown(): Promise<void>;
-  
+
   // Task processing
   canHandle(task: AgentTask): boolean;
   process(task: AgentTask): Promise<unknown>;
-  
+
   // Communication
   send(message: AgentMessage): Promise<void>;
   receive(message: AgentMessage): Promise<void>;
-  
+
   // Resource management
   getMemoryUsage(): number;
   getCpuUsage(): number;
@@ -75,14 +75,14 @@ export interface Agent {
 
 export interface AgentPool {
   agents: Map<string, Agent>;
-  
+
   register(agent: Agent): void;
   unregister(agentId: string): void;
-  
+
   getAgent(id: string): Agent | undefined;
   getAgentsByType(type: AgentType): Agent[];
   getAvailableAgent(type: AgentType): Agent | undefined;
-  
+
   broadcast(message: AgentMessage): Promise<void>;
   route(task: AgentTask): Promise<Agent | undefined>;
 }

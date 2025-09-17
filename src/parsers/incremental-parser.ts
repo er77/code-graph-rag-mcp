@@ -1,29 +1,23 @@
 /**
  * TASK-001: Incremental Parser Module
- * 
+ *
  * Handles incremental parsing with content hashing and caching.
  * Uses xxhash for ultra-fast hashing and LRU cache for warm restarts.
- * 
+ *
  * Architecture References:
  * - Parser Types: src/types/parser.ts
  * - Tree-sitter Parser: src/parsers/tree-sitter-parser.ts
  */
 
+import { createHash } from "node:crypto";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
-import { promises as fs } from 'node:fs';
-import { createHash } from 'node:crypto';
-import { LRUCache } from 'lru-cache';
-import xxhash from 'xxhash-wasm';
-import type { 
-  ParseResult, 
-  FileChange, 
-  CacheEntry,
-  ParserStats,
-  ParserOptions
-} from '../types/parser.js';
-import { TreeSitterParser } from './tree-sitter-parser.js';
+import { promises as fs } from "node:fs";
+import { LRUCache } from "lru-cache";
+// Removed: xxhash-wasm dependency - using native crypto for better performance
+import type { CacheEntry, FileChange, ParseResult, ParserOptions, ParserStats } from "../types/parser.js";
+import { TreeSitterParser } from "./tree-sitter-parser.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -35,9 +29,7 @@ const DEFAULT_TIMEOUT_MS = 5000;
 // =============================================================================
 // 3. DATA MODELS AND TYPE DEFINITIONS
 // =============================================================================
-interface HashFunction {
-  (data: Uint8Array): bigint;
-}
+type HashFunction = (data: string) => string;
 
 interface BatchResult {
   results: ParseResult[];
@@ -55,13 +47,7 @@ interface BatchResult {
 // 4. UTILITY FUNCTIONS AND HELPERS
 // =============================================================================
 
-/**
- * Convert string to Uint8Array for hashing
- */
-function stringToUint8Array(str: string): Uint8Array {
-  const encoder = new TextEncoder();
-  return encoder.encode(str);
-}
+// Removed: stringToUint8Array - no longer needed with native crypto
 
 /**
  * Create a timeout promise
@@ -69,9 +55,7 @@ function stringToUint8Array(str: string): Uint8Array {
 function timeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([
     promise,
-    new Promise<T>((_, reject) => 
-      setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms)
-    )
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms)),
   ]);
 }
 
@@ -92,14 +76,14 @@ export class IncrementalParser {
   constructor(cacheSize: number = DEFAULT_CACHE_SIZE) {
     // TASK-001: Initialize parser and cache
     this.parser = new TreeSitterParser();
-    
+
     this.cache = new LRUCache<string, CacheEntry>({
       maxSize: cacheSize,
       sizeCalculation: (entry) => entry.size,
       dispose: (entry) => {
         // Clean up when evicted
         console.log(`[IncrementalParser] Evicted cache entry: ${entry.hash}`);
-      }
+      },
     });
 
     this.stats = {
@@ -110,7 +94,7 @@ export class IncrementalParser {
       totalParseTimeMs: 0,
       throughput: 0,
       cacheMemoryMB: 0,
-      errorCount: 0
+      errorCount: 0,
     };
   }
 
@@ -118,47 +102,41 @@ export class IncrementalParser {
    * Initialize the parser and hash function
    */
   async initialize(): Promise<void> {
-    console.log('[IncrementalParser] Initializing...');
-    
+    console.log("[IncrementalParser] Initializing...");
+
     // Initialize tree-sitter parser
     await this.parser.initialize();
-    
-    // Initialize xxhash for ultra-fast hashing
-    const xxhashModule = await xxhash();
-    // xxhash h64 returns a bigint, we'll use it directly
-    this.hashFunction = xxhashModule.h64;
-    
-    console.log('[IncrementalParser] Initialization complete');
+
+    // Initialize native crypto hash function for fast hashing
+    this.hashFunction = (content: string) => {
+      return createHash("sha256").update(content).digest("hex").substring(0, 16);
+    };
+
+    console.log("[IncrementalParser] Initialization complete");
   }
 
   /**
-   * Compute content hash using xxhash
+   * Compute content hash using native crypto
    */
   computeFileHash(content: string): string {
     if (!this.hashFunction) {
-      // Fallback to crypto hash if xxhash not initialized
-      return createHash('sha256').update(content).digest('hex').slice(0, 16);
+      // Direct fallback to crypto hash
+      return createHash("sha256").update(content).digest("hex").substring(0, 16);
     }
-    
-    const data = stringToUint8Array(content);
-    const hash = this.hashFunction(data);
-    return hash.toString(16);
+
+    return this.hashFunction(content);
   }
 
   /**
    * Parse a single file with caching
    */
-  async parseFile(
-    filePath: string, 
-    content?: string,
-    options: ParserOptions = {}
-  ): Promise<ParseResult> {
+  async parseFile(filePath: string, content?: string, options: ParserOptions = {}): Promise<ParseResult> {
     const startTime = Date.now();
 
     try {
       // Read content if not provided
       if (content === undefined) {
-        content = await fs.readFile(filePath, 'utf-8');
+        content = await fs.readFile(filePath, "utf-8");
       }
 
       // Compute hash
@@ -178,7 +156,7 @@ export class IncrementalParser {
       // Parse the file
       const result = await timeout(
         this.parser.parse(filePath, content, contentHash),
-        options.timeoutMs || DEFAULT_TIMEOUT_MS
+        options.timeoutMs || DEFAULT_TIMEOUT_MS,
       );
 
       // Store in cache
@@ -191,21 +169,22 @@ export class IncrementalParser {
       this.fileHashes.set(filePath, contentHash);
 
       return result;
-
     } catch (error) {
       this.stats.errorCount++;
       console.error(`[IncrementalParser] Error parsing ${filePath}:`, error);
-      
+
       return {
         filePath,
-        language: 'javascript',
+        language: "javascript",
         entities: [],
-        contentHash: '',
+        contentHash: "",
         timestamp: Date.now(),
         parseTimeMs: Date.now() - startTime,
-        errors: [{
-          message: error instanceof Error ? error.message : String(error)
-        }]
+        errors: [
+          {
+            message: error instanceof Error ? error.message : String(error),
+          },
+        ],
       };
     }
   }
@@ -213,10 +192,7 @@ export class IncrementalParser {
   /**
    * Process files in batches for optimal performance
    */
-  async parseBatch(
-    files: string[],
-    options: ParserOptions = {}
-  ): Promise<BatchResult> {
+  async parseBatch(files: string[], options: ParserOptions = {}): Promise<BatchResult> {
     const batchSize = options.batchSize || DEFAULT_BATCH_SIZE;
     const results: ParseResult[] = [];
     const errors: Array<{ file: string; error: Error }> = [];
@@ -228,17 +204,17 @@ export class IncrementalParser {
     // Process in batches
     for (let i = 0; i < files.length; i += batchSize) {
       const batch = files.slice(i, i + batchSize);
-      
+
       // TASK-001: Process batch in parallel for maximum throughput
-      const batchPromises = batch.map(file => 
+      const batchPromises = batch.map((file) =>
         this.parseFile(file, undefined, options)
-          .then(result => {
+          .then((result) => {
             if (result.fromCache) fromCache++;
             results.push(result);
           })
-          .catch(error => {
+          .catch((error) => {
             errors.push({ file, error });
-          })
+          }),
       );
 
       await Promise.all(batchPromises);
@@ -251,7 +227,7 @@ export class IncrementalParser {
       if ((i + batchSize) % 100 === 0 || i + batchSize >= files.length) {
         console.log(
           `[IncrementalParser] Progress: ${Math.min(i + batchSize, files.length)}/${files.length} ` +
-          `(${Math.round(this.stats.throughput)} files/sec)`
+            `(${Math.round(this.stats.throughput)} files/sec)`,
         );
       }
     }
@@ -266,18 +242,15 @@ export class IncrementalParser {
         succeeded: results.length,
         failed: errors.length,
         fromCache,
-        totalTimeMs
-      }
+        totalTimeMs,
+      },
     };
   }
 
   /**
    * Process incremental changes
    */
-  async processIncremental(
-    changes: FileChange[],
-    options: ParserOptions = {}
-  ): Promise<ParseResult[]> {
+  async processIncremental(changes: FileChange[], options: ParserOptions = {}): Promise<ParseResult[]> {
     const results: ParseResult[] = [];
 
     console.log(`[IncrementalParser] Processing ${changes.length} incremental changes`);
@@ -286,8 +259,8 @@ export class IncrementalParser {
       const { filePath, changeType, content } = change;
 
       switch (changeType) {
-        case 'created':
-        case 'modified':
+        case "created":
+        case "modified":
           if (content) {
             // TASK-001: Use incremental parsing for modified files
             const newHash = this.computeFileHash(content);
@@ -305,12 +278,7 @@ export class IncrementalParser {
             // Parse with incremental support if edits provided
             let result: ParseResult;
             if (change.edits && change.edits.length > 0) {
-              result = await this.parser.parseIncremental(
-                filePath,
-                content,
-                newHash,
-                change.edits
-              );
+              result = await this.parser.parseIncremental(filePath, content, newHash, change.edits);
             } else {
               result = await this.parseFile(filePath, content, options);
             }
@@ -320,7 +288,7 @@ export class IncrementalParser {
           }
           break;
 
-        case 'deleted':
+        case "deleted":
           // Remove from cache and hash map
           this.removeFromCache(filePath);
           this.fileHashes.delete(filePath);
@@ -342,7 +310,7 @@ export class IncrementalParser {
       return {
         ...entry.result,
         timestamp: Date.now(),
-        fromCache: true
+        fromCache: true,
       };
     }
 
@@ -360,7 +328,7 @@ export class IncrementalParser {
       hash: contentHash,
       result,
       cachedAt: Date.now(),
-      size
+      size,
     };
 
     this.cache.set(cacheKey, entry);
@@ -411,7 +379,7 @@ export class IncrementalParser {
     this.fileHashes.clear();
     this.parser.clearCache();
     this.updateCacheStats();
-    console.log('[IncrementalParser] Cache cleared');
+    console.log("[IncrementalParser] Cache cleared");
   }
 
   /**
@@ -419,7 +387,7 @@ export class IncrementalParser {
    */
   async warmRestart(cacheData: Array<{ file: string; hash: string; result: ParseResult }>): Promise<void> {
     console.log(`[IncrementalParser] Warming cache with ${cacheData.length} entries`);
-    
+
     for (const { file, hash, result } of cacheData) {
       this.addToCache(file, hash, result);
       this.fileHashes.set(file, hash);
@@ -435,12 +403,12 @@ export class IncrementalParser {
     const exported: Array<{ file: string; hash: string; result: ParseResult }> = [];
 
     for (const [key, entry] of this.cache.entries()) {
-      const [file] = key.split(':');
+      const [file] = key.split(":");
       if (file) {
         exported.push({
           file,
           hash: entry.hash,
-          result: entry.result
+          result: entry.result,
         });
       }
     }

@@ -1,0 +1,91 @@
+# Development Configuration for Code Graph RAG MCP
+# This file contains development-specific settings
+# Inherits from default.yaml and overrides for local development
+
+# Environment settings
+environment: development
+debug: true
+
+# MCP Server Configuration (Development)
+mcp:
+  embedding:
+    # Development embedding configuration
+    model: "default"
+    provider: "memory"      # Use memory provider for development
+    enabled: false          # Disable by default for faster startup
+    fallbackToMemory: true
+    # No API key needed for memory provider
+    
+  server:
+    host: "localhost"       # Local development only
+    port: 3000             # Standard development port
+    timeout: 15000         # Shorter timeout for quick feedback
+    
+  agents:
+    maxConcurrent: 3       # Lower concurrency for development
+    defaultTimeout: 5000   # Quick timeout for development
+
+# Database Configuration (Development)
+database:
+  path: "./vectors.db"     # Local development database
+  mode: "WAL"              # WAL mode for development
+  cacheSize: 5000          # Smaller cache for development
+  mmapSize: 134217728      # 128MB memory mapping
+  synchronous: "NORMAL"    # Normal synchronization
+  tempStore: "MEMORY"      # Memory temp store
+
+# Logging Configuration (Development)
+logging:
+  level: "debug"           # Verbose logging for development
+  format: "text"           # Human-readable text format
+  enableConsole: true      # Always show console output
+  outputFile: ""           # No file logging in development
+  maxFileSize: "10MB"      # Small log files
+  maxFiles: 3              # Keep fewer log files
+
+# Parser Configuration (Development)
+parser:
+  treeSitter:
+    enabled: true
+    languageConfigs:
+      - "typescript"
+      - "javascript"
+      - "python"           # Core languages for development
+    maxFileSize: 524288     # 512KB for quick parsing
+    timeout: 3000          # Quick timeout for development
+    
+  incremental:
+    enabled: true
+    cacheSize: 500         # Small cache for development
+    cacheTTL: 120000       # 2 minutes cache TTL
+
+# Performance Configuration (Development)
+performance:
+  monitoring:
+    enabled: true
+    collectMetrics: true
+    metricsInterval: 10000  # 10 seconds for quick feedback
+    
+  optimization:
+    enableVectorSearch: false  # Disable for faster startup
+    enableParallelParsing: false  # Disable for easier debugging
+    maxWorkerThreads: 2     # Minimal threads for development
+    
+# Development Features
+development:
+  enableHotReload: true     # Enable hot reload for development
+  verboseLogging: true      # Extra verbose logging
+  enableDebugEndpoints: true # Enable debug API endpoints
+  mockExternalServices: true # Mock external services
+  
+# Development Testing
+testing:
+  enableTestMode: false     # Enable test mode features
+  useInMemoryDatabase: false # Use in-memory database for tests
+  skipSlowOperations: false  # Skip slow operations in tests
+  
+# Development Debugging
+debugging:
+  enableSourceMaps: true    # Enable source maps for debugging
+  enableInspector: false    # Enable Node.js inspector
+  preserveStackTraces: true # Preserve stack traces for debugging

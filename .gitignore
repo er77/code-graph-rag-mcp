@@ -182,4 +182,6 @@ vectors.db-shm
 vectors.db-wal
 ./node_modules
 ./dist
+./tmp
 
+/.github

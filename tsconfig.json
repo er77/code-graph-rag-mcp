@@ -12,24 +12,24 @@
     "resolveJsonModule": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
-    
+
     // Output configuration
     "outDir": "./dist",
     "rootDir": "./src",
     "sourceMap": true,
     "declaration": true,
     "declarationMap": true,
-    
+
     // Strict type checking
     "strict": true,
     "skipLibCheck": true,
     "noFallthroughCasesInSwitch": true,
     "forceConsistentCasingInFileNames": true,
-    
+
     // Performance optimizations
     "incremental": true,
     "tsBuildInfoFile": ".tsbuildinfo",
-    
+
     // Code quality
     "noUnusedLocals": true,
     "noUnusedParameters": true,
