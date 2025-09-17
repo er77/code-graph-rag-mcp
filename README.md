@@ -1,6 +1,6 @@
 # Code Graph RAG MCP Server
 
-[Sponsor https://accelerator.slider-ai.ru/ ]([url](https://accelerator.slider-ai.ru/))
+[Sponsor https://accelerator.slider-ai.ru/ ](https://accelerator.slider-ai.ru/)
 
 **Advanced Multi-Language Code Analysis with Semantic Intelligence**
 
