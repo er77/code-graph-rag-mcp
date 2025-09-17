@@ -5,8 +5,8 @@
  * Stores logs in logs_llm folder with automatic rotation based on size and time
  */
 
-import { writeFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync, renameSync } from 'fs';
-import { join, resolve } from 'path';
+import { existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "fs";
+import { join, resolve } from "path";
 
 // =============================================================================
 // LOGGING CONFIGURATION
@@ -27,7 +27,7 @@ export enum LogLevel {
   INFO = 1,
   WARN = 2,
   ERROR = 3,
-  CRITICAL = 4
+  CRITICAL = 4,
 }
 
 export interface LogEntry {
@@ -42,7 +42,7 @@ export interface LogEntry {
 }
 
 // Import centralized configuration
-import { LOGGING_CONFIG } from '../config/logging-config.js';
+import { LOGGING_CONFIG } from "../config/logging-config.js";
 
 // Default configuration
 const DEFAULT_CONFIG: LoggerConfig = LOGGING_CONFIG;
@@ -71,7 +71,7 @@ export class RotatedLogger {
 
   private getCurrentLogFile(): string {
     const now = new Date();
-    const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
+    const dateStr = now.toISOString().split("T")[0]; // YYYY-MM-DD
     return join(this.logDir, `mcp-server-${dateStr}.log`);
   }
 
@@ -88,25 +88,25 @@ export class RotatedLogger {
     if (!existsSync(this.currentLogFile)) return;
 
     const now = new Date();
-    const timestamp = now.toISOString().replace(/[:.]/g, '-');
-    const rotatedFile = this.currentLogFile.replace('.log', `-${timestamp}.log`);
+    const timestamp = now.toISOString().replace(/[:.]/g, "-");
+    const rotatedFile = this.currentLogFile.replace(".log", `-${timestamp}.log`);
 
     try {
       renameSync(this.currentLogFile, rotatedFile);
       this.cleanupOldLogs();
     } catch (error) {
-      console.error('Failed to rotate log file:', error);
+      console.error("Failed to rotate log file:", error);
     }
   }
 
   private cleanupOldLogs(): void {
     try {
       const files = readdirSync(this.logDir)
-        .filter(f => f.startsWith('mcp-server-') && f.endsWith('.log'))
-        .map(f => ({
+        .filter((f) => f.startsWith("mcp-server-") && f.endsWith(".log"))
+        .map((f) => ({
           name: f,
           path: join(this.logDir, f),
-          mtime: statSync(join(this.logDir, f)).mtime
+          mtime: statSync(join(this.logDir, f)).mtime,
         }))
         .sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
 
@@ -120,7 +120,7 @@ export class RotatedLogger {
         }
       }
     } catch (error) {
-      console.error('Failed to cleanup old logs:', error);
+      console.error("Failed to cleanup old logs:", error);
     }
   }
 
@@ -152,7 +152,7 @@ export class RotatedLogger {
       parts.push(`STACK: ${entry.stackTrace}`);
     }
 
-    return parts.join(' ') + '\n';
+    return parts.join(" ") + "\n";
   }
 
   private writeLog(entry: LogEntry): void {
@@ -168,9 +168,9 @@ export class RotatedLogger {
 
     try {
       const logLine = this.formatLogEntry(entry);
-      writeFileSync(this.currentLogFile, logLine, { flag: 'a' });
+      writeFileSync(this.currentLogFile, logLine, { flag: "a" });
     } catch (error) {
-      console.error('Failed to write log:', error);
+      console.error("Failed to write log:", error);
     }
   }
 
@@ -200,7 +200,14 @@ export class RotatedLogger {
     this.log(LogLevel.CRITICAL, category, message, data, requestId, stackTrace);
   }
 
-  private log(level: LogLevel, category: string, message: string, data?: any, requestId?: string, stackTrace?: string): void {
+  private log(
+    level: LogLevel,
+    category: string,
+    message: string,
+    data?: any,
+    requestId?: string,
+    stackTrace?: string,
+  ): void {
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       level,
@@ -208,7 +215,7 @@ export class RotatedLogger {
       message,
       data,
       stackTrace,
-      requestId
+      requestId,
     };
 
     this.writeLog(entry);
@@ -219,53 +226,79 @@ export class RotatedLogger {
   // =============================================================================
 
   mcpRequest(method: string, params: any, requestId: string): void {
-    this.info('MCP_REQUEST', `Incoming MCP request: ${method}`, { method, params }, requestId);
+    this.info("MCP_REQUEST", `Incoming MCP request: ${method}`, { method, params }, requestId);
   }
 
   mcpResponse(method: string, result: any, duration: number, requestId: string): void {
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       level: LogLevel.INFO,
-      category: 'MCP_RESPONSE',
+      category: "MCP_RESPONSE",
       message: `MCP response: ${method}`,
       data: { method, result },
       requestId,
-      duration
+      duration,
     };
     this.writeLog(entry);
   }
 
   mcpError(method: string, error: Error, requestId: string): void {
-    this.error('MCP_ERROR', `MCP request failed: ${method}`, { method, error: error.message }, requestId, error);
+    this.error("MCP_ERROR", `MCP request failed: ${method}`, { method, error: error.message }, requestId, error);
   }
 
   agentActivity(agentId: string, activity: string, data?: any, requestId?: string): void {
-    this.debug('AGENT_ACTIVITY', `Agent ${agentId}: ${activity}`, { agentId, ...data }, requestId);
+    this.debug("AGENT_ACTIVITY", `Agent ${agentId}: ${activity}`, { agentId, ...data }, requestId);
   }
 
   parseActivity(filePath: string, language: string, entitiesFound: number, duration: number, requestId?: string): void {
-    this.info('PARSE_ACTIVITY', `Parsed ${filePath}`, {
-      filePath,
-      language,
-      entitiesFound,
-      duration
-    }, requestId);
+    this.info(
+      "PARSE_ACTIVITY",
+      `Parsed ${filePath}`,
+      {
+        filePath,
+        language,
+        entitiesFound,
+        duration,
+      },
+      requestId,
+    );
   }
 
   queryActivity(query: string, results: number, duration: number, requestId?: string): void {
-    this.info('QUERY_ACTIVITY', `Query executed`, {
-      query: query.substring(0, 200), // Truncate long queries
-      results,
-      duration
-    }, requestId);
+    this.info(
+      "QUERY_ACTIVITY",
+      `Query executed`,
+      {
+        query: query.substring(0, 200), // Truncate long queries
+        results,
+        duration,
+      },
+      requestId,
+    );
   }
 
   performanceMetrics(component: string, metrics: any, requestId?: string): void {
-    this.debug('PERFORMANCE', `Performance metrics for ${component}`, metrics, requestId);
+    this.debug("PERFORMANCE", `Performance metrics for ${component}`, metrics, requestId);
   }
 
   systemEvent(event: string, data?: any): void {
-    this.info('SYSTEM', event, data);
+    this.info("SYSTEM", event, data);
+  }
+
+  // =============================================================================
+  // INCIDENT/RECOVERY LOGGING (for SYSTEM_HANG_RECOVERY_PLAN)
+  // =============================================================================
+
+  incident(event: string, data?: any, requestId?: string, error?: Error): void {
+    if (error) {
+      this.error("INCIDENT", event, { ...data, error: error.message }, requestId, error);
+    } else {
+      this.warn("INCIDENT", event, data, requestId);
+    }
+  }
+
+  recovery(event: string, data?: any, requestId?: string): void {
+    this.info("RECOVERY", event, data, requestId);
   }
 }
 
@@ -283,23 +316,19 @@ export function createRequestId(): string {
   return `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 
-export function logMCPOperation<T>(
-  operation: string,
-  fn: (requestId: string) => Promise<T>,
-  params?: any
-): Promise<T> {
+export function logMCPOperation<T>(operation: string, fn: (requestId: string) => Promise<T>, params?: any): Promise<T> {
   const requestId = createRequestId();
   const startTime = Date.now();
 
   logger.mcpRequest(operation, params, requestId);
 
   return fn(requestId)
-    .then(result => {
+    .then((result) => {
       const duration = Date.now() - startTime;
       logger.mcpResponse(operation, result, duration, requestId);
       return result;
     })
-    .catch(error => {
+    .catch((error) => {
       logger.mcpError(operation, error, requestId);
       throw error;
     });

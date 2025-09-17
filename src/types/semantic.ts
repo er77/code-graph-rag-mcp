@@ -1,14 +1,14 @@
 /**
  * TASK-002: Semantic Agent Type Definitions
- * 
+ *
  * Type definitions for semantic search and vector operations
  * Supports 384-dimensional vectors with all-MiniLM-L6-v2 model
- * 
+ *
  * Architecture References:
  * - Project Overview: doc/PROJECT_OVERVIEW.md
  * - Coding Standards: doc/CODING_STANDARD.md
  * - Architectural Decisions: doc/ARCHITECTURAL_DECISIONS.md
- * 
+ *
  * @task_id TASK-002
  * @history
  *  - 2025-09-14: Created by Dev-Agent - TASK-002: Initial semantic types implementation
@@ -17,7 +17,7 @@
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
-import type { ParsedEntity } from './parser.js';
+import type { ParsedEntity } from "./parser.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -58,7 +58,7 @@ export interface SimilarityResult {
 export interface HybridResult {
   id: string;
   score: number;
-  source: 'structural' | 'semantic' | 'hybrid';
+  source: "structural" | "semantic" | "hybrid";
   content?: string;
   metadata?: Record<string, unknown>;
 }
@@ -70,7 +70,7 @@ export interface SemanticAnalysis {
   entities: string[];
   concepts: string[];
   complexity: number;
-  semanticType: 'function' | 'class' | 'module' | 'utility' | 'test';
+  semanticType: "function" | "class" | "module" | "utility" | "test";
   summary: string;
 }
 
@@ -82,7 +82,7 @@ export interface SimilarCode {
   path: string;
   content: string;
   similarity: number;
-  type: 'exact' | 'near' | 'semantic';
+  type: "exact" | "near" | "semantic";
 }
 
 /**
@@ -92,7 +92,7 @@ export interface CloneGroup {
   id: string;
   members: SimilarCode[];
   avgSimilarity: number;
-  cloneType: 'type1' | 'type2' | 'type3' | 'type4'; // Exact, renamed, gapped, semantic
+  cloneType: "type1" | "type2" | "type3" | "type4"; // Exact, renamed, gapped, semantic
 }
 
 /**
@@ -110,9 +110,9 @@ export interface CrossLangResult {
  * Refactoring suggestion
  */
 export interface RefactoringSuggestion {
-  type: 'extract' | 'rename' | 'move' | 'combine' | 'simplify';
+  type: "extract" | "rename" | "move" | "combine" | "simplify";
   description: string;
-  impact: 'low' | 'medium' | 'high';
+  impact: "low" | "medium" | "high";
   confidence: number;
   code?: string;
 }
@@ -173,18 +173,18 @@ export interface EmbeddingConfig {
 export interface SemanticOperations {
   // Basic semantic search
   semanticSearch(query: string, limit?: number): Promise<SemanticResult>;
-  
+
   // Code similarity
   findSimilarCode(code: string, threshold?: number): Promise<SimilarCode[]>;
   detectClones(minSimilarity?: number): Promise<CloneGroup[]>;
-  
+
   // Semantic analysis
   analyzeCodeSemantics(code: string): Promise<SemanticAnalysis>;
   generateCodeEmbedding(code: string): Promise<Float32Array>;
-  
+
   // Cross-language search
   crossLanguageSearch(query: string, languages: string[]): Promise<CrossLangResult[]>;
-  
+
   // Refactoring suggestions
   suggestRefactoring(code: string): Promise<RefactoringSuggestion[]>;
 }
@@ -193,11 +193,11 @@ export interface SemanticOperations {
  * Semantic task types
  */
 export enum SemanticTaskType {
-  EMBED = 'embed',
-  SEARCH = 'search',
-  ANALYZE = 'analyze',
-  CLONE_DETECT = 'clone_detect',
-  REFACTOR = 'refactor'
+  EMBED = "embed",
+  SEARCH = "search",
+  ANALYZE = "analyze",
+  CLONE_DETECT = "clone_detect",
+  REFACTOR = "refactor",
 }
 
 /**

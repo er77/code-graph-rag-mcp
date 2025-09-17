@@ -54,7 +54,7 @@
 **Status**: COMPLETED
 **Duration**: 2 hours comprehensive architecture decision record creation
 **Deliverables**:
-- ✅ Formal ADR-001 documenting architecture decisions (`/docs/architecture_decisions/ADR-001.md`)
+- ✅ Formal ADR-001 documenting architecture decisions (`docs/ADR/ADR-001-adopt-ai-swe-standards.md`)
 - ✅ Comprehensive alternatives analysis with rejection rationale (5 alternatives evaluated)
 - ✅ Technical and business consequences analysis with risk mitigation
 - ✅ Implementation details with measurable success criteria
@@ -104,3 +104,12 @@
 **Last Updated**: [Current Date]
 **Overall Project Progress**: **100% PLANNING COMPLETE**
 **Status**: **ALL DELIVERABLES CREATED - READY FOR C LANGUAGE IMPLEMENTATION**
+
+## 2025-09-17: AI SWE Governance Adoption
+
+- Added `AGENTS.md` with Conductor-first and complexity/approval policies
+- Added ADR guide and template (`docs/ADR/README.md`)
+- Added ADR-001: `docs/ADR/ADR-001-adopt-ai-swe-standards.md`
+- Added contributing guide (`CONTRIBUTING.md`)
+- Updated `README.md` (AI SWE Compliance) and `CLAUDE.md` pointers
+- Added PR template (`.github/pull_request_template.md`)

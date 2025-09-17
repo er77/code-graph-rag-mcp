@@ -1,6 +1,6 @@
 {
   "name": "@er77/code-graph-rag-mcp",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Multi-agent LiteRAG MCP server for advanced code graph analysis",
   "license": "MIT",
   "author": "er77",
@@ -71,11 +71,13 @@
     "lru-cache": "^10.0.0",
     "nanoid": "^5.0.0",
     "sqlite-vec": "^0.1.6",
+    "tree-sitter-c": "^0.24.1",
+    "tree-sitter-cpp": "^0.23.4",
     "tree-sitter-javascript": "^0.25.0",
     "tree-sitter-python": "^0.25.0",
     "tree-sitter-typescript": "^0.23.2",
     "web-tree-sitter": "^0.25.9",
-    "xxhash-wasm": "^1.0.2",
+    "yaml": "^2.8.1",
     "zod": "^3.23.0",
     "zod-to-json-schema": "^3.23.0"
   },

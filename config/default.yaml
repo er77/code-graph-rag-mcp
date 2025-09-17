@@ -1,0 +1,84 @@
+# Default Configuration for Code Graph RAG MCP
+# This file provides default settings for all environments
+# Override specific values in environment-specific config files
+
+# Environment settings
+environment: development
+debug: true
+
+# MCP Server Configuration
+mcp:
+  embedding:
+    # Embedding model configuration
+    model: "default"
+    provider: "memory"  # Options: memory, openai, huggingface, local
+    enabled: false      # Set to true when embedding provider is configured
+    fallbackToMemory: true  # Gracefully fallback to memory-based similarity when model unavailable
+    apiKey: ""          # Set via environment variable MCP_EMBEDDING_API_KEY
+    
+  server:
+    host: "localhost"
+    port: 3000
+    timeout: 30000      # 30 seconds
+    
+  agents:
+    maxConcurrent: 5    # Maximum concurrent agent operations
+    defaultTimeout: 10000  # 10 seconds default timeout for agent tasks
+
+# Database Configuration
+database:
+  path: "./vectors.db"
+  mode: "WAL"           # Options: WAL, DELETE, TRUNCATE
+  cacheSize: 10000      # SQLite cache size
+  mmapSize: 268435456   # 256MB memory mapping size
+  synchronous: "NORMAL" # Options: OFF, NORMAL, FULL
+  tempStore: "MEMORY"   # Options: DEFAULT, FILE, MEMORY
+
+# Logging Configuration
+logging:
+  level: "info"         # Options: debug, info, warn, error
+  format: "text"        # Options: json, text
+  enableConsole: true   # Enable console output
+  outputFile: ""        # Optional log file path
+  maxFileSize: "10MB"   # Maximum size per log file
+  maxFiles: 5           # Maximum number of log files to keep
+
+# Parser Configuration
+parser:
+  treeSitter:
+    enabled: true
+    languageConfigs:
+      - "typescript"
+      - "javascript" 
+      - "python"
+      - "c"
+      - "cpp"
+      - "java"
+      - "rust"
+      - "go"
+    maxFileSize: 1048576  # 1MB maximum file size for parsing
+    timeout: 5000         # 5 seconds timeout for parsing operations
+    
+  incremental:
+    enabled: true
+    cacheSize: 1000       # Number of parsed files to cache
+    cacheTTL: 300000      # 5 minutes cache TTL
+
+# Performance Configuration
+performance:
+  monitoring:
+    enabled: true
+    collectMetrics: true
+    metricsInterval: 60000  # 1 minute metrics collection interval
+    
+  optimization:
+    enableVectorSearch: false  # Enable when sqlite-vec is available
+    enableParallelParsing: true
+    maxWorkerThreads: 4
+    
+# Development Features
+development:
+  enableHotReload: true
+  verboseLogging: true
+  enableDebugEndpoints: true
+  mockExternalServices: false

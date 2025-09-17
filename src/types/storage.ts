@@ -1,9 +1,9 @@
 /**
  * TASK-001: Storage Type Definitions for Indexer Agent
- * 
+ *
  * Type definitions for SQLite storage layer and graph operations.
  * Provides interfaces for entities, relationships, and storage operations.
- * 
+ *
  * Architecture References:
  * - Agent Types: src/types/agent.ts
  * - Parser Types: src/types/parser.ts
@@ -13,7 +13,7 @@
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
-import type { ParsedEntity } from './parser.js';
+import type { ParsedEntity } from "./parser.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -30,33 +30,33 @@ export const MAX_CONNECTIONS = 5;
  * Entity types in the code graph
  */
 export enum EntityType {
-  FUNCTION = 'function',
-  CLASS = 'class',
-  METHOD = 'method',
-  INTERFACE = 'interface',
-  TYPE = 'type',
-  IMPORT = 'import',
-  EXPORT = 'export',
-  VARIABLE = 'variable',
-  CONSTANT = 'constant'
+  FUNCTION = "function",
+  CLASS = "class",
+  METHOD = "method",
+  INTERFACE = "interface",
+  TYPE = "type",
+  IMPORT = "import",
+  EXPORT = "export",
+  VARIABLE = "variable",
+  CONSTANT = "constant",
 }
 
 /**
  * Relationship types between entities
  */
 export enum RelationType {
-  CALLS = 'calls',
-  IMPORTS = 'imports',
-  EXPORTS = 'exports',
-  EXTENDS = 'extends',
-  IMPLEMENTS = 'implements',
-  REFERENCES = 'references',
-  CONTAINS = 'contains',
-  DEPENDS_ON = 'depends_on'
+  CALLS = "calls",
+  IMPORTS = "imports",
+  EXPORTS = "exports",
+  EXTENDS = "extends",
+  IMPLEMENTS = "implements",
+  REFERENCES = "references",
+  CONTAINS = "contains",
+  DEPENDS_ON = "depends_on",
 }
 
 /**
- * Core entity stored in the graph
+ * Core entity stored in the graph (enhanced for v2)
  */
 export interface Entity {
   id: string;
@@ -86,10 +86,15 @@ export interface Entity {
   hash: string;
   createdAt: number;
   updatedAt: number;
+
+  // Enhanced v2 fields
+  complexityScore?: number;
+  language?: string;
+  sizeBytes?: number;
 }
 
 /**
- * Relationship between entities
+ * Relationship between entities (enhanced for v2)
  */
 export interface Relationship {
   id: string;
@@ -101,6 +106,10 @@ export interface Relationship {
     column?: number;
     context?: string;
   };
+
+  // Enhanced v2 fields
+  weight?: number;
+  createdAt?: number;
 }
 
 /**
@@ -117,7 +126,7 @@ export interface FileInfo {
  * Graph query parameters
  */
 export interface GraphQuery {
-  type: 'entity' | 'relationship' | 'subgraph';
+  type: "entity" | "relationship" | "subgraph";
   filters?: {
     entityType?: EntityType | EntityType[];
     relationshipType?: RelationType | RelationType[];
@@ -146,7 +155,7 @@ export interface GraphQueryResult {
  * Entity change for incremental updates
  */
 export interface EntityChange {
-  type: 'added' | 'modified' | 'deleted';
+  type: "added" | "modified" | "deleted";
   entity?: Entity;
   entityId?: string;
   filePath: string;
@@ -168,7 +177,7 @@ export interface GraphSchema {
     created_at: number;
     updated_at: number;
   };
-  
+
   relationships: {
     id: string;
     from_id: string;
@@ -176,14 +185,14 @@ export interface GraphSchema {
     type: string;
     metadata: string; // JSON string
   };
-  
+
   files: {
     path: string;
     hash: string;
     last_indexed: number;
     entity_count: number;
   };
-  
+
   migrations: {
     version: number;
     applied_at: number;
@@ -192,7 +201,7 @@ export interface GraphSchema {
 }
 
 /**
- * Storage metrics
+ * Storage metrics (enhanced for v2)
  */
 export interface StorageMetrics {
   totalEntities: number;
@@ -203,6 +212,13 @@ export interface StorageMetrics {
   cacheHitRate: number;
   averageQueryTimeMs: number;
   lastVacuum: number;
+
+  // Enhanced v2 metrics
+  totalEmbeddings?: number;
+  vectorSearchEnabled?: boolean;
+  performanceMetricsCount?: number;
+  memoryUsageMB?: number;
+  concurrentConnections?: number;
 }
 
 /**
@@ -256,23 +272,23 @@ export interface GraphStorage {
   deleteEntity(id: string): Promise<void>;
   getEntity(id: string): Promise<Entity | null>;
   findEntities(query: GraphQuery): Promise<Entity[]>;
-  
+
   // Relationship operations
   insertRelationship(relationship: Relationship): Promise<void>;
   insertRelationships(relationships: Relationship[]): Promise<BatchResult>;
   deleteRelationship(id: string): Promise<void>;
   getRelationshipsForEntity(entityId: string, type?: RelationType): Promise<Relationship[]>;
   findRelationships(query: GraphQuery): Promise<Relationship[]>;
-  
+
   // File operations
   updateFileInfo(info: FileInfo): Promise<void>;
   getFileInfo(path: string): Promise<FileInfo | null>;
   getOutdatedFiles(since: number): Promise<FileInfo[]>;
-  
+
   // Query operations
   executeQuery(query: GraphQuery): Promise<GraphQueryResult>;
   getSubgraph(entityId: string, depth: number): Promise<GraphQueryResult>;
-  
+
   // Maintenance operations
   vacuum(): Promise<void>;
   analyze(): Promise<void>;
@@ -307,7 +323,43 @@ export interface ConnectionPool<T> {
 }
 
 // =============================================================================
-// 5. HELPER TYPES
+// 5. ENHANCED V2 TYPES
+// =============================================================================
+
+/**
+ * Performance metrics entry
+ */
+export interface PerformanceMetric {
+  id: string;
+  operation: string;
+  durationMs: number;
+  entityCount?: number;
+  memoryUsage?: number;
+  createdAt: number;
+}
+
+/**
+ * Vector embedding for semantic search
+ */
+export interface VectorEmbedding {
+  id: string;
+  entityId: string;
+  content: string;
+  vectorData?: ArrayBuffer | null;
+  modelName: string;
+  createdAt: number;
+}
+
+/**
+ * Enhanced cache entry with v2 features
+ */
+export interface EnhancedCacheEntry<T = unknown> extends CacheEntry<T> {
+  missCount?: number;
+  lastAccessed?: number;
+}
+
+// =============================================================================
+// 6. HELPER TYPES
 // =============================================================================
 
 /**
@@ -316,8 +368,8 @@ export interface ConnectionPool<T> {
 export function parsedEntityToEntity(
   parsed: ParsedEntity,
   filePath: string,
-  hash: string
-): Omit<Entity, 'id' | 'createdAt' | 'updatedAt'> {
+  hash: string,
+): Omit<Entity, "id" | "createdAt" | "updatedAt"> {
   return {
     name: parsed.name,
     type: parsed.type as EntityType,
@@ -327,9 +379,9 @@ export function parsedEntityToEntity(
       modifiers: parsed.modifiers,
       returnType: parsed.returnType,
       parameters: parsed.parameters,
-      importData: parsed.importData
+      importData: parsed.importData,
     },
-    hash
+    hash,
   };
 }
 
@@ -337,26 +389,12 @@ export function parsedEntityToEntity(
  * Type guard for Entity
  */
 export function isEntity(obj: unknown): obj is Entity {
-  return (
-    typeof obj === 'object' &&
-    obj !== null &&
-    'id' in obj &&
-    'name' in obj &&
-    'type' in obj &&
-    'filePath' in obj
-  );
+  return typeof obj === "object" && obj !== null && "id" in obj && "name" in obj && "type" in obj && "filePath" in obj;
 }
 
 /**
  * Type guard for Relationship
  */
 export function isRelationship(obj: unknown): obj is Relationship {
-  return (
-    typeof obj === 'object' &&
-    obj !== null &&
-    'id' in obj &&
-    'fromId' in obj &&
-    'toId' in obj &&
-    'type' in obj
-  );
+  return typeof obj === "object" && obj !== null && "id" in obj && "fromId" in obj && "toId" in obj && "type" in obj;
 }
