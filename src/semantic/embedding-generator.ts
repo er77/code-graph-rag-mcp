@@ -374,7 +374,7 @@ export class EmbeddingGenerator {
     const embedding = new Float32Array(384);
 
     // Use simple hash-based approach for consistent embeddings
-    let hash = this.hashText(text);
+    let hash = hashText(text);
 
     for (let i = 0; i < 384; i++) {
       // Generate pseudo-random values based on text content and position
