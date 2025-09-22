@@ -34,17 +34,17 @@ import { SemanticCache } from "../semantic/semantic-cache.js";
 import { VectorStore } from "../semantic/vector-store.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
 import type { ParsedEntity } from "../types/parser.js";
-import type {
-  CloneGroup,
-  CrossLangResult,
-  RefactoringSuggestion,
-  SemanticAnalysis,
-  SemanticMetrics,
-  SemanticOperations,
-  SemanticResult,
+import {
   SemanticTaskType,
-  SimilarCode,
-  VectorEmbedding,
+  type CloneGroup,
+  type CrossLangResult,
+  type RefactoringSuggestion,
+  type SemanticAnalysis,
+  type SemanticMetrics,
+  type SemanticOperations,
+  type SemanticResult,
+  type SimilarCode,
+  type VectorEmbedding,
 } from "../types/semantic.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
@@ -104,8 +104,19 @@ interface SemanticTaskPayload {
 // 4. UTILITY FUNCTIONS AND HELPERS
 // =============================================================================
 function isSemanticTask(task: AgentTask): boolean {
-  const payload = task.payload as SemanticTaskPayload;
-  return Object.values(SemanticTaskType).includes(payload.type as SemanticTaskType);
+  try {
+    const payload = task.payload as SemanticTaskPayload;
+    // Defensive check for SemanticTaskType availability
+    if (typeof SemanticTaskType === 'undefined') {
+      console.warn('[SemanticAgent] SemanticTaskType not available, using string comparison');
+      const semanticTypes = ['embed', 'search', 'analyze', 'clone_detect', 'refactor'];
+      return semanticTypes.includes(payload.type);
+    }
+    return Object.values(SemanticTaskType).includes(payload.type as SemanticTaskType);
+  } catch (error) {
+    console.error('[SemanticAgent] Error in isSemanticTask:', error);
+    return false;
+  }
 }
 
 // =============================================================================
