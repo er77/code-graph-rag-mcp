@@ -10,6 +10,8 @@
  */
 
 import { EventEmitter } from "node:events";
+import { homedir } from "node:os";
+import { join } from "node:path";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
@@ -68,7 +70,7 @@ export class SQLiteConnectionPool extends EventEmitter implements ConnectionPool
     super();
 
     this.config = {
-      dbPath: config.dbPath || "./data/codegraph.db",
+      dbPath: config.dbPath || join(homedir(), ".code-graph-rag", "codegraph.db"),
       maxConnections: config.maxConnections || DEFAULT_MAX_CONNECTIONS,
       minConnections: config.minConnections || DEFAULT_MIN_CONNECTIONS,
       acquireTimeout: config.acquireTimeout || DEFAULT_ACQUIRE_TIMEOUT,

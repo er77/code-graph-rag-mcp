@@ -615,14 +615,18 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
         this.emit("agent:unhealthy", agentId);
       }
 
-      if (agent.getMemoryUsage() > agent.capabilities.memoryLimit) {
-        console.warn(`[CONDUCTOR] Agent ${agentId} exceeds memory limit`);
-        logger.incident("Agent memory limit exceeded", {
-          agentId,
-          limitMB: agent.capabilities.memoryLimit,
-          usageMB: agent.getMemoryUsage(),
-        });
-        this.emit("agent:memory-exceeded", agentId);
+      // Check memory usage only if capabilities are defined
+      if (agent.capabilities && agent.capabilities.memoryLimit && agent.getMemoryUsage) {
+        const memoryUsage = agent.getMemoryUsage();
+        if (memoryUsage > agent.capabilities.memoryLimit) {
+          console.warn(`[CONDUCTOR] Agent ${agentId} exceeds memory limit`);
+          logger.incident("Agent memory limit exceeded", {
+            agentId,
+            limitMB: agent.capabilities.memoryLimit,
+            usageMB: memoryUsage,
+          });
+          this.emit("agent:memory-exceeded", agentId);
+        }
       }
 
       // Staleness detection based on metrics

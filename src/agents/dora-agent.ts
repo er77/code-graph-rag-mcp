@@ -5,28 +5,24 @@
  */
 
 import { BaseAgent } from "./base.js";
-import { AgentTask, AgentType } from "../types/agent.js";
+import { AgentTask, AgentType, AgentMessage } from "../types/agent.js";
 import { knowledgeBus } from "../core/knowledge-bus.js";
 
 export class DoraAgent extends BaseAgent {
   constructor(agentId?: string) {
-    super({
-      id: agentId || `dora-${Date.now()}`,
-      type: AgentType.QUERY, // Use QUERY type as a research/exploration agent
-      capabilities: [
-        "research",
-        "exploration",
-        "pattern-discovery",
-        "documentation",
-        "analysis",
-      ],
+    super(AgentType.QUERY, { // Use QUERY type as a research/exploration agent
       maxConcurrency: 2,
       memoryLimit: 128, // MB
+      cpuAffinity: undefined,
+      priority: 6
     });
+
+    if (agentId) {
+      this.id = agentId;
+    }
   }
 
-  async initialize(): Promise<void> {
-    await super.initialize();
+  protected async onInitialize(): Promise<void> {
 
     // Subscribe to research task events
     knowledgeBus.subscribe("task:research", (entry) => {
@@ -42,6 +38,21 @@ export class DoraAgent extends BaseAgent {
     });
 
     console.log(`[DoraAgent ${this.id}] Initialized - Ready to explore and research`);
+  }
+
+  protected canProcessTask(task: AgentTask): boolean {
+    // DoraAgent can handle research, exploration, documentation, and pattern discovery tasks
+    return task.type === "research" ||
+           task.type === "exploration" ||
+           task.type === "documentation" ||
+           task.type === "pattern-discovery" ||
+           task.type === "query" ||
+           task.type === "dora";
+  }
+
+  protected async handleMessage(message: AgentMessage): Promise<void> {
+    console.log(`[DoraAgent ${this.id}] Received message from ${message.from}: ${message.type}`);
+    // Handle inter-agent messages if needed
   }
 
   protected async processTask(task: AgentTask): Promise<unknown> {
@@ -206,9 +217,8 @@ export class DoraAgent extends BaseAgent {
     };
   }
 
-  async shutdown(): Promise<void> {
+  protected async onShutdown(): Promise<void> {
     console.log(`[DoraAgent ${this.id}] Explorer signing off...`);
-    await super.shutdown();
   }
 }
 

@@ -13,7 +13,8 @@ import { LRUCache } from "lru-cache";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
-import Parser from "web-tree-sitter";
+// @ts-ignore - web-tree-sitter has complex module exports
+let Parser: any;
 import type {
   ParsedEntity,
   ParseResult,
@@ -155,6 +156,15 @@ export class TreeSitterParser {
     if (this.initialized) return;
 
     console.log("[TreeSitterParser] Initializing web-tree-sitter...");
+
+    // Dynamic import to handle ESM module issues
+    try {
+      const TreeSitter = await import("web-tree-sitter");
+      Parser = (TreeSitter as any).default || TreeSitter;
+    } catch (error) {
+      console.error("[TreeSitterParser] Failed to import web-tree-sitter:", error);
+      throw error;
+    }
 
     // Initialize tree-sitter
     await Parser.init({

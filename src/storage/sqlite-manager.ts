@@ -13,7 +13,8 @@
  */
 
 import { existsSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { homedir } from "node:os";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
@@ -23,7 +24,7 @@ import type { StorageMetrics } from "../types/storage.js";
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
 // =============================================================================
-const DEFAULT_DB_PATH = "./data/codegraph.db";
+const DEFAULT_DB_PATH = join(homedir(), ".code-graph-rag", "codegraph.db");
 const WAL_AUTOCHECKPOINT = 1000; // Pages before auto-checkpoint
 const CACHE_SIZE_KB = 64000; // 64MB cache
 const MMAP_SIZE = 30000000000; // 30GB mmap

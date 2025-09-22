@@ -245,18 +245,11 @@ export const migrations: Migration[] = [
         last_accessed = created_at
       WHERE miss_count IS NULL OR last_accessed IS NULL;
 
-      -- Optimize WAL mode settings
-      PRAGMA journal_mode = WAL;
-      PRAGMA synchronous = NORMAL;
-      PRAGMA cache_size = 10000;
-      PRAGMA temp_store = MEMORY;
-      PRAGMA mmap_size = 268435456;
+      -- Note: PRAGMA settings are applied outside of transaction
+      -- to avoid "Safety level may not be changed inside a transaction" error
 
-      -- Analyze tables for query optimization
-      ANALYZE entities;
-      ANALYZE relationships;
-      ANALYZE embeddings;
-      ANALYZE query_cache;
+      -- Note: ANALYZE commands removed to avoid transaction issues
+      -- They will be run after migrations complete
     `,
     down: `
       -- Remove performance monitoring

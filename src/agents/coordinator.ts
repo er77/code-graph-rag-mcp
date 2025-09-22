@@ -234,9 +234,13 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
         this.emit("agent:unhealthy", agentId);
       }
 
-      if (agent.getMemoryUsage() > agent.capabilities.memoryLimit) {
-        console.warn(`[Coordinator] Agent ${agentId} exceeds memory limit`);
-        this.emit("agent:memory-exceeded", agentId);
+      // Check memory usage only if capabilities are defined
+      if (agent.capabilities && agent.capabilities.memoryLimit && agent.getMemoryUsage) {
+        const memoryUsage = agent.getMemoryUsage();
+        if (memoryUsage > agent.capabilities.memoryLimit) {
+          console.warn(`[Coordinator] Agent ${agentId} exceeds memory limit`);
+          this.emit("agent:memory-exceeded", agentId);
+        }
       }
     }
   }
