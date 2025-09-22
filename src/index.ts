@@ -156,6 +156,34 @@ async function getSemanticAgent(): Promise<any> {
   return agent;
 }
 
+async function getDevAgent(): Promise<any> {
+  const cond = getConductor();
+  await cond.initialize();
+  let agent = cond.agents.get("dev-agent");
+  if (!agent) {
+    // Import dynamically to avoid circular dependencies
+    const { DevAgent } = await import("./agents/dev-agent.js");
+    agent = new DevAgent();
+    await agent.initialize();
+    cond.register(agent);
+  }
+  return agent;
+}
+
+async function getDoraAgent(): Promise<any> {
+  const cond = getConductor();
+  await cond.initialize();
+  let agent = cond.agents.get("dora-agent");
+  if (!agent) {
+    // Import dynamically to avoid circular dependencies
+    const { DoraAgent } = await import("./agents/dora-agent.js");
+    agent = new DoraAgent();
+    await agent.initialize();
+    cond.register(agent);
+  }
+  return agent;
+}
+
 // Tool schemas
 const IndexToolSchema = z.object({
   directory: z.string().describe("Directory to index").optional(),
@@ -375,14 +403,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         // Check codebase size and add adaptive patterns
         try {
-          const { execSync } = require('child_process');
+          const { execSync } = await import('child_process');
           const fileCount = execSync(`find "${targetDir}" -type f \\( -name "*.js" -o -name "*.ts" -o -name "*.py" -o -name "*.java" -o -name "*.cpp" -o -name "*.c" -o -name "*.go" -o -name "*.rs" \\) | wc -l`, { encoding: 'utf8' }).trim();
           const numFiles = parseInt(fileCount);
 
           logger.info("INDEXING", `Detected ${numFiles} source files in codebase`, { directory: targetDir, fileCount: numFiles }, requestId);
 
           // Adjust resource allocation based on codebase size
-          const projectSizeBytes = execSync(`du -sb "${targetDir}" | cut -f1`, { encoding: 'utf8' }).trim();
+          const { execSync: execSync2 } = await import('child_process');
+          const projectSizeBytes = execSync2(`du -sb "${targetDir}" | cut -f1`, { encoding: 'utf8' }).trim();
           const projectSizeMB = Math.floor(parseInt(projectSizeBytes) / (1024 * 1024));
           resourceManager.adjustForCodebaseSize(numFiles, projectSizeMB);
 
@@ -984,6 +1013,17 @@ async function main() {
   console.log(`Starting MCP Code Graph Server for directory: ${directory}`);
   console.log("Multi-agent LiteRAG architecture initialized");
   console.log(`Resource constraints: 1GB memory, 80% CPU, 10 concurrent agents`);
+
+  // Initialize core agents to ensure they're available for delegation
+  try {
+    await getDevAgent();
+    await getDoraAgent();
+    await getSemanticAgent();
+    console.log("Core agents initialized: DevAgent, DoraAgent, SemanticAgent");
+  } catch (error) {
+    console.error("Failed to initialize core agents:", error);
+    logger.error("AGENT_INIT", "Failed to initialize core agents", { error: (error as Error).message });
+  }
 
   logger.systemEvent("MCP Server Transport Connecting", { transport: "stdio" });
 
