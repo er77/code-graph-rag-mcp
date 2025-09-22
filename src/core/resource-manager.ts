@@ -48,12 +48,21 @@ export class ResourceManager extends EventEmitter {
     super();
 
     // Default constraints for commodity hardware (4-core, 8GB RAM)
+    // Auto-scale based on system memory for large codebases
+    const totalMemoryGB = os.totalmem() / (1024 * 1024 * 1024);
+    const defaultMemoryMB = Math.min(
+      Math.max(1024, Math.floor(totalMemoryGB * 256)), // Scale with system memory
+      2048 // Cap at 2GB
+    );
+
     this.constraints = constraints || {
-      maxMemoryMB: 1024, // 1GB limit for our process
+      maxMemoryMB: defaultMemoryMB,
       maxCpuPercent: 80,
-      maxConcurrentAgents: 10,
+      maxConcurrentAgents: Math.min(10, os.cpus().length * 2), // Scale with CPU cores
       maxTaskQueueSize: 100,
     };
+
+    console.log(`Resource Manager initialized: ${this.constraints.maxMemoryMB}MB memory, ${this.constraints.maxConcurrentAgents} max agents`);
   }
 
   /**
@@ -299,6 +308,52 @@ export class ResourceManager extends EventEmitter {
     }
 
     return { memory: totalMemory, cpu: totalCpu };
+  }
+
+  /**
+   * Adjust resources based on codebase size for large projects
+   */
+  adjustForCodebaseSize(fileCount: number, projectSizeMB: number): void {
+    let adjustedMemoryMB = this.constraints.maxMemoryMB;
+    let adjustedConcurrentAgents = this.constraints.maxConcurrentAgents;
+
+    // Large codebase (>2000 files) adjustments
+    if (fileCount > 2000) {
+      adjustedMemoryMB = Math.min(this.constraints.maxMemoryMB * 1.5, 3072); // Increase by 50%, cap at 3GB
+      console.log(`Large codebase detected (${fileCount} files), increasing memory limit to ${adjustedMemoryMB}MB`);
+    }
+
+    // Very large codebase (>5000 files) adjustments
+    if (fileCount > 5000) {
+      adjustedMemoryMB = Math.min(this.constraints.maxMemoryMB * 2, 4096); // Double memory, cap at 4GB
+      adjustedConcurrentAgents = Math.max(2, Math.floor(adjustedConcurrentAgents / 2)); // Reduce concurrent agents
+      console.log(`Very large codebase detected (${fileCount} files), memory: ${adjustedMemoryMB}MB, agents: ${adjustedConcurrentAgents}`);
+    }
+
+    // Extremely large codebase (>10000 files) adjustments
+    if (fileCount > 10000) {
+      adjustedMemoryMB = Math.min(this.constraints.maxMemoryMB * 3, 6144); // Triple memory, cap at 6GB
+      adjustedConcurrentAgents = 1; // Single agent for stability
+      console.log(`Extremely large codebase detected (${fileCount} files), switching to single-agent mode with ${adjustedMemoryMB}MB`);
+    }
+
+    // Apply adjustments
+    this.constraints.maxMemoryMB = adjustedMemoryMB;
+    this.constraints.maxConcurrentAgents = adjustedConcurrentAgents;
+
+    this.emit("resources:adjusted", {
+      fileCount,
+      projectSizeMB,
+      newMemoryLimit: adjustedMemoryMB,
+      newAgentLimit: adjustedConcurrentAgents
+    });
+  }
+
+  /**
+   * Get current resource constraints
+   */
+  getConstraints(): ResourceConstraints {
+    return { ...this.constraints };
   }
 }
 

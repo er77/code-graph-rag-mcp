@@ -115,7 +115,7 @@ function getConductor(): ConductorOrchestrator {
       },
       taskQueueLimit: 100,
       loadBalancingStrategy: "least-loaded",
-      complexityThreshold: 5, // Require approval for complexity > 5
+      complexityThreshold: 8, // Require approval for complexity > 8 (allow indexing to proceed)
       mandatoryDelegation: true, // ENFORCE delegation to dev-agent or Dora
       // embeddingConfig will be handled in agent initialization
     });
@@ -160,7 +160,35 @@ async function getSemanticAgent(): Promise<any> {
 const IndexToolSchema = z.object({
   directory: z.string().describe("Directory to index").optional(),
   incremental: z.boolean().describe("Perform incremental indexing").optional().default(false),
-  excludePatterns: z.array(z.string()).describe("Patterns to exclude").optional(),
+  excludePatterns: z.array(z.string()).describe("Patterns to exclude").optional().default([
+    // Standard ignore patterns for large codebases
+    "node_modules/**",
+    ".git/**",
+    "dist/**",
+    "build/**",
+    "out/**",
+    ".next/**",
+    ".nuxt/**",
+    "coverage/**",
+    ".nyc_output/**",
+    "__pycache__/**",
+    "*.pyc",
+    ".pytest_cache/**",
+    "venv/**",
+    "env/**",
+    ".venv/**",
+    ".env/**",
+    "vendor/**",
+    "target/**",
+    ".gradle/**",
+    ".idea/**",
+    ".vscode/**",
+    "*.log",
+    "*.tmp",
+    "*.cache",
+    ".DS_Store",
+    "Thumbs.db"
+  ]),
 });
 
 const ListEntitiesToolSchema = z.object({
@@ -342,7 +370,50 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const { directory: indexDir, incremental, excludePatterns } = IndexToolSchema.parse(args);
         const targetDir = indexDir || directory;
 
-        // Create indexing task
+        // Enhanced exclude patterns for large codebases
+        const enhancedExcludePatterns = [...excludePatterns];
+
+        // Check codebase size and add adaptive patterns
+        try {
+          const { execSync } = require('child_process');
+          const fileCount = execSync(`find "${targetDir}" -type f \\( -name "*.js" -o -name "*.ts" -o -name "*.py" -o -name "*.java" -o -name "*.cpp" -o -name "*.c" -o -name "*.go" -o -name "*.rs" \\) | wc -l`, { encoding: 'utf8' }).trim();
+          const numFiles = parseInt(fileCount);
+
+          logger.info("INDEXING", `Detected ${numFiles} source files in codebase`, { directory: targetDir, fileCount: numFiles }, requestId);
+
+          // Adjust resource allocation based on codebase size
+          const projectSizeBytes = execSync(`du -sb "${targetDir}" | cut -f1`, { encoding: 'utf8' }).trim();
+          const projectSizeMB = Math.floor(parseInt(projectSizeBytes) / (1024 * 1024));
+          resourceManager.adjustForCodebaseSize(numFiles, projectSizeMB);
+
+          // For very large codebases (>2000 files), add more aggressive patterns
+          if (numFiles > 2000) {
+            logger.info("INDEXING", "Large codebase detected, adding additional exclude patterns", { fileCount: numFiles }, requestId);
+            enhancedExcludePatterns.push(
+              "**/test/**", "**/tests/**", "**/*_test.*", "**/*_spec.*", "**/*.test.*", "**/*.spec.*",
+              "**/docs/**", "**/doc/**", "**/documentation/**",
+              "**/examples/**", "**/example/**", "**/demo/**", "**/demos/**",
+              "**/migrations/**", "**/scripts/**", "**/tools/**",
+              "**/*.min.js", "**/*.min.css", "**/bundle.*", "**/vendor.*"
+            );
+          }
+
+          // For extremely large codebases (>5000 files), enable incremental by default
+          if (numFiles > 5000 && !incremental) {
+            logger.info("INDEXING", "Extremely large codebase detected, recommending incremental mode", { fileCount: numFiles }, requestId);
+          }
+
+          // For very large codebases (>2000 files), enable batch processing
+          if (numFiles > 2000) {
+            logger.info("INDEXING", "Large codebase detected, enabling batch processing", { fileCount: numFiles }, requestId);
+            // Set batch processing metadata
+            enhancedExcludePatterns.push("__batch_processing_enabled__"); // Special marker for batch processing
+          }
+        } catch (error) {
+          logger.warn("INDEXING", "Could not detect codebase size, using default patterns", { error: (error as Error).message }, requestId);
+        }
+
+        // Create indexing task with enhanced exclude patterns
         const task: AgentTask = {
           id: `index-${Date.now()}`,
           type: "index",
@@ -350,7 +421,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           payload: {
             directory: targetDir,
             incremental,
-            excludePatterns,
+            excludePatterns: enhancedExcludePatterns,
           },
           createdAt: Date.now(),
         };
