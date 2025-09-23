@@ -23,7 +23,8 @@ import Database from "better-sqlite3";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, jest } from "@jest/globals";
+const vi = jest;
 import { SQLiteManager } from "../../storage/sqlite-manager.js";
 import { AgentStatus, type AgentTask } from "../../types/agent.js";
 import type { Entity, Relationship } from "../../types/storage.js";

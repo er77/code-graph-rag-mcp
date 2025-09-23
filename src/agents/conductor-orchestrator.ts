@@ -362,6 +362,22 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
       }
     }
 
+    // Special handling for index tasks that aren't batch processing
+    if (task.type === "index" && !subtasks.length) {
+      subtasks.push({
+        id: `${task.id}-index`,
+        description: "Index codebase",
+        targetAgent: "dev-agent",
+        dependencies: [],
+        priority: 8,
+        payload: {
+          type: "index",
+          ...task.payload
+        }
+      });
+      return subtasks;
+    }
+
     // Always start with research if needed
     if (complexity.factors.includes("Research required") || complexity.delegationStrategy === "dora") {
       subtasks.push({
@@ -441,10 +457,13 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
       };
     }
 
-    // Create agent task
+    // Create agent task - preserve task type from payload if present
+    const taskType = subtask.payload?.type ||
+                    (subtask.targetAgent === "dora" ? "research" : "implementation");
+
     const agentTask: AgentTask = {
       id: subtask.id,
-      type: subtask.targetAgent === "dora" ? "research" : (subtask.payload?.type || "implementation"),
+      type: taskType,
       priority: subtask.priority,
       payload: subtask.payload || subtask,
       createdAt: Date.now(),

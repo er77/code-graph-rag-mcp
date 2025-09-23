@@ -50,6 +50,7 @@ import {
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import { BaseAgent } from "./base.js";
+import { getGraphStorage } from "../storage/graph-storage-factory.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -483,6 +484,113 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
     return this.codeAnalyzer.suggestRefactoring(code);
   }
 
+  /**
+   * Analyze hotspots semantically by enriching structural hotspots with
+   * semantic summaries and complexity indicators.
+   */
+  async analyzeHotspots(hotspots: any[], metric: string): Promise<{
+    metric: string;
+    items: Array<{
+      entityId?: string;
+      filePath?: string;
+      name?: string;
+      language?: string;
+      structuralScore?: number;
+      semantic?: SemanticAnalysis;
+      snippet?: {
+        startLine?: number;
+        endLine?: number;
+        length?: number;
+      };
+    }>;
+  }> {
+    const fs = await import('node:fs/promises');
+    const storage = await getGraphStorage();
+    const items: Array<{ entityId?: string; filePath?: string; name?: string; language?: string; structuralScore?: number; semantic?: SemanticAnalysis; }> = [];
+
+    for (const h of hotspots ?? []) {
+      const entity = (h.entity || h) as any;
+      const filePath = entity.filePath || entity.path;
+      let code = '';
+      let snippetInfo: { startLine?: number; endLine?: number; length?: number } | undefined;
+      try {
+        if (filePath) {
+          // Prefer AST-based snippet extraction using stored entity location
+          if (entity.id) {
+            try {
+              const stored = await storage.getEntity(entity.id);
+              if (stored && stored.location && typeof stored.location.start?.index === 'number' && typeof stored.location.end?.index === 'number') {
+                const full = await fs.readFile(filePath, 'utf8');
+                const startIdx = Math.max(0, stored.location.start.index);
+                const endIdx = Math.min(full.length, stored.location.end.index);
+                if (endIdx > startIdx && endIdx - startIdx < 10000) { // cap snippet size ~10k chars
+                  code = full.slice(startIdx, endIdx);
+                  snippetInfo = {
+                    startLine: stored.location.start.line,
+                    endLine: stored.location.end.line,
+                    length: endIdx - startIdx,
+                  };
+                } else {
+                  code = full;
+                }
+              } else if (stored && stored.location && typeof stored.location.start?.line === 'number' && typeof stored.location.end?.line === 'number') {
+                const full = await fs.readFile(filePath, 'utf8');
+                const lines = full.split(/\r?\n/);
+                const s = Math.max(0, (stored.location.start.line || 1) - 1);
+                const e = Math.min(lines.length, (stored.location.end.line || s + 1));
+                const slice = lines.slice(s, e).join('\n');
+                // Cap snippet length
+                code = slice.length > 10000 ? slice.slice(0, 10000) : slice;
+                snippetInfo = { startLine: s + 1, endLine: e, length: code.length };
+              } else {
+                // Fallback to full file if no location indices
+                code = await fs.readFile(filePath, 'utf8');
+              }
+            } catch {
+              // On any storage read error, fallback to full file
+              code = await fs.readFile(filePath, 'utf8');
+            }
+          } else {
+            // No entity id; fallback to reading file (could be enhanced with simple name-based heuristics)
+            code = await fs.readFile(filePath, 'utf8');
+          }
+        }
+      } catch {
+        // ignore read errors
+      }
+
+      let semantic: SemanticAnalysis | undefined;
+      if (code) {
+        try {
+          // Vectorize snippet for precision (compute but don't store)
+          await this.embeddingGen.generateCodeEmbedding(code);
+          semantic = await this.codeAnalyzer.analyzeCodeSemantics(code);
+        } catch (e) {
+          if (this.debugMode) console.warn('[SemanticAgent] analyzeHotspots semantic failed:', (e as Error).message);
+        }
+      }
+
+      items.push({
+        entityId: entity.id,
+        filePath,
+        name: entity.name,
+        language: entity.language,
+        structuralScore: entity.score || entity.complexity || undefined,
+        semantic,
+        snippet: snippetInfo,
+      });
+    }
+
+    // Sort by combined score if available
+    items.sort((a, b) => {
+      const as = (a.structuralScore || 0) + (a.semantic?.complexity || 0);
+      const bs = (b.structuralScore || 0) + (b.semantic?.complexity || 0);
+      return bs - as;
+    });
+
+    return { metric, items };
+  }
+
   // Knowledge Bus integration
 
   private subscribeToKnowledgeBus(): void {
@@ -491,6 +599,18 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
 
     // Subscribe to entity updates
     knowledgeBus.subscribe(this.id, /^entity:.*/, this.handleEntityUpdate.bind(this));
+
+    // Subscribe to semantic ingestion of new parsed entities
+    knowledgeBus.subscribe(this.id, "semantic:new_entities", async (entry) => {
+      try {
+        const ents = entry.data as ParsedEntity[];
+        if (Array.isArray(ents) && ents.length > 0) {
+          await this.handleNewEntities(ents);
+        }
+      } catch (e) {
+        if (this.debugMode) console.warn(`[${this.id}] semantic:new_entities failed:`, (e as Error).message);
+      }
+    });
 
     console.log(`[${this.id}] Subscribed to knowledge bus events`);
   }

@@ -19,8 +19,8 @@ function createSafeEnvironment() {
     ...process.env,
     // Ensure these are defined to prevent "env is not defined" errors
     NODE_ENV: process.env.NODE_ENV || 'development',
-    MCP_EMBEDDING_ENABLED: process.env.MCP_EMBEDDING_ENABLED || 'false',
-    MCP_EMBEDDING_PROVIDER: process.env.MCP_EMBEDDING_PROVIDER || 'memory',
+    MCP_EMBEDDING_ENABLED: process.env.MCP_EMBEDDING_ENABLED || 'true',
+    MCP_EMBEDDING_PROVIDER: process.env.MCP_EMBEDDING_PROVIDER || 'transformers',
     MCP_EMBEDDING_FALLBACK: process.env.MCP_EMBEDDING_FALLBACK || 'true',
   };
 
@@ -50,6 +50,7 @@ import { ConductorOrchestrator } from "./agents/conductor-orchestrator.js";
 import { knowledgeBus } from "./core/knowledge-bus.js";
 import { resourceManager } from "./core/resource-manager.js";
 import type { AgentTask } from "./types/agent.js";
+import { AgentType } from "./types/agent.js";
 import { createRequestId, logger } from "./utils/logger.js";
 
 // Parse command line arguments
@@ -127,9 +128,9 @@ function getConductor(): ConductorOrchestrator {
 async function getQueryAgent(): Promise<any> {
   const cond = getConductor();
   await cond.initialize();
-  let agent = cond.agents.get("query-agent");
+  // Reuse existing by type to avoid duplicate registrations
+  let agent = cond.getAgentsByType(AgentType.QUERY)[0];
   if (!agent) {
-    // Import dynamically to avoid circular dependencies
     const { QueryAgent } = await import("./agents/query-agent.js");
     agent = new QueryAgent();
     await agent.initialize();
@@ -141,15 +142,10 @@ async function getQueryAgent(): Promise<any> {
 async function getSemanticAgent(): Promise<any> {
   const cond = getConductor();
   await cond.initialize();
-  let agent = cond.agents.get("semantic-agent");
+  let agent = cond.getAgentsByType(AgentType.SEMANTIC)[0];
   if (!agent) {
-    // Import dynamically to avoid circular dependencies
     const { SemanticAgent } = await import("./agents/semantic-agent.js");
-
-    // TASK-001: Initialize SemanticAgent with YAML configuration
-    // Configuration will be handled during agent initialization
     agent = new SemanticAgent();
-
     await agent.initialize();
     cond.register(agent);
   }
@@ -159,9 +155,8 @@ async function getSemanticAgent(): Promise<any> {
 async function getDevAgent(): Promise<any> {
   const cond = getConductor();
   await cond.initialize();
-  let agent = cond.agents.get("dev-agent");
+  let agent = cond.getAgentsByType(AgentType.DEV)[0];
   if (!agent) {
-    // Import dynamically to avoid circular dependencies
     const { DevAgent } = await import("./agents/dev-agent.js");
     agent = new DevAgent();
     await agent.initialize();
@@ -173,9 +168,8 @@ async function getDevAgent(): Promise<any> {
 async function getDoraAgent(): Promise<any> {
   const cond = getConductor();
   await cond.initialize();
-  let agent = cond.agents.get("dora-agent");
+  let agent = cond.getAgentsByType(AgentType.DORA)[0];
   if (!agent) {
-    // Import dynamically to avoid circular dependencies
     const { DoraAgent } = await import("./agents/dora-agent.js");
     agent = new DoraAgent();
     await agent.initialize();
@@ -184,10 +178,17 @@ async function getDoraAgent(): Promise<any> {
   return agent;
 }
 
+// Import graph query functions
+import { queryGraphEntities, getGraphStats } from "./tools/graph-query.js";
+import { getGraphStorage } from "./storage/graph-storage-factory.js";
+
+// GraphStorage singleton is now managed by graph-storage-factory.ts
+
 // Tool schemas
 const IndexToolSchema = z.object({
   directory: z.string().describe("Directory to index").optional(),
   incremental: z.boolean().describe("Perform incremental indexing").optional().default(false),
+  reset: z.boolean().describe("Clear existing graph before indexing").optional().default(false),
   excludePatterns: z.array(z.string()).describe("Patterns to exclude").optional().default([
     // Standard ignore patterns for large codebases
     "node_modules/**",
@@ -275,6 +276,28 @@ const AnalyzeHotspotsSchema = z.object({
 const FindRelatedConceptsSchema = z.object({
   entityId: z.string().describe("Entity to find related concepts for"),
   limit: z.number().optional().default(10).describe("Maximum results to return"),
+});
+
+const GetGraphSchema = z.object({
+  query: z.string().optional().describe("Optional search query"),
+  limit: z.number().optional().default(100).describe("Maximum entities to return"),
+});
+
+const GetGraphStatsSchema = z.object({});
+const GetGraphHealthSchema = z.object({
+  minEntities: z.number().optional().default(1).describe("Minimum entity count for healthy status"),
+  minRelationships: z.number().optional().default(0).describe("Minimum relationship count for healthy status"),
+  sample: z.number().optional().default(1).describe("Sample size to fetch for verification")
+});
+
+// Convenience tool: clean index (reset + index)
+const CleanIndexSchema = z.object({
+  directory: z.string().describe("Directory to index after reset").optional(),
+  excludePatterns: z
+    .array(z.string())
+    .describe("Patterns to exclude during indexing")
+    .optional()
+    .default([]),
 });
 
 // Create MCP server
@@ -380,6 +403,31 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         description: "Find conceptually related code to a given entity",
         inputSchema: zodToJsonSchema(FindRelatedConceptsSchema) as any,
       },
+      {
+        name: "get_graph",
+        description: "Get the code graph with all entities and relationships",
+        inputSchema: zodToJsonSchema(GetGraphSchema) as any,
+      },
+      {
+        name: "get_graph_stats",
+        description: "Get statistics about the code graph",
+        inputSchema: zodToJsonSchema(GetGraphStatsSchema) as any,
+      },
+      {
+        name: "reset_graph",
+        description: "Clear all graph data (entities, relationships, files)",
+        inputSchema: zodToJsonSchema(z.object({})) as any,
+      },
+      {
+        name: "clean_index",
+        description: "Reset graph and then perform a full index",
+        inputSchema: zodToJsonSchema(CleanIndexSchema) as any,
+      },
+      {
+        name: "get_graph_health",
+        description: "Health check for graph storage (totals + sample)",
+        inputSchema: zodToJsonSchema(GetGraphHealthSchema) as any,
+      },
     ],
   };
 });
@@ -395,8 +443,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     switch (name) {
       case "index": {
-        const { directory: indexDir, incremental, excludePatterns } = IndexToolSchema.parse(args);
+        const { directory: indexDir, incremental, excludePatterns, reset } = IndexToolSchema.parse(args);
         const targetDir = indexDir || directory;
+
+        // Optional reset
+        if (reset) {
+          const storage = await getGraphStorage();
+          await storage.clear();
+          logger.systemEvent("Graph storage cleared before indexing", { directory: targetDir });
+        }
 
         // Enhanced exclude patterns for large codebases
         const enhancedExcludePatterns = [...excludePatterns];
@@ -498,6 +553,100 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case "reset_graph": {
+        const storage = await getGraphStorage();
+        await storage.clear();
+        logger.systemEvent("Graph storage cleared via tool");
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ success: true, message: "Graph storage cleared" }, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "clean_index": {
+        const { directory: indexDir, excludePatterns } = CleanIndexSchema.parse(args);
+        const targetDir = indexDir || directory;
+
+        // Reset graph first
+        const storage = await getGraphStorage();
+        await storage.clear();
+        logger.systemEvent("Graph storage cleared before clean index", { directory: targetDir });
+
+        // Perform index with reset semantics (already cleared), non-incremental
+        const enhancedExcludePatterns = [...(excludePatterns || [])];
+
+        // Adaptive patterns as in index tool
+        try {
+          const { execSync } = await import('child_process');
+          const fileCount = execSync(`find "${targetDir}" -type f \\( -name "*.js" -o -name "*.ts" -o -name "*.py" -o -name "*.java" -o -name "*.cpp" -o -name "*.c" -o -name "*.go" -o -name "*.rs" \\) | wc -l`, { encoding: 'utf8' }).trim();
+          const numFiles = parseInt(fileCount);
+          logger.info(
+            "INDEXING",
+            `Detected ${numFiles} source files in codebase (clean_index)`,
+            { directory: targetDir, fileCount: numFiles },
+            requestId,
+          );
+          const { execSync: execSync2 } = await import('child_process');
+          const projectSizeBytes = execSync2(`du -sb "${targetDir}" | cut -f1`, { encoding: 'utf8' }).trim();
+          const projectSizeMB = Math.floor(parseInt(projectSizeBytes) / (1024 * 1024));
+          resourceManager.adjustForCodebaseSize(numFiles, projectSizeMB);
+          if (numFiles > 2000) {
+            enhancedExcludePatterns.push(
+              "**/test/**", "**/tests/**", "**/*_test.*", "**/*_spec.*", "**/*.test.*", "**/*.spec.*",
+              "**/docs/**", "**/doc/**", "**/documentation/**",
+              "**/examples/**", "**/example/**", "**/demo/**", "**/demos/**",
+              "**/migrations/**", "**/scripts/**", "**/tools/**",
+              "**/*.min.js", "**/*.min.css", "**/bundle.*", "**/vendor.*"
+            );
+            enhancedExcludePatterns.push("__batch_processing_enabled__");
+          }
+        } catch (error) {
+          logger.warn("INDEXING", "Could not detect codebase size (clean_index), using default patterns", { error: (error as Error).message }, requestId);
+        }
+
+        const task: AgentTask = {
+          id: `clean-index-${Date.now()}`,
+          type: "index",
+          priority: 8,
+          payload: {
+            directory: targetDir,
+            incremental: false,
+            excludePatterns: enhancedExcludePatterns,
+          },
+          createdAt: Date.now(),
+        };
+
+        const cond = getConductor();
+        await cond.initialize();
+        const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
+        const result = await withTimeout(cond.process(task), timeoutMs, "clean_index", requestId);
+
+        knowledgeBus.publish("index:completed", result, "mcp-server");
+        const duration = Date.now() - startTime;
+        logger.mcpResponse(name, result, duration, requestId);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  success: true,
+                  message: "Clean indexing completed",
+                  result,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+
       case "list_file_entities": {
         const { filePath, entityTypes } = ListEntitiesToolSchema.parse(args);
 
@@ -548,61 +697,49 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "list_entity_relationships": {
-        const { entityName, depth, relationshipTypes } = ListRelationshipsToolSchema.parse(args);
-
-        // Create relationship query task
-        const task: AgentTask = {
-          id: `list-relationships-${Date.now()}`,
-          type: "query",
-          priority: 6,
-          payload: {
-            operation: "list_relationships",
-            entityName,
-            depth,
-            relationshipTypes,
-          },
-          createdAt: Date.now(),
-        };
-
-        const cond = getConductor();
+        const { entityName, relationshipTypes } = ListRelationshipsToolSchema.parse(args);
+        const queryAgent = await getQueryAgent();
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
-        const result = await withTimeout(cond.process(task), timeoutMs, "list_entity_relationships", requestId);
-
+        // Find entity by name (first match)
+        const matches = await withTimeout(
+          queryAgent.listEntities({ name: entityName }),
+          timeoutMs,
+          "list_entity_relationships:lookup",
+          requestId,
+        );
+        if (!Array.isArray(matches) || matches.length === 0) {
+          return { content: [{ type: "text", text: JSON.stringify({ success: false, error: `Entity not found: ${entityName}` }, null, 2) }] };
+        }
+        const entity = matches[0];
+        let rels: any = await withTimeout(
+          queryAgent.getRelationships(entity.id),
+          timeoutMs,
+          "list_entity_relationships:get",
+          requestId,
+        );
+        if (Array.isArray(relationshipTypes) && relationshipTypes.length > 0) {
+          rels = rels.filter((r: any) => relationshipTypes.includes(r.type));
+        }
         return {
           content: [
-            {
-              type: "text",
-              text: JSON.stringify(result, null, 2),
-            },
+            { type: "text", text: JSON.stringify({ entity: { id: entity.id, name: entity.name, filePath: entity.filePath }, relationships: rels }, null, 2) },
           ],
         };
       }
 
       case "query": {
         const { query, limit } = QueryToolSchema.parse(args);
-
-        // Create semantic query task
-        const task: AgentTask = {
-          id: `semantic-query-${Date.now()}`,
-          type: "semantic",
-          priority: 7,
-          payload: {
-            query,
-            limit,
-          },
-          createdAt: Date.now(),
-        };
-
-        const cond = getConductor();
+        const semanticAgent = await getSemanticAgent();
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
-        const result = await withTimeout(cond.process(task), timeoutMs, "query", requestId);
-
+        const result = await withTimeout(
+          semanticAgent.semanticSearch(query, limit),
+          timeoutMs,
+          "query:semantic_search",
+          requestId,
+        );
         return {
           content: [
-            {
-              type: "text",
-              text: JSON.stringify(result, null, 2),
-            },
+            { type: "text", text: JSON.stringify(result, null, 2) },
           ],
         };
       }
@@ -661,21 +798,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
         }
 
-        const task: AgentTask = {
-          id: `semantic-search-${Date.now()}`,
-          type: "semantic",
-          priority: 8,
-          payload: {
-            operation: "semantic_search",
-            query,
-            limit,
-          },
-          createdAt: Date.now(),
-        };
-
         const semanticAgent = await getSemanticAgent();
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
-        const result = await withTimeout(semanticAgent.process(task), timeoutMs, "semantic_search", requestId);
+        const result = await withTimeout(
+          semanticAgent.semanticSearch(query, limit),
+          timeoutMs,
+          "semantic_search",
+          requestId,
+        );
 
         // Cache result
         knowledgeBus.publish(cacheKey, result, "mcp-server", 30000);
@@ -693,22 +823,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "find_similar_code": {
         const { code, threshold, limit } = FindSimilarCodeSchema.parse(args);
 
-        const task: AgentTask = {
-          id: `find-similar-${Date.now()}`,
-          type: "semantic",
-          priority: 7,
-          payload: {
-            operation: "find_similar",
-            code,
-            threshold,
-            limit,
-          },
-          createdAt: Date.now(),
-        };
-
         const semanticAgent = await getSemanticAgent();
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
-        const result = await withTimeout(semanticAgent.process(task), timeoutMs, "find_similar_code", requestId);
+        const sim = await withTimeout(
+          semanticAgent.findSimilarCode(code, threshold ?? 0.7),
+          timeoutMs,
+          "find_similar_code",
+          requestId,
+        );
+        const result = Array.isArray(sim) && limit ? sim.slice(0, limit) : sim;
 
         return {
           content: [
@@ -720,75 +843,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      case "analyze_code_impact": {
-        const { entityId, depth } = AnalyzeCodeImpactSchema.parse(args);
-
-        const task: AgentTask = {
-          id: `impact-analysis-${Date.now()}`,
-          type: "query",
-          priority: 8,
-          payload: {
-            operation: "impact_analysis",
-            entityId,
-            depth,
-          },
-          createdAt: Date.now(),
-        };
-
-        // Use QueryAgent for dependency analysis
-        const queryAgent = await getQueryAgent();
-        const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
-        const dependencies = await withTimeout(queryAgent.process(task), timeoutMs, "analyze_code_impact:query", requestId);
-
-        // Enhance with semantic understanding
-        const semanticTask: AgentTask = {
-          id: `semantic-impact-${Date.now()}`,
-          type: "semantic",
-          priority: 7,
-          payload: {
-            operation: "analyze_impact",
-            dependencies,
-            entityId,
-          },
-          createdAt: Date.now(),
-        };
-
-        const semanticAgent = await getSemanticAgent();
-        const enhancedResult = await withTimeout(
-          semanticAgent.process(semanticTask),
-          timeoutMs,
-          "analyze_code_impact:semantic",
-          requestId,
-        );
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(enhancedResult, null, 2),
-            },
-          ],
-        };
-      }
+      // analyze_code_impact handled below (single implementation with fallback)
 
       case "detect_code_clones": {
-        const { minSimilarity, scope } = DetectCodeClonesSchema.parse(args);
-
-        const task: AgentTask = {
-          id: `clone-detection-${Date.now()}`,
-          type: "semantic",
-          priority: 6,
-          payload: {
-            operation: "detect_clones",
-            minSimilarity,
-            scope,
-          },
-          createdAt: Date.now(),
-        };
+        const { minSimilarity } = DetectCodeClonesSchema.parse(args);
 
         const semanticAgent = await getSemanticAgent();
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
-        const result = await withTimeout(semanticAgent.process(task), timeoutMs, "detect_code_clones", requestId);
+        const result = await withTimeout(
+          semanticAgent.detectClones(minSimilarity),
+          timeoutMs,
+          "detect_code_clones",
+          requestId,
+        );
 
         return {
           content: [
@@ -801,23 +868,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "suggest_refactoring": {
-        const { filePath, focusArea } = SuggestRefactoringSchema.parse(args);
-
-        const task: AgentTask = {
-          id: `refactoring-${Date.now()}`,
-          type: "semantic",
-          priority: 7,
-          payload: {
-            operation: "suggest_refactoring",
-            filePath,
-            focusArea,
-          },
-          createdAt: Date.now(),
-        };
+        const { filePath } = SuggestRefactoringSchema.parse(args);
 
         const semanticAgent = await getSemanticAgent();
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
-        const result = await withTimeout(semanticAgent.process(task), timeoutMs, "suggest_refactoring", requestId);
+        // For now, read file content and pass to suggestRefactoring (optional if focusArea provided)
+        const fs = await import('node:fs/promises');
+        let code = '';
+        try { code = await fs.readFile(filePath, 'utf8'); } catch {}
+        const result = await withTimeout(
+          semanticAgent.suggestRefactoring(code),
+          timeoutMs,
+          "suggest_refactoring",
+          requestId,
+        );
 
         return {
           content: [
@@ -832,21 +896,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "cross_language_search": {
         const { query, languages } = CrossLanguageSearchSchema.parse(args);
 
-        const task: AgentTask = {
-          id: `cross-lang-${Date.now()}`,
-          type: "semantic",
-          priority: 7,
-          payload: {
-            operation: "cross_language_search",
-            query,
-            languages,
-          },
-          createdAt: Date.now(),
-        };
-
         const semanticAgent = await getSemanticAgent();
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
-        const result = await withTimeout(semanticAgent.process(task), timeoutMs, "cross_language_search", requestId);
+        const result = await withTimeout(
+          semanticAgent.crossLanguageSearch(query, languages || []),
+          timeoutMs,
+          "cross_language_search",
+          requestId,
+        );
 
         return {
           content: [
@@ -860,40 +917,28 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "analyze_hotspots": {
         const { metric, limit } = AnalyzeHotspotsSchema.parse(args);
-
-        // Query for usage patterns
-        const queryTask: AgentTask = {
-          id: `hotspot-query-${Date.now()}`,
-          type: "query",
-          priority: 7,
-          payload: {
-            operation: "find_hotspots",
-            metric,
-            limit,
-          },
-          createdAt: Date.now(),
-        };
-
         const queryAgent = await getQueryAgent();
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
-        const hotspots = await withTimeout(queryAgent.process(queryTask), timeoutMs, "analyze_hotspots:query", requestId);
+        // Direct call to get hotspots array, with task fallback when missing
+        let rawHotspots: any;
+        if (typeof (queryAgent as any).analyzeHotspots === 'function') {
+          rawHotspots = await withTimeout((queryAgent as any).analyzeHotspots(), timeoutMs, "analyze_hotspots:query", requestId);
+        } else {
+          const task: AgentTask = {
+            id: `hotspots-${Date.now()}`,
+            type: "query:analysis",
+            priority: 7,
+            payload: { type: "hotspots", params: {} },
+            createdAt: Date.now(),
+          };
+          rawHotspots = await withTimeout((queryAgent as any).process(task), timeoutMs, "analyze_hotspots:query", requestId);
+        }
+        const hotspots = Array.isArray(rawHotspots) && typeof limit === 'number' ? rawHotspots.slice(0, limit) : rawHotspots;
 
-        // Enhance with semantic analysis
-        const semanticTask: AgentTask = {
-          id: `hotspot-semantic-${Date.now()}`,
-          type: "semantic",
-          priority: 6,
-          payload: {
-            operation: "analyze_hotspots",
-            hotspots,
-            metric,
-          },
-          createdAt: Date.now(),
-        };
-
+        // Semantic enrichment over hotspot entities/snippets
         const semanticAgent = await getSemanticAgent();
-        const enhancedResult = await withTimeout(
-          semanticAgent.process(semanticTask),
+        const enriched = await withTimeout(
+          semanticAgent.analyzeHotspots(hotspots, metric),
           timeoutMs,
           "analyze_hotspots:semantic",
           requestId,
@@ -903,7 +948,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: "text",
-              text: JSON.stringify(enhancedResult, null, 2),
+              text: JSON.stringify(enriched, null, 2),
             },
           ],
         };
@@ -911,28 +956,165 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "find_related_concepts": {
         const { entityId, limit } = FindRelatedConceptsSchema.parse(args);
+        const storage = await getGraphStorage();
+        const entity = await storage.getEntity(entityId);
+        if (!entity) {
+          return { content: [ { type: "text", text: JSON.stringify({ success: false, error: `Entity not found: ${entityId}` }, null, 2) } ] };
+        }
 
-        const task: AgentTask = {
-          id: `related-concepts-${Date.now()}`,
-          type: "semantic",
-          priority: 7,
-          payload: {
-            operation: "find_related_concepts",
-            entityId,
-            limit,
-          },
-          createdAt: Date.now(),
-        };
+        // Read code snippet for this entity using stored location
+        const fs = await import('node:fs/promises');
+        let snippet = '';
+        try {
+          const full = await fs.readFile(entity.filePath, 'utf8');
+          const startIdx = typeof (entity as any).location?.start?.index === 'number' ? (entity as any).location.start.index : 0;
+          const endIdx = typeof (entity as any).location?.end?.index === 'number' ? (entity as any).location.end.index : full.length;
+          if (endIdx > startIdx && endIdx - startIdx < 10000) {
+            snippet = full.slice(startIdx, endIdx);
+          } else {
+            // Fallback to line range if indices are missing
+            const sLine = (entity as any).location?.start?.line ? (entity as any).location.start.line - 1 : 0;
+            const eLine = (entity as any).location?.end?.line ? (entity as any).location.end.line : sLine + 10;
+            const lines = full.split(/\r?\n/);
+            snippet = lines.slice(Math.max(0, sLine), Math.min(lines.length, eLine)).join('\n');
+            if (snippet.length > 10000) snippet = snippet.slice(0, 10000);
+          }
+        } catch {
+          // If read fails, return empty
+          snippet = '';
+        }
 
         const semanticAgent = await getSemanticAgent();
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
-        const result = await withTimeout(semanticAgent.process(task), timeoutMs, "find_related_concepts", requestId);
+        const sim = await withTimeout(
+          semanticAgent.findSimilarCode(snippet, 0.65),
+          timeoutMs,
+          "find_related_concepts",
+          requestId,
+        );
+        const results = Array.isArray(sim) && limit ? sim.slice(0, limit) : sim;
+        return {
+          content: [ { type: "text", text: JSON.stringify({ entity: { id: entity.id, name: entity.name, filePath: entity.filePath }, related: results }, null, 2) } ],
+        };
+      }
+
+      case "get_graph": {
+        const { query, limit } = GetGraphSchema.parse(args);
+
+        // Use direct database query instead of going through agents
+        const storage = await getGraphStorage();
+        const result = await queryGraphEntities(storage, query, limit);
+
+        logger.info("GRAPH_QUERY", `Retrieved graph with ${result.entities.length} entities and ${result.relationships.length} relationships`, {
+          query,
+          limit,
+          stats: result.stats,
+        }, requestId);
 
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(result, null, 2),
+              text: JSON.stringify({
+                entities: result.entities,
+                relations: result.relationships,
+                stats: {
+                  totalNodes: result.stats.totalEntities,
+                  totalRelations: result.stats.totalRelationships,
+                },
+              }, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "analyze_code_impact": {
+        const { entityId } = AnalyzeCodeImpactSchema.parse(args);
+        const queryAgent = await getQueryAgent();
+        const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
+        let impact: any;
+        if (typeof (queryAgent as any).getImpactedEntities === 'function') {
+          impact = await withTimeout((queryAgent as any).getImpactedEntities(entityId), timeoutMs, "analyze_code_impact", requestId);
+        } else {
+          const task: AgentTask = {
+            id: `impact-${Date.now()}`,
+            type: "query:analysis",
+            priority: 8,
+            payload: { type: "impact", params: { entityId } },
+            createdAt: Date.now(),
+          };
+          impact = await withTimeout((queryAgent as any).process(task), timeoutMs, "analyze_code_impact", requestId);
+        }
+        return { content: [ { type: "text", text: JSON.stringify(impact, null, 2) } ] };
+      }
+
+      case "get_graph_stats": {
+        const storage = await getGraphStorage();
+        const stats = await getGraphStats(storage);
+
+        logger.info("GRAPH_STATS", "Retrieved graph statistics", stats, requestId);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(stats, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "get_graph_health": {
+        const { minEntities, minRelationships, sample } = GetGraphHealthSchema.parse(args ?? {});
+        const storage = await getGraphStorage();
+        const metrics = await storage.getMetrics();
+
+        // Try a tiny sample query to ensure read path is functional
+        const sampleQuery = await storage.executeQuery({ type: "entity", limit: Math.max(1, sample) });
+
+        const healthy =
+          (metrics.totalEntities ?? 0) >= minEntities &&
+          (metrics.totalRelationships ?? 0) >= minRelationships &&
+          sampleQuery.entities.length >= Math.min(1, sample);
+
+        const reason = healthy
+          ? "OK"
+          : `Mismatch: totals e=${metrics.totalEntities}, r=${metrics.totalRelationships}, sample=${sampleQuery.entities.length}`;
+
+        logger.info(
+          "GRAPH_HEALTH",
+          "Graph health check",
+          {
+            healthy,
+            reason,
+            totals: {
+              entities: metrics.totalEntities,
+              relationships: metrics.totalRelationships,
+              files: metrics.totalFiles,
+            },
+            sampleCount: sampleQuery.entities.length,
+          },
+          requestId,
+        );
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  healthy,
+                  reason,
+                  totals: {
+                    entities: metrics.totalEntities,
+                    relationships: metrics.totalRelationships,
+                    files: metrics.totalFiles,
+                  },
+                  sampleCount: sampleQuery.entities.length,
+                },
+                null,
+                2,
+              ),
             },
           ],
         };
@@ -1014,22 +1196,10 @@ async function main() {
   console.log("Multi-agent LiteRAG architecture initialized");
   console.log(`Resource constraints: 1GB memory, 80% CPU, 10 concurrent agents`);
 
-  // Initialize core agents to ensure they're available for delegation
-  try {
-    await getDevAgent();
-    await getDoraAgent();
-    await getSemanticAgent();
-    console.log("Core agents initialized: DevAgent, DoraAgent, SemanticAgent");
-  } catch (error) {
-    console.error("Failed to initialize core agents:", error);
-    logger.error("AGENT_INIT", "Failed to initialize core agents", { error: (error as Error).message });
-  }
-
+  // Connect transport FIRST for fast readiness
   logger.systemEvent("MCP Server Transport Connecting", { transport: "stdio" });
-
   const transport = new StdioServerTransport();
   await server.connect(transport);
-
   console.log("MCP server running on stdio transport");
   logger.systemEvent("MCP Server Ready", {
     directory,
@@ -1037,6 +1207,19 @@ async function main() {
     toolsCount: 13,
     readyTime: Date.now(),
   });
+
+  // Defer heavy agent initialization in the background
+  (async () => {
+    try {
+      await getDevAgent();
+      await getDoraAgent();
+      await getSemanticAgent();
+      console.log("Core agents initialized (background): DevAgent, DoraAgent, SemanticAgent");
+    } catch (error) {
+      console.error("Background agent init failed:", error);
+      logger.error("AGENT_INIT", "Background agent initialization failed", { error: (error as Error).message });
+    }
+  })();
 }
 
 main().catch((error) => {

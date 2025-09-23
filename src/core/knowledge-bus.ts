@@ -94,7 +94,7 @@ export class KnowledgeBus extends EventEmitter {
    * Unsubscribe from knowledge updates
    */
   unsubscribe(subscriptionId: string): void {
-    for (const [topic, subs] of this.subscriptions) {
+    for (const [, subs] of this.subscriptions) {
       const index = subs.findIndex((s) => s.id === subscriptionId);
       if (index !== -1) {
         subs.splice(index, 1);

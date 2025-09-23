@@ -22,7 +22,7 @@ import { EventEmitter } from "node:events";
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import type Database from "better-sqlite3";
-import { SQLiteManager } from "../storage/sqlite-manager.js";
+import { SQLiteManager, getSQLiteManager } from "../storage/sqlite-manager.js";
 import type { ConnectionPoolConfig } from "../types/query.js";
 
 // =============================================================================
@@ -55,7 +55,7 @@ export class ConnectionPool extends EventEmitter {
   constructor(config?: Partial<ConnectionPoolConfig>) {
     super();
     this.config = { ...DEFAULT_CONFIG, ...config };
-    this.sqliteManager = new SQLiteManager();
+    this.sqliteManager = getSQLiteManager();
   }
 
   /**

@@ -30,8 +30,7 @@
 // =============================================================================
 // Access global env from our safe environment setup
 const env = (globalThis as any).env || {};
-const pipeline = () => { throw new Error("Transformers not available"); };
-const Pipeline: any = null;
+type Pipeline = (text: string, opts?: any) => Promise<{ data: number[] } & Record<string, unknown>>;
 
 import type { EmbeddingConfig, MAX_BATCH_SIZE } from "../types/semantic.js";
 
@@ -150,32 +149,51 @@ export class EmbeddingGenerator {
   private async initializeInternal(): Promise<void> {
     try {
       if (this.debugMode) {
-        console.log(`[EmbeddingGenerator] TASK-004B: Starting safe initialization (attempt ${this.initializationAttempts})...`);
+        console.log(`[EmbeddingGenerator] TASK-004B: Starting initialization (attempt ${this.initializationAttempts})...`);
       }
 
-      console.log(`[EmbeddingGenerator] Initializing in fallback mode (transformers not available)...`);
+      const enableTransformers = String(env.MCP_EMBEDDING_ENABLED || 'false') === 'true';
+      if (enableTransformers) {
+        try {
+          // Configure transformers.js runtime environment
+          if (env) {
+            // Allow using local models path; remote downloads optional based on provider
+            (env as any).localModelPath = this.config.localPath;
+            (env as any).useBrowserCache = false;
+            (env as any).allowRemoteModels = String(env.MCP_EMBEDDING_PROVIDER || 'memory') !== 'memory';
+          }
 
-      // Since transformers.js is not available, we'll use memory-based embeddings
-      // Configure safe environment
-      if (env) {
-        env.allowRemoteModels = false;
-        env.useBrowserCache = false;
-        env.localModelPath = this.config.localPath;
+          const mod: any = await import('@xenova/transformers');
+          const pipeFactory = mod.pipeline as (task: string, model: string, options?: any) => Promise<Pipeline>;
+          this.model = await pipeFactory('feature-extraction', this.config.modelName, {
+            quantized: this.config.quantized !== false,
+            progress_callback: undefined,
+          });
+
+          console.log(`[EmbeddingGenerator] Transformers backend initialized: ${this.config.modelName}`);
+
+          // Quick warm-up
+          const out = await this.model('warm up', { pooling: 'mean', normalize: true });
+          if (!out || !Array.isArray(out.data) || out.data.length === 0) {
+            console.warn('[EmbeddingGenerator] Unexpected transformer output, falling back to memory embeddings');
+            this.model = null;
+          }
+        } catch (e) {
+          console.warn('[EmbeddingGenerator] Transformers backend unavailable, using fallback. Reason:', (e as Error).message);
+          this.model = null;
+        }
+      } else {
+        this.model = null;
       }
 
-      // Model will remain null, and we'll use fallback embedding generation
-      this.model = null;
-
-      console.log(`[EmbeddingGenerator] Fallback mode initialized successfully`);
-
-      // TASK-004B: Safe warm-up without recursive calls
-      // Use direct fallback embedding instead of calling generateEmbedding
-      const testEmbedding = this.generateFallbackEmbedding("test");
-      if (testEmbedding.length !== 384) {
-        throw new Error(`[EmbeddingGenerator] TASK-004B: Fallback embedding wrong size: ${testEmbedding.length}`);
+      if (!this.model) {
+        console.log(`[EmbeddingGenerator] Fallback mode initialized (memory embeddings)`);
+        const testEmbedding = this.generateFallbackEmbedding('test');
+        if (testEmbedding.length !== 384) {
+          throw new Error(`[EmbeddingGenerator] TASK-004B: Fallback embedding wrong size: ${testEmbedding.length}`);
+        }
+        console.log(`[EmbeddingGenerator] Fallback warm-up complete - dimension: ${testEmbedding.length}`);
       }
-
-      console.log(`[EmbeddingGenerator] TASK-004B: Fallback model warmed up successfully - dimension: ${testEmbedding.length}`);
 
     } catch (error) {
       console.error("[EmbeddingGenerator] TASK-004B: Initialization failed:", error);
