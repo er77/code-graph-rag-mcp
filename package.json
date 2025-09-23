@@ -1,6 +1,6 @@
 {
   "name": "@er77/code-graph-rag-mcp",
-  "version": "2.2.2",
+  "version": "2.4.0",
   "description": "Multi-agent LiteRAG MCP server for advanced code graph analysis",
   "license": "MIT",
   "author": "er77",
@@ -51,6 +51,9 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
+    "smoke": "node scripts/smoke-graph-health.js /home/er77/_work_fodler/baserow-develop",
+    "smoke:clean": "node scripts/smoke-graph-health.js /home/er77/_work_fodler/baserow-develop --clean",
+    "smoke:semantic": "node scripts/smoke-semantic.js /home/er77/_work_fodler/baserow-develop",
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run build"
   },

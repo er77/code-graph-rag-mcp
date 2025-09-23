@@ -185,3 +185,8 @@ vectors.db-wal
 ./tmp
 
 /.github
+/.codex
+AGENTS.md
+/tmp
+/tmp
+/.memory_bank/logs_llm

@@ -94,8 +94,9 @@ const DEFAULT_CONFIG: AppConfig = {
       timeout: 30000,
     },
     agents: {
-      maxConcurrent: 5,
-      defaultTimeout: 10000,
+      // Allow more registered agents by default; conductor still reuses by type
+      maxConcurrent: 12,
+      defaultTimeout: 15000,
     },
   },
   database: {

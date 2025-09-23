@@ -14,9 +14,9 @@
 import { nanoid } from "nanoid";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { BatchOperations } from "../storage/batch-operations.js";
-import { getCacheManager, type QueryCacheManager } from "../storage/cache-manager.js";
+import { getCacheManager, QueryCacheManager } from "../storage/cache-manager.js";
 import { GraphStorageImpl } from "../storage/graph-storage.js";
-import { runMigrations } from "../storage/schema-migrations.js";
+import { getGraphStorage } from "../storage/graph-storage-factory.js";
 import { getSQLiteManager, type SQLiteManager } from "../storage/sqlite-manager.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
 import type { ParsedEntity, ParseResult } from "../types/parser.js";
@@ -96,11 +96,9 @@ export class IndexerAgent extends BaseAgent {
     this.sqliteManager = getSQLiteManager();
     this.sqliteManager.initialize();
 
-    // Run database migrations
-    runMigrations(this.sqliteManager);
-
-    // Initialize storage components
-    this.graphStorage = new GraphStorageImpl(this.sqliteManager);
+    // CRITICAL FIX: Use singleton GraphStorage instance
+    // This ensures IndexerAgent and MCP tools use the same storage instance
+    this.graphStorage = await getGraphStorage();
     this.batchOps = new BatchOperations(this.sqliteManager.getConnection(), INDEXER_CONFIG.batchSize);
     this.cacheManager = getCacheManager({
       maxSize: INDEXER_CONFIG.cacheSize,
@@ -147,6 +145,7 @@ export class IndexerAgent extends BaseAgent {
       payload: {
         entities: parseResult.entities,
         filePath: parseResult.filePath,
+        relationships: parseResult.relationships,
       },
       createdAt: Date.now(),
     };
@@ -167,12 +166,13 @@ export class IndexerAgent extends BaseAgent {
         id: nanoid(12),
         type: "index:entities",
         priority: 5,
-        payload: {
-          entities: result.entities,
-          filePath: result.filePath,
-        },
-        createdAt: Date.now(),
-      };
+      payload: {
+        entities: result.entities,
+        filePath: result.filePath,
+        relationships: result.relationships,
+      },
+      createdAt: Date.now(),
+    };
 
       await this.process(task);
     }
@@ -194,7 +194,11 @@ export class IndexerAgent extends BaseAgent {
 
     switch (indexerTask.type) {
       case "index:entities":
-        return await this.indexEntities(indexerTask.payload.entities!, indexerTask.payload.filePath!);
+        return await this.indexEntities(
+          indexerTask.payload.entities!,
+          indexerTask.payload.filePath!,
+          indexerTask.payload.relationships
+        );
 
       case "index:incremental":
         return await this.incrementalUpdate(indexerTask.payload.changes!);
@@ -213,7 +217,7 @@ export class IndexerAgent extends BaseAgent {
   /**
    * Index entities and build relationships
    */
-  async indexEntities(entities: ParsedEntity[], filePath: string): Promise<BatchResult> {
+  async indexEntities(entities: ParsedEntity[], filePath: string, providedRelationships?: any[]): Promise<BatchResult> {
     const startTime = Date.now();
     console.log(`[${this.id}] Indexing ${entities.length} entities from ${filePath}`);
 
@@ -238,7 +242,85 @@ export class IndexerAgent extends BaseAgent {
     });
 
     // Build and insert relationships
-    const relationships = await this.buildRelationships(entities, filePath, storageEntities);
+    let relationships: Relationship[] = [];
+
+    // Use provided relationships if available
+    if (providedRelationships && providedRelationships.length > 0) {
+      // Convert provided relationships to storage format
+      const entityMap = new Map<string, string>();
+      storageEntities.forEach((e) => entityMap.set(e.name, e.id));
+
+      for (const rel of providedRelationships) {
+        let fromId = entityMap.get(rel.from);
+        let toId = entityMap.get(rel.to);
+
+        // Fallback: find first entity by name if not mapped directly
+        if (!fromId) {
+          const found = storageEntities.find((e) => e.name === rel.from);
+          if (found) fromId = found.id;
+        }
+        if (!toId) {
+          const found = storageEntities.find((e) => e.name === rel.to);
+          if (found) toId = found.id;
+        }
+
+        // If still missing, create external placeholder id to be upserted later
+        if (!toId) {
+          const src = rel.targetFile || 'unknown';
+          toId = `external:${src}:${rel.to}`;
+        }
+
+        if (fromId && toId) {
+          relationships.push({
+            id: nanoid(12),
+            fromId,
+            toId,
+            type: rel.type as any,
+            metadata: { line: rel.metadata?.line, context: rel.type },
+            createdAt: Date.now(),
+          } as Relationship);
+        }
+      }
+      console.log(`[${this.id}] Using ${relationships.length} provided relationships`);
+    } else {
+      // Fall back to building relationships automatically
+      relationships = await this.buildRelationships(entities, filePath, storageEntities);
+      console.log(`[${this.id}] Built ${relationships.length} relationships automatically`);
+    }
+
+    // Ensure placeholder entities exist for any external relationship targets
+    const externalPlaceholders: Entity[] = [];
+    const seenExternal = new Set<string>();
+    for (const rel of relationships) {
+      if (rel.toId && typeof rel.toId === 'string' && rel.toId.startsWith('external:')) {
+        if (!seenExternal.has(rel.toId)) {
+          seenExternal.add(rel.toId);
+          // Format: external:<source>:<symbol>
+          const parts = rel.toId.split(':');
+          const source = parts.length >= 2 ? parts[1] : 'unknown';
+          const symbol = parts.length >= 3 ? parts.slice(2).join(':') : 'unknown';
+          externalPlaceholders.push({
+            id: rel.toId,
+            name: symbol,
+            type: EntityType.IMPORT,
+            filePath: `external://${source}`,
+            location: {
+              start: { line: 0, column: 0, index: 0 },
+              end: { line: 0, column: 0, index: 0 },
+            },
+            metadata: { isExternal: true, source, symbol },
+            hash: rel.toId,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          } as Entity);
+        }
+      }
+    }
+
+    if (externalPlaceholders.length > 0) {
+      await this.batchOps.insertEntities(externalPlaceholders);
+    }
+
     const relResult = await this.batchOps.insertRelationships(relationships, (processed, total) => {
       console.log(`[${this.id}] Progress: ${processed}/${total} relationships`);
     });
@@ -275,11 +357,24 @@ export class IndexerAgent extends BaseAgent {
       this.id,
     );
 
+    // Publish parsed entities for semantic embedding ingestion
+    try {
+      knowledgeBus.publish("semantic:new_entities", entities, this.id);
+    } catch (e) {
+      console.warn(`[${this.id}] Failed to publish semantic:new_entities:`, (e as Error).message);
+    }
+
     console.log(
       `[${this.id}] Indexed ${entityResult.processed} entities and ${relResult.processed} relationships in ${indexTime}ms`,
     );
 
-    return entityResult;
+    // Return complete indexing statistics
+    return {
+      entitiesIndexed: entityResult.processed,
+      relationshipsCreated: relResult.processed,
+      timeMs: indexTime,
+      ...entityResult
+    };
   }
 
   /**

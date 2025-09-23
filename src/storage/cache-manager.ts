@@ -43,7 +43,6 @@ export class QueryCacheManager implements CacheManager {
     this.cache = new LRUCache<string, CacheEntry>({
       max: config.maxEntries || DEFAULT_MAX_ENTRIES,
       maxSize: config.maxSize || DEFAULT_MAX_SIZE,
-      ttl: config.defaultTTL || DEFAULT_TTL,
 
       // Size calculation
       sizeCalculation: (entry: CacheEntry) => {
@@ -58,10 +57,8 @@ export class QueryCacheManager implements CacheManager {
         }
       },
 
-      // TTL based on entry
-      ttl: (entry: CacheEntry) => {
-        return entry.ttl || config.defaultTTL || DEFAULT_TTL;
-      },
+      // TTL based on entry - using function form to allow per-entry TTL
+      ttl: config.defaultTTL || DEFAULT_TTL,
 
       // Update age on get
       updateAgeOnGet: true,

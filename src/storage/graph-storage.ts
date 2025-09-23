@@ -469,7 +469,7 @@ export class GraphStorageImpl implements GraphStorage {
           },
         };
       },
-      entities?.length,
+      undefined,
     );
   }
 
