@@ -56,6 +56,9 @@ export const FILE_EXTENSIONS: Record<string, SupportedLanguage> = {
   hpp: "cpp",
   hxx: "cpp",
   hh: "cpp",
+
+  // Rust
+  rs: "rust",
 };
 
 /**
@@ -138,6 +141,14 @@ export const LANGUAGE_KEYWORDS: Record<
     imports: ["include", "import", "using"],
     exports: ["extern", "static", "export"],
     types: ["typedef", "using", "const", "volatile", "mutable", "constexpr", "consteval", "auto", "decltype"],
+  },
+
+  rust: {
+    functions: ["fn", "async", "const"],
+    classes: ["struct", "enum", "trait", "impl", "mod"],
+    imports: ["use", "extern", "crate"],
+    exports: ["pub"],
+    types: ["type"],
   },
 };
 

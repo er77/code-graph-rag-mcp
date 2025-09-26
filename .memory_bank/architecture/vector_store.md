@@ -1,4 +1,4 @@
-# Vector Store Architecture
+# Vector Store Architecture (v2.4.0)
 
 ## Overview
 
@@ -7,19 +7,22 @@ The vector store component enables semantic search capabilities within the MCP S
 ## 🏗️ Architecture Placement
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Code Entities │ -> │  Embedding      │ -> │  Vector Store   │
-│   (Text/AST)    │    │  Generation     │    │  (FAISS/Chroma) │
-│                 │    │                 │    │                 │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                                                        │
-                                                        v
+┌─────────────────┐    ┌──────────────────────────────┐    ┌─────────────────────────┐
+│   Code Entities │ -> │  Embedding Generation (384d) │ -> │  Vector Store (sqlite-vec)│
+│   (Text/AST)    │    │  + fallback memory embeddings│    │  + BLOB fallback         │
+└─────────────────┘    └──────────────────────────────┘    └─────────────────────────┘
+                                                            │
+                                                            v
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │  SQLite Graph   │ <->│ Hybrid Search   │ <->│ Semantic Query  │
 │  (Structural)   │    │  Coordinator    │    │   Interface     │
-│                 │    │                 │    │                 │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
 ```
+
+### v2.4.0 Notes
+- Primary backend: sqlite-vec (virtual table + cosine distance); automatic fallback to BLOB storage with in-process cosine similarity when sqlite-vec cannot be loaded.
+- Embedding generation: 384-dimension vectors via `@xenova/transformers` (all-MiniLM-L6-v2) with resilient fallback to deterministic memory embeddings.
+- Batch insertion and prepared statements for performance; WAL mode enabled when available.
 
 ## 🎯 Embedding Strategy
 
@@ -74,49 +77,22 @@ export class CodeEntityEmbedder implements CodeEmbeddingStrategy {
 }
 ```
 
-### Vector Store Selection
+### Vector Store Selection (v2.4.0)
 
-```typescript
-export abstract class VectorStore {
-  abstract addEmbeddings(embeddings: Embedding[]): Promise<void>;
-  abstract search(query: number[], topK: number): Promise<SearchResult[]>;
-  abstract delete(ids: string[]): Promise<void>;
-  abstract getStats(): Promise<VectorStoreStats>;
-}
-
-// Local deployment - FAISS
-export class FAISSVectorStore extends VectorStore {
-  constructor(
-    private dimension: number = 384,    // all-MiniLM-L6-v2 dimension
-    private indexType: 'Flat' | 'IVF' = 'Flat'
-  ) {
-    super();
-    this.initializeIndex();
-  }
-
-  private initializeIndex(): void {
-    // Use IndexFlatIP for commodity hardware (inner product similarity)
-    this.index = new faiss.IndexFlatIP(this.dimension);
-  }
-}
-
-// Cloud deployment - ChromaDB
-export class ChromaVectorStore extends VectorStore {
-  constructor(private client: ChromaApi) {
-    super();
-  }
-}
-
-// Embedded SQLite with vector extension
-export class SQLiteVectorStore extends VectorStore {
-  constructor(private db: Database) {
-    super();
-    // Uses sqlite-vec or similar extension
-  }
-}
-```
+Production implementation: `src/semantic/vector-store.ts`
+- Preferred: sqlite-vec extension (`vec_embeddings` with `float[384]`); distance via `vec_distance_cosine`
+- Fallback: BLOB vectors + JS cosine similarity
+- Robust extension loading attempts across common install locations; safe to run without sqlite-vec
+- Helper script: `scripts/install-sqlite-vec.sh`
 
 ## 💻 Embedding Pipeline
+
+### Embedding Generation (384d, resilient)
+
+Embedding generator: `src/semantic/embedding-generator.ts`
+- Primary: `@xenova/transformers` feature-extraction; quantized by default; warm-up on init
+- Fallback: deterministic memory embeddings (normalized 384d) if model unavailable
+- Batch size defaults to 8; cache up to ~5000 entries; 1h TTL; recursion-safe initialization
 
 ### Memory-Efficient Embedding Generation
 
@@ -766,3 +742,12 @@ export class VectorStoreMonitor {
 - [Tree-sitter Integration](./tree_sitter_integration.md)
 - [MCP Integration Architecture](./mcp_integration.md)
 - [Performance Optimization Guide](../guides/performance_optimization.md)
+
+### Code References
+- Vector store: `src/semantic/vector-store.ts`
+- Embedding generator: `src/semantic/embedding-generator.ts`
+- Hybrid search orchestrator: `src/semantic/hybrid-search.ts`
+- Semantic agent: `src/agents/semantic-agent.ts`
+- Installer: `scripts/install-sqlite-vec.sh`
+
+Document version: 2.4.0 • Last updated: 2025-09-23

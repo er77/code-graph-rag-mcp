@@ -19,6 +19,14 @@ Architecture Decision Records document significant design decisions made during 
 
 ## 🗂️ Current ADR Index
 
+### ADR-008: MCP v2.4.0 Architecture Consolidation
+- **Status**: Implemented
+- **Date**: 2025-09-23
+- **Context**: Align docs and implementation with v2.4.0 capabilities
+- **Decision**: Consolidate MCP tool portfolio, add graph health/maintenance tools; formalize Conductor-first orchestration and SemanticAgent circuit breaker; document GraphStorage singleton and YAML config loader
+- **Impact**: Clearer operator experience (health/reset), higher resiliency, consistent DB state across agents/tools, simpler configuration
+- **Related**: TASK-035, ADR-003 (Conductor), ADR-034 (GraphStorage singleton)
+
 ### ADR-001: Database Schema v2 for Performance Optimization
 - **Status**: In Progress
 - **Date**: 2025-09-16
@@ -202,4 +210,4 @@ CREATE TABLE embeddings (
 
 *Architecture Decision Records provide the foundation for consistent, well-reasoned architectural evolution of the Code Graph RAG MCP project. All agents and development activities should reference and contribute to this architectural knowledge base.*
 
-**Document Version**: 1.0 | **Last Updated**: 2025-01-22 | **Next Review**: 2025-02-15
+**Document Version**: 1.1 | **Last Updated**: 2025-09-23 | **Next Review**: 2025-10-15

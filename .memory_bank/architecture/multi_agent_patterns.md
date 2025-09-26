@@ -1,4 +1,4 @@
-# Multi-Agent Patterns & LiteRAG Architecture
+# Multi-Agent Patterns & LiteRAG Architecture (v2.4.0)
 
 ## Overview
 
@@ -38,7 +38,7 @@ export enum AgentType {
   QUERY = 'query',             // Graph traversal and search
   SEMANTIC = 'semantic',       // Vector operations and similarity
   ANALYSIS = 'analysis',       // Complex analysis patterns
-  COORDINATOR = 'coordinator'  // Task orchestration
+  COORDINATOR = 'coordinator'  // Task orchestration (Conductor in production)
 }
 
 export interface CodeAnalysisAgent {
@@ -192,7 +192,7 @@ export class QueryAgent extends LiteRAGAgent {
 
 ## 🤝 Agent Coordination
 
-### Task Graph Execution
+### Task Graph Execution (Conductor-Orchestrated)
 
 ```typescript
 export class AgentCoordinator {
@@ -396,7 +396,8 @@ export class LiteRAGAgentPool {
 
   private initializeAgents(): void {
     // Create lightweight agent instances
-    this.createAgentPool(AgentType.PARSER, ParserAgent, 2);
+    // Parser may be disabled when web-tree-sitter is not available
+    // this.createAgentPool(AgentType.PARSER, ParserAgent, 2);
     this.createAgentPool(AgentType.INDEXER, IndexerAgent, 1);
     this.createAgentPool(AgentType.QUERY, QueryAgent, 3);
     this.createAgentPool(AgentType.SEMANTIC, SemanticAgent, 1);
@@ -470,6 +471,15 @@ const literagConfig: LiteRAGConfig = {
     maxConcurrentTasks: parseInt(process.env.LITERAG_MAX_CONCURRENT_TASKS || '5')
   }
 };
+
+## 📦 v2.4.0 Highlights
+- Mandatory Conductor delegation and approval workflow for complex tasks (complexity > 5)
+- SemanticAgent circuit breaker for resilient embedding/search with fallbacks
+- GraphStorage singleton factory to ensure a single DB connection across agents/tools
+- Health/maintenance MCP tools: `get_graph_health`, `reset_graph`, `clean_index`
+- YAML-driven configuration with environment fallbacks
+
+Document version: 2.4.0 • Last updated: 2025-09-23
 ```
 
 ## 📊 Monitoring & Analytics

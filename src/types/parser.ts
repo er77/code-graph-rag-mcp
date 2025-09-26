@@ -20,7 +20,16 @@ import type { AgentTask } from "./agent.js";
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
 // =============================================================================
-export const SUPPORTED_LANGUAGES = ["javascript", "typescript", "tsx", "jsx", "python", "c", "cpp"] as const;
+export const SUPPORTED_LANGUAGES = [
+  "javascript",
+  "typescript",
+  "tsx",
+  "jsx",
+  "python",
+  "c",
+  "cpp",
+  "rust",
+] as const;
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 
 // =============================================================================

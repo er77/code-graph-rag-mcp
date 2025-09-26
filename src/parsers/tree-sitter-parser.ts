@@ -40,6 +40,7 @@ const LANGUAGE_WASM_PATHS: Record<SupportedLanguage, string> = {
   python: "tree-sitter-python.wasm",
   c: "tree-sitter-c.wasm",
   cpp: "tree-sitter-cpp.wasm",
+  rust: "tree-sitter-rust.wasm",
 };
 
 // =============================================================================
@@ -96,6 +97,8 @@ function detectLanguage(filePath: string): SupportedLanguage {
     case "hxx":
     case "hh":
       return "cpp";
+    case "rs":
+      return "rust";
     default:
       return "javascript";
   }
@@ -409,6 +412,29 @@ export class TreeSitterParser {
       // C/C++ type definitions
       case "type_definition":
         entities.push(this.extractCTypedef(node, source));
+        break;
+
+      // Rust entities
+      case "function_item":
+        entities.push(this.extractRustFunction(node, source));
+        break;
+      case "struct_item":
+        entities.push(this.extractRustStruct(node, source));
+        break;
+      case "enum_item":
+        entities.push(this.extractRustEnum(node, source));
+        break;
+      case "trait_item":
+        entities.push(this.extractRustTrait(node, source));
+        break;
+      case "impl_item":
+        entities.push(this.extractRustImpl(node, source));
+        break;
+      case "mod_item":
+        entities.push(this.extractRustMod(node, source));
+        break;
+      case "use_declaration":
+        entities.push(this.extractRustUse(node, source));
         break;
     }
 
@@ -1087,5 +1113,110 @@ export class TreeSitterParser {
     }
 
     return null;
+  }
+
+  // =============================================================================
+  // RUST ENTITY EXTRACTION METHODS
+  // =============================================================================
+
+  private extractRustFunction(node: TreeSitterNode, source: string): ParsedEntity {
+    const nameNode = this.findNodeByType(node, "identifier");
+    const name = nameNode?.text || "<anonymous>";
+    const modifiers: string[] = [];
+    const text = source.substring(node.startIndex, node.endIndex);
+    if (/\bpub\b/.test(text)) modifiers.push("pub");
+    if (/\basync\b/.test(text)) modifiers.push("async");
+    if (/\bconst\b/.test(text)) modifiers.push("const");
+
+    // Parameters (best-effort)
+    const params: NonNullable<ParsedEntity["parameters"]> = [];
+    const paramList = this.findNodeByType(node, "parameters") || this.findNodeByType(node, "parameter_list");
+    if (paramList) {
+      for (const p of paramList.namedChildren) {
+        const pname = this.findNodeByType(p, "identifier")?.text;
+        if (pname) params.push({ name: pname });
+      }
+    }
+
+    return {
+      name,
+      type: "function",
+      location: convertPosition(node),
+      modifiers,
+      parameters: params,
+    };
+  }
+
+  private extractRustStruct(node: TreeSitterNode, _source: string): ParsedEntity {
+    const nameNode = this.findNodeByType(node, "type_identifier") || this.findNodeByType(node, "identifier");
+    const name = nameNode?.text || "<anonymous>";
+    return {
+      name,
+      type: "class",
+      location: convertPosition(node),
+      modifiers: ["struct"],
+    };
+  }
+
+  private extractRustEnum(node: TreeSitterNode, _source: string): ParsedEntity {
+    const nameNode = this.findNodeByType(node, "type_identifier") || this.findNodeByType(node, "identifier");
+    const name = nameNode?.text || "<anonymous>";
+    return {
+      name,
+      type: "type",
+      location: convertPosition(node),
+      modifiers: ["enum"],
+    };
+  }
+
+  private extractRustTrait(node: TreeSitterNode, _source: string): ParsedEntity {
+    const nameNode = this.findNodeByType(node, "type_identifier") || this.findNodeByType(node, "identifier");
+    const name = nameNode?.text || "<anonymous>";
+    return {
+      name,
+      type: "interface",
+      location: convertPosition(node),
+      modifiers: ["trait"],
+    };
+  }
+
+  private extractRustImpl(node: TreeSitterNode, _source: string): ParsedEntity {
+    // impl blocks don't always have a distinct name; use first type_identifier if any
+    const nameNode = this.findNodeByType(node, "type_identifier") || this.findNodeByType(node, "identifier");
+    const name = nameNode?.text || "<impl>";
+    return {
+      name,
+      type: "class",
+      location: convertPosition(node),
+      modifiers: ["impl"],
+    };
+  }
+
+  private extractRustMod(node: TreeSitterNode, _source: string): ParsedEntity {
+    const nameNode = this.findNodeByType(node, "identifier");
+    const name = nameNode?.text || "<mod>";
+    return {
+      name,
+      type: "type",
+      location: convertPosition(node),
+      modifiers: ["mod"],
+    };
+  }
+
+  private extractRustUse(node: TreeSitterNode, _source: string): ParsedEntity {
+    // use foo::bar as baz;
+    const firstPath = node.namedChildren.find((c) => c.type.includes("scoped_identifier") || c.type.includes("identifier"));
+    const aliasNode = node.namedChildren.find((c) => c.type === "as" || c.type === "rename");
+    const sourcePath = firstPath?.text || "";
+    const alias = aliasNode?.text;
+    return {
+      name: alias || sourcePath || "use",
+      type: "import",
+      location: convertPosition(node),
+      importData: {
+        source: sourcePath,
+        specifiers: alias ? [{ local: alias, imported: sourcePath }] : [{ local: sourcePath }],
+      },
+    };
   }
 }
