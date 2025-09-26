@@ -1,8 +1,13 @@
-# Tree-sitter Integration Architecture
+# Tree-sitter Integration Architecture (v2.4.0)
 
 ## Overview
 
 Tree-sitter serves as the core parsing engine in the MCP Server Codegraph, positioned at the foundation of the indexing pipeline. It acts as the language-agnostic parser that transforms source code into Abstract Syntax Trees (ASTs) for graph extraction.
+
+### v2.4.0 Notes
+- Standardizes on web-tree-sitter with an incremental wrapper (`src/parsers/tree-sitter-parser.ts`) and LRU cache.
+- Python analyzer adds 4-layer semantic extraction for Python (`src/parsers/python-analyzer.ts`).
+- Environments without ESM/WASM support may disable ParserAgent; DevAgent provides a heuristic fallback to scaffold entities so indexing can complete (reduced fidelity).
 
 ## 🏗️ Architecture Placement
 
@@ -639,3 +644,50 @@ export class ParserHealthCheck {
 - [MCP Integration Architecture](./mcp_integration.md)
 - [Vector Store Architecture](./vector_store.md)
 - [Performance Optimization Guide](../guides/performance_optimization.md)
+
+### Code References
+- Incremental parser wrapper: `src/parsers/tree-sitter-parser.ts`
+- Python analyzer: `src/parsers/python-analyzer.ts`
+- ParserAgent (may be disabled depending on platform): `src/agents/parser-agent.ts`
+- DevAgent heuristic fallback: `src/agents/dev-agent.ts`
+
+Document version: 2.4.0 • Last updated: 2025-09-23
+
+## 📌 Language Support (v2.4.0)
+- JavaScript/TypeScript/JSX/TSX via web-tree-sitter grammars
+- Python with enhanced analyzer (4-layer features)
+- C/C++: functions, structs/unions/enums, classes/namespaces/templates, includes/macros
+- Rust: functions, struct/enum/trait/impl/mod/use
+
+## ⚙️ WASM Grammar Setup (Quick Start)
+- Place grammar WASMs in a location mounted or served as `/wasm/` at runtime (parser uses `locateFile: /wasm/<name>`):
+  - `tree-sitter-javascript.wasm`, `tree-sitter-typescript.wasm`, `tree-sitter-tsx.wasm`, `tree-sitter-python.wasm`,
+    `tree-sitter-c.wasm`, `tree-sitter-cpp.wasm`, `tree-sitter-rust.wasm`
+- Dev convenience:
+  - Create `dist/wasm/` and copy files there
+  - Symlink to root: `sudo ln -s $(pwd)/dist/wasm /wasm` (or adjust container mount)
+- If a language cannot be loaded, parser skips it (no hard failure). ParserAgent may be disabled; DevAgent fallback keeps indexing working with reduced fidelity.
+
+## 🧪 Rust Example
+```rust
+// examples/rust-test-files/simple.rs
+pub struct Point { x: i32, y: i32 }
+
+pub trait Length { fn len(&self) -> f64; }
+
+impl Length for Point {
+    fn len(&self) -> f64 { ((self.x * self.x + self.y * self.y) as f64).sqrt() }
+}
+
+pub fn translate(p: Point) -> Point { Point { x: p.x + 1, y: p.y + 1 } }
+
+mod util { pub use super::Point as P; }
+```
+
+List entities via MCP:
+```json
+{
+  "name": "list_file_entities",
+  "arguments": { "filePath": "examples/rust-test-files/simple.rs" }
+}
+```

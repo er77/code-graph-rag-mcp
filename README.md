@@ -99,7 +99,8 @@ transport = "stdio"
 ### **Multi-Language Support**
 - **Python** ✅ - Advanced syntax, async/await, decorators
 - **TypeScript/JavaScript** ✅ - Full ES6+, JSX, TSX
-- **C/C++** 🚧 - Planned with template analysis
+- **C/C++** ✅ - Functions, structs/unions/enums, classes/namespaces/templates
+- **Rust** ✅ - Functions, structs, enums, traits, impls, modules, use
 
 ---
 
@@ -156,6 +157,18 @@ list_entity_relationships (entityName: "YourEntity", relationshipTypes: ["import
 ---
 
 ## 📋 **Changelog**
+
+### Version 2.4.1 (2025-09-23)
+
+#### ✨ Improvements
+- Added Rust AST parsing support (fn/struct/enum/trait/impl/mod/use)
+- Solidified C/C++ extraction and updated parser docs
+- New System Architecture overview doc with quick links
+- WASM grammar setup notes for web-tree-sitter
+
+#### 📚 Docs & UX
+- Updated README multi-language support
+- Internal architecture docs refreshed to v2.4.0/2.4.1
 
 ### Version 2.4.0 (2025-09-23)
 

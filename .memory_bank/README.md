@@ -6,11 +6,18 @@
 
 ### Current Status
 - **Phase**: Production Ready
-- **Version**: v2.3.3+
-- **Last Updated**: 2025-01-22
+- **Version**: v2.4.0
+- **Last Updated**: 2025-09-23
 - **Next Milestone**: Enhanced Multi-Language Support
 
 ## 🗺️ Navigation Guide
+
+### 🧭 Quick Architecture
+- [System Architecture Overview](./architecture/system_architecture.md) — big-picture map and flows
+- [MCP Integration](./architecture/mcp_integration.md) — server, tools, timeouts, resilience
+- [Multi-Agent Patterns](./architecture/multi_agent_patterns.md) — Conductor orchestration and agents
+- [Tree-sitter Integration](./architecture/tree_sitter_integration.md) — incremental parsing + Python analyzer
+- [Vector Store](./architecture/vector_store.md) — sqlite-vec primary + fallbacks, embeddings
 
 ### 📋 Project Context
 - [**Product Brief**](./product_brief.md) - Technical capabilities and MCP integration
