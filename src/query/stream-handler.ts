@@ -23,7 +23,7 @@
 import { Readable, Transform, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { StreamOptions } from "../types/query.js";
-import type { Entity, Relationship } from "../types/storage.js";
+import type { Entity } from "../types/storage.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -109,7 +109,7 @@ export class StreamHandler {
     return new Transform({
       objectMode: true,
       highWaterMark: opts.highWaterMark,
-      async transform(chunk: T | T[], encoding, callback) {
+      async transform(chunk: T | T[], _encoding, callback) {
         try {
           const items = Array.isArray(chunk) ? chunk : [chunk];
           const results: R[] = [];
@@ -231,7 +231,7 @@ export class StreamHandler {
     const processStream = new Writable({
       objectMode: true,
       highWaterMark: opts.highWaterMark,
-      async write(chunk: T | T[], encoding, callback) {
+      async write(chunk: T | T[], _encoding, callback) {
         try {
           const items = Array.isArray(chunk) ? chunk : [chunk];
 

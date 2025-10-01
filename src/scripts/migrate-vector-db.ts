@@ -83,16 +83,9 @@ class VectorDatabaseMigrator {
   private async createBackup(): Promise<string> {
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     const backupPath = `${this.dbPath}.backup-${timestamp}`;
-
-    // Create backup using SQLite backup API
-    const sourceDb = new Database(this.dbPath);
-    const backupDb = new Database(backupPath);
-
-    sourceDb.backup(backupDb);
-
+    const sourceDb = new Database(this.dbPath);   
+    await sourceDb.backup(backupPath);
     sourceDb.close();
-    backupDb.close();
-
     return backupPath;
   }
 

@@ -14,6 +14,7 @@
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import type { ParsedEntity } from "./parser.js";
+export type { ParsedEntity };
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION

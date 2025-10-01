@@ -276,12 +276,12 @@ export class ConfigLoader {
           apiKey: yamlConfig.mcp?.embedding?.apiKey 
             || process.env.MCP_EMBEDDING_API_KEY 
             || DEFAULT_CONFIG.mcp.embedding?.apiKey,
-          enabled: yamlConfig.mcp?.embedding?.enabled 
-            ?? (process.env.MCP_EMBEDDING_ENABLED === 'true') 
-            ?? DEFAULT_CONFIG.mcp.embedding?.enabled,
-          fallbackToMemory: yamlConfig.mcp?.embedding?.fallbackToMemory 
-            ?? (process.env.MCP_EMBEDDING_FALLBACK !== 'false') 
-            ?? DEFAULT_CONFIG.mcp.embedding?.fallbackToMemory,
+          enabled: yamlConfig.mcp?.embedding?.enabled !== undefined
+            ? yamlConfig.mcp?.embedding?.enabled
+            : (process.env.MCP_EMBEDDING_ENABLED === 'true') || DEFAULT_CONFIG.mcp.embedding?.enabled,
+          fallbackToMemory: yamlConfig.mcp?.embedding?.fallbackToMemory !== undefined
+            ? yamlConfig.mcp?.embedding?.fallbackToMemory
+            : (process.env.MCP_EMBEDDING_FALLBACK !== 'false') || DEFAULT_CONFIG.mcp.embedding?.fallbackToMemory,
         },
         server: {
           host: yamlConfig.mcp?.server?.host 
@@ -339,15 +339,15 @@ export class ConfigLoader {
         maxFiles: yamlConfig.logging?.maxFiles 
           || Number(process.env.LOG_MAX_FILES) 
           || DEFAULT_CONFIG.logging?.maxFiles,
-        enableConsole: yamlConfig.logging?.enableConsole 
-          ?? (process.env.LOG_ENABLE_CONSOLE !== 'false') 
-          ?? DEFAULT_CONFIG.logging?.enableConsole,
+        enableConsole: yamlConfig.logging?.enableConsole !== undefined
+          ? yamlConfig.logging?.enableConsole
+          : (process.env.LOG_ENABLE_CONSOLE !== 'false') || DEFAULT_CONFIG.logging?.enableConsole,
       },
       parser: {
         treeSitter: {
-          enabled: yamlConfig.parser?.treeSitter?.enabled 
-            ?? (process.env.PARSER_TREE_SITTER_ENABLED !== 'false') 
-            ?? DEFAULT_CONFIG.parser.treeSitter?.enabled,
+          enabled: yamlConfig.parser?.treeSitter?.enabled !== undefined
+            ? yamlConfig.parser?.treeSitter?.enabled
+            : (process.env.PARSER_TREE_SITTER_ENABLED !== 'false') || DEFAULT_CONFIG.parser.treeSitter?.enabled,
           languageConfigs: yamlConfig.parser?.treeSitter?.languageConfigs 
             || (process.env.PARSER_LANGUAGES?.split(',')) 
             || DEFAULT_CONFIG.parser.treeSitter?.languageConfigs,
@@ -359,9 +359,9 @@ export class ConfigLoader {
             || DEFAULT_CONFIG.parser.treeSitter?.timeout,
         },
         incremental: {
-          enabled: yamlConfig.parser?.incremental?.enabled 
-            ?? (process.env.PARSER_INCREMENTAL_ENABLED !== 'false') 
-            ?? DEFAULT_CONFIG.parser.incremental?.enabled,
+          enabled: yamlConfig.parser?.incremental?.enabled !== undefined
+            ? yamlConfig.parser?.incremental?.enabled
+            : (process.env.PARSER_INCREMENTAL_ENABLED !== 'false') || DEFAULT_CONFIG.parser.incremental?.enabled,
           cacheSize: yamlConfig.parser?.incremental?.cacheSize 
             || Number(process.env.PARSER_CACHE_SIZE) 
             || DEFAULT_CONFIG.parser.incremental?.cacheSize,
@@ -373,9 +373,9 @@ export class ConfigLoader {
       environment: yamlConfig.environment 
         || process.env.NODE_ENV 
         || DEFAULT_CONFIG.environment,
-      debug: yamlConfig.debug 
-        ?? (process.env.DEBUG === 'true') 
-        ?? DEFAULT_CONFIG.debug,
+      debug: yamlConfig.debug !== undefined
+        ? yamlConfig.debug
+        : (process.env.DEBUG === 'true') || DEFAULT_CONFIG.debug,
     };
 
     return config;

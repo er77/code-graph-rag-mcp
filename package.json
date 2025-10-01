@@ -48,9 +48,11 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
-    "test": "jest",
-    "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage",
+    "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --runInBand",
+    "test:quiet": "cross-env NODE_OPTIONS=--experimental-vm-modules NODE_ENV=test jest --silent",
+    "test:verbose": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --verbose",
+    "test:watch": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --watch",
+    "test:coverage": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --coverage",
     "smoke": "node scripts/smoke-graph-health.js /home/er77/_work_fodler/baserow-develop",
     "smoke:clean": "node scripts/smoke-graph-health.js /home/er77/_work_fodler/baserow-develop --clean",
     "smoke:semantic": "node scripts/smoke-semantic.js /home/er77/_work_fodler/baserow-develop",
@@ -61,12 +63,13 @@
     "@biomejs/biome": "^2.2.4",
     "@types/better-sqlite3": "^7.6.13",
     "@types/bun": "latest",
-    "@types/jest": "^29.0.0",
+    "@types/jest": "^29.5.14",
     "@types/node": "^20.0.0",
-    "jest": "^29.0.0",
-    "ts-jest": "^29.0.0",
+    "cross-env": "^10.1.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.4.4",
     "tsup": "^8.3.6",
-    "typescript": "^5.0.0"
+    "typescript": "^5.9.2"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.5.0",
@@ -85,8 +88,8 @@
     "zod-to-json-schema": "^3.23.0"
   },
   "optionalDependencies": {
-    "@xenova/transformers": "^2.17.0",
-    "onnxruntime-node": "^1.19.2"
+    "@xenova/transformers": "^2.17.2",
+    "onnxruntime-node": "^1.23.0"
   },
   "engines": {
     "node": ">=18.0.0"

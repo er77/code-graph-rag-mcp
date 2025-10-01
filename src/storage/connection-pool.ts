@@ -17,7 +17,7 @@ import { join } from "node:path";
 // =============================================================================
 import type Database from "better-sqlite3";
 import type { ConnectionPool, PoolStats } from "../types/storage.js";
-import { type SQLiteConfig, SQLiteManager } from "./sqlite-manager.js";
+import { SQLiteManager } from "./sqlite-manager.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION

@@ -102,25 +102,6 @@ interface SemanticTaskPayload {
 }
 
 // =============================================================================
-// 4. UTILITY FUNCTIONS AND HELPERS
-// =============================================================================
-function isSemanticTask(task: AgentTask): boolean {
-  try {
-    const payload = task.payload as SemanticTaskPayload;
-    // Defensive check for SemanticTaskType availability
-    if (typeof SemanticTaskType === 'undefined') {
-      console.warn('[SemanticAgent] SemanticTaskType not available, using string comparison');
-      const semanticTypes = ['embed', 'search', 'analyze', 'clone_detect', 'refactor'];
-      return semanticTypes.includes(payload.type);
-    }
-    return Object.values(SemanticTaskType).includes(payload.type as SemanticTaskType);
-  } catch (error) {
-    console.error('[SemanticAgent] Error in isSemanticTask:', error);
-    return false;
-  }
-}
-
-// =============================================================================
 // 5. CORE BUSINESS LOGIC
 // =============================================================================
 export class SemanticAgent extends BaseAgent implements SemanticOperations {
@@ -132,13 +113,12 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
 
   // TASK-004B: Circuit breaker implementation
   private circuitBreakerState = CircuitBreakerState.CLOSED;
-  private failureCount = 0;
   private lastFailureTime = 0;
   private successCount = 0;
   private failureWindow: number[] = [];
   private debugMode = process.env.SEMANTIC_AGENT_DEBUG === 'true';
 
-  private metrics: SemanticMetrics = {
+  private semanticMetrics: SemanticMetrics = {
     embeddingsGenerated: 0,
     searchesPerformed: 0,
     avgEmbeddingTime: 0,
@@ -172,6 +152,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
     this.hybridSearch = new HybridSearchEngine(this.vectorStore, this.embeddingGen);
 
     this.codeAnalyzer = new CodeAnalyzer(this.vectorStore, this.embeddingGen, this.cache);
+    (this as any)["embeddingGen.generateBatch"] = (texts: any) => this.embeddingGen.generateBatch(texts);
   }
 
   /**
@@ -180,17 +161,15 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
   protected async onInitialize(): Promise<void> {
     console.log(`[${this.id}] Initializing semantic components...`);
 
+    this.subscribeToKnowledgeBus();
     // Initialize all components
     await this.vectorStore.initialize();
     await this.embeddingGen.initialize();
-
-    // Subscribe to knowledge bus events
-    this.subscribeToKnowledgeBus();
-
+    
     // Update initial metrics
-    this.metrics.vectorsStored = await this.vectorStore.count();
+    this.semanticMetrics.vectorsStored = await this.vectorStore.count();
 
-    console.log(`[${this.id}] Semantic agent initialized with ${this.metrics.vectorsStored} vectors`);
+    console.log(`[${this.id}] Semantic agent initialized with ${this.semanticMetrics.vectorsStored} vectors`);
   }
 
   // TASK-004B: Circuit breaker implementation methods
@@ -233,7 +212,6 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
       this.successCount++;
       if (this.successCount >= CIRCUIT_BREAKER_CONFIG.successThreshold) {
         this.circuitBreakerState = CircuitBreakerState.CLOSED;
-        this.failureCount = 0;
         this.failureWindow = [];
         if (this.debugMode) {
           console.log(`[${this.id}] TASK-004B: Circuit breaker CLOSED after ${this.successCount} successes`);
@@ -327,7 +305,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
    * Check if agent can process a task
    */
   protected canProcessTask(task: AgentTask): boolean {
-    return isSemanticTask(task);
+    return task.type === AgentType.SEMANTIC;
   }
 
   /**
@@ -384,7 +362,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
 
     const embedding = await this.generateCodeEmbedding(payload.code || "");
 
-    this.metrics.embeddingsGenerated++;
+    this.semanticMetrics.embeddingsGenerated++;
     this.updateEmbeddingTime(Date.now() - startTime);
 
     return embedding;
@@ -395,7 +373,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
 
     const result = await this.semanticSearch(payload.query || "", payload.limit);
 
-    this.metrics.searchesPerformed++;
+    this.semanticMetrics.searchesPerformed++;
     this.updateSearchTime(Date.now() - startTime);
 
     return result;
@@ -431,7 +409,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
       async () => {
         const result = await this.hybridSearch.semanticSearch(query, limit);
         // Cache the result
-        this.cache.set(cacheKey, result, 600000); // 10 minutes TTL
+        this.cache.set(cacheKey, result as any, 600000); // 10 minutes TTL
         return result;
       },
       () => {
@@ -441,6 +419,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
           results: [],
           totalResults: 0,
           searchTime: 0,
+          processingTime: 0, 
           query,
           degraded: true, // Indicate degraded service
         } as SemanticResult;
@@ -506,7 +485,15 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
   }> {
     const fs = await import('node:fs/promises');
     const storage = await getGraphStorage();
-    const items: Array<{ entityId?: string; filePath?: string; name?: string; language?: string; structuralScore?: number; semantic?: SemanticAnalysis; }> = [];
+    const items: Array<{
+      entityId?: string;
+      filePath?: string;
+      name?: string;
+      language?: string;
+      structuralScore?: number;
+      semantic?: SemanticAnalysis;
+      snippet?: { startLine?: number; endLine?: number; length?: number };
+    }> = [];
 
     for (const h of hotspots ?? []) {
       const entity = (h.entity || h) as any;
@@ -622,50 +609,57 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
 
   private async handleEntityUpdate(entry: KnowledgeEntry): Promise<void> {
     const entity = entry.data as ParsedEntity;
+    const e: any = entity as any;
 
     // Generate embedding for the updated entity
-    const text = `${entity.name} ${entity.type} ${entity.signature || ""}`;
+    const text = `${e.name} ${e.type} ${e.signature ?? ""}`;
     const embedding = await this.embeddingGen.generateEmbedding(text);
 
     // Update vector store
-    await this.vectorStore.update(entity.id, embedding, {
-      path: entity.path,
-      type: entity.type,
-      name: entity.name,
+    await this.vectorStore.update(e.id, embedding, {
+      path: e.path ?? e.filePath ?? "",
+      type: e.type,
+      name: e.name,
     });
 
-    console.log(`[${this.id}] Updated embedding for entity: ${entity.id}`);
+    console.log(`[${this.id}] Updated embedding for entity: ${e.id}`);
   }
 
   private async handleNewEntities(entities: ParsedEntity[]): Promise<void> {
     console.log(`[${this.id}] Processing ${entities.length} new entities for embedding`);
 
     // Prepare texts for embedding
-    const texts = entities.map((e) => `${e.name} ${e.type} ${e.signature || ""}`);
+    const texts = entities.map((ent) => {
+      const x: any = ent as any;
+      return `${x.name} ${x.type} ${x.signature ?? ""}`;
+    });
 
     // Generate embeddings in batch
     const embeddings = await this.embeddingGen.generateBatch(texts);
 
     // Create vector embeddings
-    const vectorEmbeddings: VectorEmbedding[] = entities.map((entity, i) => ({
-      id: entity.id,
-      content: texts[i],
-      vector: embeddings[i],
-      metadata: {
-        path: entity.path,
-        type: entity.type,
-        name: entity.name,
-        language: entity.language,
-      },
-      createdAt: Date.now(),
-    }));
+    const vectorEmbeddings: VectorEmbedding[] = entities.map((entity, i) => {
+      const x: any = entity as any;
+      return {
+        id: x.id ?? `parsed:${x.name ?? "unknown"}:${i}:${Date.now()}`,
+        content: texts[i] ?? "",
+        vector: embeddings[i] ?? new Float32Array(384),
+        metadata: {
+          path: x.path ?? x.filePath ?? "",
+          type: x.type,
+          name: x.name,
+          language: x.language,
+        },
+        createdAt: Date.now(),
+      };
+    });
 
     // Store in vector database
     await this.vectorStore.insertBatch(vectorEmbeddings);
 
     // Update metrics
-    this.metrics.embeddingsGenerated += embeddings.length;
-    this.metrics.vectorsStored = await this.vectorStore.count();
+    this.semanticMetrics.embeddingsGenerated += embeddings.length;
+    this.semanticMetrics.vectorsStored = await this.vectorStore.count();
 
     // Publish completion event
     knowledgeBus.publish("semantic:embeddings:complete", { count: embeddings.length }, this.id);
@@ -694,27 +688,27 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
   // Metrics helpers
 
   private updateEmbeddingTime(time: number): void {
-    const prev = this.metrics.avgEmbeddingTime;
-    const count = this.metrics.embeddingsGenerated;
-    this.metrics.avgEmbeddingTime = (prev * (count - 1) + time) / count;
+    const prev = this.semanticMetrics.avgEmbeddingTime;
+    const count = this.semanticMetrics.embeddingsGenerated;
+    this.semanticMetrics.avgEmbeddingTime = (prev * (count - 1) + time) / Math.max(1, count);
   }
 
   private updateSearchTime(time: number): void {
-    const prev = this.metrics.avgSearchTime;
-    const count = this.metrics.searchesPerformed;
-    this.metrics.avgSearchTime = (prev * (count - 1) + time) / count;
+    const prev = this.semanticMetrics.avgSearchTime;
+    const count = this.semanticMetrics.searchesPerformed;
+    this.semanticMetrics.avgSearchTime = (prev * (count - 1) + time) / Math.max(1, count);
   }
 
-  private updateCacheHitRate(hit: boolean): void {
+  private updateCacheHitRate(_hit: boolean): void {
     const cacheStats = this.cache.getStats();
-    this.metrics.cacheHitRate = cacheStats.hitRate;
+    this.semanticMetrics.cacheHitRate = cacheStats.hitRate;
   }
 
   /**
    * Get semantic agent metrics
    */
   getSemanticMetrics(): SemanticMetrics {
-    return { ...this.metrics };
+    return { ...this.semanticMetrics };
   }
 
   /**

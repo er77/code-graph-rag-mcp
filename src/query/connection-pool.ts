@@ -93,8 +93,6 @@ export class ConnectionPool extends EventEmitter {
       throw new Error("Connection pool is shutting down");
     }
 
-    const startTime = Date.now();
-
     // Try to get an available connection
     const connection = this.getAvailableConnection();
 

@@ -14,6 +14,15 @@ import {
 } from "../types/agent.js";
 import { BaseAgent } from "./base.js";
 
+
+type EventfulAgent = Agent & {
+  on: (event: string, listener: (...args: any[]) => void) => void;
+};
+
+export function isEventfulAgent(a: Agent): a is EventfulAgent {
+  return typeof (a as any).on === "function";
+}
+
 interface CoordinatorConfig {
   resourceConstraints: ResourceConstraints;
   taskQueueLimit: number;
@@ -50,7 +59,7 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
     this.agents.clear();
   }
 
-  protected canProcessTask(task: AgentTask): boolean {
+  protected canProcessTask(_task: AgentTask): boolean {
     // Coordinator can always accept tasks for routing
     return this.pendingTasks.size < this.config.taskQueueLimit;
   }
@@ -113,10 +122,11 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
     this.agents.set(agent.id, agent);
     console.log(`[Coordinator] Registered agent ${agent.id} of type ${agent.type}`);
 
-    // Set up event listeners
-    agent.on("task:completed", this.handleTaskCompleted.bind(this));
-    agent.on("task:failed", this.handleTaskFailed.bind(this));
-
+    
+    if (isEventfulAgent(agent)) {
+      agent.on("task:completed", this.handleTaskCompleted.bind(this));
+      agent.on("task:failed", this.handleTaskFailed.bind(this));
+    } 
     this.emit("agent:registered", agent.id);
   }
 
@@ -204,21 +214,23 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
 
   private selectRoundRobin(type: AgentType, agents: Agent[]): Agent {
     const index = this.roundRobinIndex.get(type) || 0;
-    const selected = agents[index % agents.length];
+    const selected = agents[index % agents.length]!;
     this.roundRobinIndex.set(type, index + 1);
     return selected;
   }
 
   private selectLeastLoaded(agents: Agent[]): Agent {
-    return agents.reduce((least, agent) => {
+    return agents.slice(1).reduce((least, agent) => {
       const leastLoad = least.getTaskQueue().length + least.getMemoryUsage() / 100;
       const agentLoad = agent.getTaskQueue().length + agent.getMemoryUsage() / 100;
       return agentLoad < leastLoad ? agent : least;
-    });
+    }, agents[0]!);
   }
 
   private selectByPriority(agents: Agent[]): Agent {
-    return agents.sort((a, b) => b.capabilities.priority - a.capabilities.priority)[0];
+    return agents
+      .slice()
+      .sort((a, b) => b.capabilities.priority - a.capabilities.priority)[0]!;
   }
 
   private startHealthMonitoring(): void {

@@ -210,6 +210,16 @@ export class ParserAgent extends BaseAgent {
 
       // Update statistics
       const elapsed = Date.now() - startTime;
+
+      // If any result contains errors, treat the whole task as failed.
+      const errors = results.flatMap((r) => r.errors || []);
+      if (errors.length > 0) {
+        const message =
+          `Parsing failed for ${errors.length} file(s): ` +
+          errors.slice(0, 3).map((e) => e.message).join("; ");
+        throw new Error(message);
+      }
+
       this.updateStats(results, elapsed);
 
       // Publish results to knowledge bus

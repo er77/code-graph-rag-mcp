@@ -26,12 +26,11 @@ import type {
   GraphQuery,
   GraphQueryResult,
   GraphStorage,
-  PerformanceMetric,
   Relationship,
   RelationType,
   StorageMetrics,
 } from "../types/storage.js";
-import type { SQLiteManager } from "./sqlite-manager.js";
+import { getSQLiteManager, type SQLiteManager } from "./sqlite-manager.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -39,7 +38,6 @@ import type { SQLiteManager } from "./sqlite-manager.js";
 const ID_LENGTH = 12;
 const DEFAULT_QUERY_LIMIT = 100;
 const MAX_QUERY_LIMIT = 1000;
-const DEFAULT_SUBGRAPH_DEPTH = 2;
 const MAX_SUBGRAPH_DEPTH = 5;
 
 // =============================================================================
@@ -48,6 +46,7 @@ const MAX_SUBGRAPH_DEPTH = 5;
 
 export class GraphStorageImpl implements GraphStorage {
   private db: Database.Database;
+  private sqliteManager: SQLiteManager;
 
   // Prepared statements for performance
   private statements: {
@@ -62,9 +61,39 @@ export class GraphStorageImpl implements GraphStorage {
     insertPerformanceMetric?: Database.Statement;
   } = {};
 
-  constructor(private sqliteManager: SQLiteManager) {
+  constructor(sqliteManager: SQLiteManager) {
+    this.sqliteManager = sqliteManager;
     this.db = sqliteManager.getConnection();
     this.prepareStatements();
+  }
+
+  
+  async initialize(): Promise<void> {
+    this.ensureReady(true);
+  }
+
+  private ensureReady(force = false): void {
+    try {
+      if (!force && this.sqliteManager?.isOpen()) {
+        this.db.pragma("user_version");
+        return;
+      }
+    } catch {
+      
+    }
+
+    
+    const manager = getSQLiteManager();
+    if (!manager.isOpen()) {
+      manager.initialize();
+    }
+
+    
+    if (force || manager !== this.sqliteManager) {
+      this.sqliteManager = manager;
+      this.db = this.sqliteManager.getConnection();
+      this.prepareStatements();
+    }
   }
 
   /**
@@ -158,6 +187,7 @@ export class GraphStorageImpl implements GraphStorage {
   }
 
   async insertEntities(entities: Entity[]): Promise<BatchResult> {
+    this.ensureReady();
     return this.measureOperation(
       "insert_entities_batch",
       () => {
@@ -219,6 +249,7 @@ export class GraphStorageImpl implements GraphStorage {
   }
 
   async updateEntity(id: string, updates: Partial<Entity>): Promise<void> {
+    this.ensureReady();
     const existing = await this.getEntity(id);
     if (!existing) {
       throw new Error(`Entity ${id} not found`);
@@ -246,15 +277,18 @@ export class GraphStorageImpl implements GraphStorage {
   }
 
   async deleteEntity(id: string): Promise<void> {
+    this.ensureReady();
     this.statements.deleteEntity!.run(id);
   }
 
   async getEntity(id: string): Promise<Entity | null> {
+    this.ensureReady();
     const row = this.statements.getEntity!.get(id) as any;
     return row ? this.rowToEntity(row) : null;
   }
 
   async findEntities(query: GraphQuery): Promise<Entity[]> {
+    this.ensureReady();
     let sql = "SELECT * FROM entities WHERE 1=1";
     const params: any[] = [];
 
@@ -299,6 +333,7 @@ export class GraphStorageImpl implements GraphStorage {
   // =============================================================================
 
   async insertRelationship(relationship: Relationship): Promise<void> {
+    this.ensureReady();
     const id = relationship.id || this.generateId();
     const now = Date.now();
 
@@ -314,6 +349,7 @@ export class GraphStorageImpl implements GraphStorage {
   }
 
   async insertRelationships(relationships: Relationship[]): Promise<BatchResult> {
+    this.ensureReady();
     const start = Date.now();
     const errors: Array<{ item: unknown; error: string }> = [];
     let processed = 0;
@@ -359,10 +395,12 @@ export class GraphStorageImpl implements GraphStorage {
   }
 
   async deleteRelationship(id: string): Promise<void> {
+    this.ensureReady();
     this.statements.deleteRelationship!.run(id);
   }
 
   async getRelationshipsForEntity(entityId: string, type?: RelationType): Promise<Relationship[]> {
+    this.ensureReady();
     let sql = `
       SELECT * FROM relationships 
       WHERE (from_id = ? OR to_id = ?)
@@ -379,6 +417,7 @@ export class GraphStorageImpl implements GraphStorage {
   }
 
   async findRelationships(query: GraphQuery): Promise<Relationship[]> {
+    this.ensureReady();
     let sql = "SELECT * FROM relationships WHERE 1=1";
     const params: any[] = [];
 
@@ -407,10 +446,12 @@ export class GraphStorageImpl implements GraphStorage {
   // =============================================================================
 
   async updateFileInfo(info: FileInfo): Promise<void> {
+    this.ensureReady();
     this.statements.updateFile!.run(info.path, info.hash, info.lastIndexed, info.entityCount);
   }
 
   async getFileInfo(path: string): Promise<FileInfo | null> {
+    this.ensureReady();
     const row = this.statements.getFile!.get(path) as any;
 
     return row
@@ -424,6 +465,7 @@ export class GraphStorageImpl implements GraphStorage {
   }
 
   async getOutdatedFiles(since: number): Promise<FileInfo[]> {
+    this.ensureReady();
     const rows = this.db
       .prepare(`
       SELECT * FROM files 
@@ -533,10 +575,12 @@ export class GraphStorageImpl implements GraphStorage {
   // =============================================================================
 
   async vacuum(): Promise<void> {
+    this.ensureReady();
     this.sqliteManager.vacuum();
   }
 
   async analyze(): Promise<void> {
+    this.ensureReady();
     this.sqliteManager.analyze();
   }
 
@@ -683,6 +727,7 @@ export class GraphStorageImpl implements GraphStorage {
    * Measure operation performance
    */
   private async measureOperation<T>(operation: string, fn: () => Promise<T> | T, entityCount?: number): Promise<T> {
+    this.ensureReady();
     const start = Date.now();
     const startMemory = process.memoryUsage().heapUsed;
 
@@ -781,6 +826,7 @@ export class GraphStorageImpl implements GraphStorage {
    * Clear all data (for testing)
    */
   async clear(): Promise<void> {
+    this.ensureReady();
     const transaction = this.db.transaction(() => {
       this.db.exec("DELETE FROM relationships");
       this.db.exec("DELETE FROM entities");

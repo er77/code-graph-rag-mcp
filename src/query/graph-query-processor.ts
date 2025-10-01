@@ -34,13 +34,12 @@ import type {
   GraphQuery,
   Hotspot,
   ImpactAnalysis,
-  OptimizedQuery,
   Path,
   QueryResult,
   Relationship,
   RippleEffect,
 } from "../types/query.js";
-import type { EntityType, RelationType } from "../types/storage.js";
+import type { RelationType } from "../types/storage.js";
 import type { ConnectionPool } from "./connection-pool.js";
 import type { QueryCache } from "./query-cache.js";
 import { QueryOptimizer } from "./query-optimizer.js";
@@ -49,8 +48,6 @@ import { QueryOptimizer } from "./query-optimizer.js";
 // 2. CONSTANTS AND CONFIGURATION
 // =============================================================================
 const MAX_TRAVERSAL_DEPTH = 10;
-const DEFAULT_BATCH_SIZE = 100;
-const QUERY_TIMEOUT_MS = 5000;
 
 // =============================================================================
 // 3. GRAPH QUERY PROCESSOR IMPLEMENTATION

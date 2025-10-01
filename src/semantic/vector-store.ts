@@ -29,7 +29,7 @@
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import Database from "better-sqlite3";
-import type { SimilarityResult, VECTOR_DIMENSIONS, VectorEmbedding, VectorStoreConfig } from "../types/semantic.js";
+import type { SimilarityResult, VectorEmbedding, VectorStoreConfig } from "../types/semantic.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -56,13 +56,12 @@ interface VectorRow {
 // 4. UTILITY FUNCTIONS AND HELPERS
 // =============================================================================
 function float32ArrayToBuffer(array: Float32Array): Buffer {
-  return Buffer.from(array.buffer);
+  return Buffer.from(array.buffer, array.byteOffset, array.byteLength);
 }
 
 function bufferToFloat32Array(buffer: Buffer): Float32Array {
-  return new Float32Array(buffer.buffer, buffer.byteOffset, buffer.length / 4);
+  return new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4);
 }
-
 // =============================================================================
 // 5. CORE BUSINESS LOGIC
 // =============================================================================
@@ -70,7 +69,6 @@ export class VectorStore {
   private db: Database.Database | null = null;
   private readonly config: VectorStoreConfig;
   private insertStmt: Database.Statement | null = null;
-  private searchStmt: Database.Statement | null = null;
   private updateStmt: Database.Statement | null = null;
   private deleteStmt: Database.Statement | null = null;
 
@@ -78,7 +76,6 @@ export class VectorStore {
   private isInitialized = false;
   private isInitializing = false;
   private initializationPromise: Promise<void> | null = null;
-  private extensionLoaded = false;
   private extensionLoadAttempts = 0;
   private readonly MAX_EXTENSION_LOAD_ATTEMPTS = 3;
   private debugMode = process.env.VECTOR_STORE_DEBUG === 'true';
@@ -305,7 +302,6 @@ export class VectorStore {
         try {
           this.db.loadExtension(path);
           console.log(`[VectorStore] TASK-004B: Loaded sqlite-vec extension from: ${path}`);
-          this.extensionLoaded = true;
           return;
         } catch (error) {
           if (this.debugMode) {
@@ -504,12 +500,12 @@ export class VectorStore {
         const conditions: string[] = [];
         const params: any[] = [Array.from(queryVector)];
 
-        if (dateRange?.start) {
+        if (dateRange?.start != null) {
           conditions.push("e.created_at >= ?");
           params.push(dateRange.start);
         }
 
-        if (dateRange?.end) {
+        if (dateRange?.end != null) {
           conditions.push("e.created_at <= ?");
           params.push(dateRange.end);
         }
@@ -585,12 +581,12 @@ export class VectorStore {
     const conditions: string[] = [];
     const params: any[] = [];
 
-    if (dateRange?.start) {
+    if (dateRange?.start != null) {
       conditions.push("created_at >= ?");
       params.push(dateRange.start);
     }
 
-    if (dateRange?.end) {
+    if (dateRange?.end != null) {
       conditions.push("created_at <= ?");
       params.push(dateRange.end);
     }
@@ -645,7 +641,8 @@ export class VectorStore {
    * Compute cosine similarity between two vectors
    */
   private cosineSimilarity(a: Float32Array, b: Float32Array): number {
-    if (a.length !== b.length) {
+    const len = a.length;
+    if (len !== b.length) {
       throw new Error("Vectors must have the same dimension");
     }
 
@@ -653,20 +650,16 @@ export class VectorStore {
     let normA = 0;
     let normB = 0;
 
-    for (let i = 0; i < a.length; i++) {
-      dotProduct += a[i] * b[i];
-      normA += a[i] * a[i];
-      normB += b[i] * b[i];
+    for (let i = 0; i < len; i++) {
+      const ai = a[i]!;
+      const bi = b[i]!;
+      dotProduct += ai * bi;
+      normA += ai * ai;
+      normB += bi * bi;
     }
 
-    normA = Math.sqrt(normA);
-    normB = Math.sqrt(normB);
-
-    if (normA === 0 || normB === 0) {
-      return 0;
-    }
-
-    return dotProduct / (normA * normB);
+    const denom = Math.sqrt(normA) * Math.sqrt(normB);
+    return denom === 0 ? 0 : dotProduct / denom;
   }
 
   /**

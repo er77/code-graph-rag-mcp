@@ -31,6 +31,7 @@
 import type {
   EntityRelationship,
   ImportDependency,
+  MagicType,
   ParsedEntity,
   PatternAnalysis,
   PythonAnalysisConfig,
@@ -44,8 +45,8 @@ import type {
 // 2. CONSTANTS AND CONFIGURATION
 // =============================================================================
 
-// Magic method mappings for Layer 2
-const MAGIC_METHOD_TYPES = {
+// Magic method mappings for Layer 2 - derived from MagicType type
+const MAGIC_METHOD_TYPES: Record<string, MagicType> = {
   __init__: "init",
   __new__: "new",
   __del__: "del",
@@ -87,10 +88,8 @@ const MAGIC_METHOD_TYPES = {
   __lshift__: "lshift",
   __rshift__: "rshift",
   __invert__: "invert",
-} as const;
+};
 
-// Property decorator patterns
-const PROPERTY_DECORATORS = ["property", "setter", "deleter", "getter"];
 
 // Built-in decorators for Layer 1
 const BUILTIN_DECORATORS = [
@@ -106,23 +105,6 @@ const BUILTIN_DECORATORS = [
   "wraps",
 ];
 
-// Design patterns for Layer 4
-const DESIGN_PATTERNS = {
-  singleton: ["__new__", "_instance", "_instances"],
-  observer: ["subscribe", "unsubscribe", "notify", "observers"],
-  factory: ["create", "make", "build", "get_instance"],
-  builder: ["build", "with_", "set_", "add_"],
-  strategy: ["strategy", "algorithm", "execute"],
-  decorator: ["__call__", "wrapper", "decorator"],
-};
-
-// Performance targets
-const PERFORMANCE_TARGETS = {
-  maxParseTimeMs: 100, // Per file
-  maxMemoryMB: 200,
-  targetThroughputFilesPerSecond: 150,
-};
-
 // =============================================================================
 // 3. DATA MODELS AND TYPE DEFINITIONS
 // =============================================================================
@@ -136,12 +118,6 @@ interface AnalysisContext {
   classes: Map<string, PythonClassInfo>;
   methods: Map<string, PythonMethodInfo>;
   metrics: PythonParserMetrics;
-}
-
-interface NodeAnalysisResult {
-  entities: ParsedEntity[];
-  relationships: EntityRelationship[];
-  patterns: Partial<PatternAnalysis>;
 }
 
 // =============================================================================
@@ -188,27 +164,6 @@ function isBuiltinDecorator(name: string): boolean {
 }
 
 /**
- * Extract identifier from various node types
- */
-function extractIdentifier(node: TreeSitterNode): string | null {
-  if (node.type === "identifier") {
-    return node.text;
-  }
-
-  // Handle dotted names (e.g., module.Class)
-  if (node.type === "dotted_name" || node.type === "attribute") {
-    return node.text;
-  }
-
-  // Find identifier child
-  const identifierChild = node.namedChildren.find(
-    (child) => child.type === "identifier" || child.type === "dotted_name",
-  );
-
-  return identifierChild ? identifierChild.text : null;
-}
-
-/**
  * Performance monitoring wrapper
  */
 function withPerformanceMonitoring<T>(operation: string, fn: () => T, metrics: PythonParserMetrics): T {
@@ -245,7 +200,7 @@ function withPerformanceMonitoring<T>(operation: string, fn: () => T, metrics: P
  */
 export class PythonAnalyzer {
   private config: PythonAnalysisConfig;
-  private metrics: PythonParserMetrics;
+  private static dependencyCache: Map<string, Set<string>> = new Map();
 
   constructor(config: Partial<PythonAnalysisConfig> = {}) {
     this.config = {
@@ -261,7 +216,6 @@ export class PythonAnalyzer {
       ...config,
     };
 
-    this.metrics = this.initializeMetrics();
   }
 
   /**
@@ -464,8 +418,8 @@ export class PythonAnalyzer {
       isGenerator: entity.asyncInfo?.isGenerator || false,
       decorators: decorators.map((d) => ({ ...d, line: node.startPosition.row + 1 })),
       magicType: isMagicMethod(name) ? MAGIC_METHOD_TYPES[name as keyof typeof MAGIC_METHOD_TYPES] : undefined,
+      location: convertPosition(node),
     };
-
     context.methods.set(name, methodInfo);
   }
 
@@ -503,29 +457,48 @@ export class PythonAnalyzer {
       children: [],
     };
 
-    // Analyze class members
-    const bodyNode = node.namedChildren.find((child) => child.type === "block");
-    if (bodyNode) {
-      for (const child of bodyNode.namedChildren) {
-        if (child.type === "function_definition" || child.type === "async_function_definition") {
-        }
-      }
-    }
-
-    context.entities.push(entity);
-
-    // Store class info for cross-layer analysis
     const classInfo: PythonClassInfo = {
       classType,
       baseClasses,
-      mro: [name, ...baseClasses], // Will be refined in Layer 3
+      mro: [name, ...baseClasses],
       abstractMethods: [],
       magicMethods: [],
       properties: [],
       classDecorators: decorators.map((d) => ({ name: d.name, arguments: d.arguments })),
+      decorators: decorators.map((d) => d.name),
+      methods: [],
+      location: convertPosition(node),
     };
 
+    // Analyze class members
+    const bodyNode = node.namedChildren.find((child) => child.type === "block");
+    if (bodyNode) {
+      for (const child of bodyNode.namedChildren) {
+        let fnNode: TreeSitterNode | null = null;
+
+        if (child.type === "function_definition" || child.type === "async_function_definition") {
+          fnNode = child;
+        } else if (child.type === "decorated_definition") {
+          const def = child.namedChildren[child.namedChildren.length - 1];
+          if (def && (def.type === "function_definition" || def.type === "async_function_definition")) {
+            fnNode = def;
+          }
+        }
+
+        if (fnNode) {
+          const id = fnNode.namedChildren.find((c) => c.type === "identifier");
+          if (id) {
+            classInfo.methods.push(id.text);
+            if (isMagicMethod(id.text)) {
+              classInfo.magicMethods.push(id.text);
+            }
+          }
+        }
+      }
+    }
+
     context.classes.set(name, classInfo);
+    context.entities.push(entity);
   }
 
   /**
@@ -653,7 +626,7 @@ export class PythonAnalyzer {
   private classifyMethodType(
     node: TreeSitterNode,
     decorators: Array<{ name: string; arguments?: string[] }>,
-    context: AnalysisContext,
+    _context: AnalysisContext,
   ): PythonMethodInfo["classification"] {
     const functionName = node.namedChildren.find((child) => child.type === "identifier")?.text || "";
 
@@ -728,22 +701,12 @@ export class PythonAnalyzer {
     const layer3StartTime = Date.now();
 
     await withPerformanceMonitoring("Layer3Analysis", () => {
-      // Analyze inheritance relationships
       this.analyzeInheritanceHierarchy(context);
-
-      // Analyze method overrides
       this.analyzeMethodOverrides(context);
-
-      // Analyze import dependencies
       this.analyzeImportDependencies(rootNode, context);
-
-      // Create cross-reference mappings
       this.createCrossReferences(context);
-
-      // Analyze method resolution order
       this.analyzeMethodResolutionOrder(context);
-    });
-
+    }, context.metrics);
     context.metrics.relationshipMapping.timeMs = Date.now() - layer3StartTime;
     console.log(`[PythonAnalyzer] Layer 3 completed in ${context.metrics.relationshipMapping.timeMs}ms`);
   }
@@ -769,22 +732,12 @@ export class PythonAnalyzer {
     };
 
     await withPerformanceMonitoring("Layer4Analysis", () => {
-      // Analyze context managers (with statements)
       patterns.contextManagers = this.analyzeContextManagers(rootNode);
-
-      // Analyze exception handling patterns
       patterns.exceptionHandling = this.analyzeExceptionHandling(rootNode);
-
-      // Detect design patterns
       patterns.designPatterns = this.detectDesignPatterns(context);
-
-      // Identify Python idioms
       patterns.pythonIdioms = this.identifyPythonIdioms(rootNode);
-
-      // Check for circular dependencies
       patterns.circularDependencies = this.detectCircularDependencies(context);
-    });
-
+    }, context.metrics);
     context.metrics.patternRecognition.timeMs = Date.now() - layer4StartTime;
     context.metrics.patternRecognition.totalPatternsFound =
       patterns.contextManagers.length +
@@ -962,7 +915,7 @@ export class PythonAnalyzer {
   private determineClassType(
     decorators: Array<{ name: string; arguments?: string[] }>,
     node: TreeSitterNode,
-    context: AnalysisContext,
+    _context: AnalysisContext,
   ): PythonClassInfo["classType"] {
     // Check decorators
     for (const decorator of decorators) {
@@ -1109,7 +1062,7 @@ export class PythonAnalyzer {
   /**
    * Extract lambda parameters
    */
-  private extractLambdaParameters(node: TreeSitterNode, context: AnalysisContext): ParsedEntity["parameters"] {
+  private extractLambdaParameters(node: TreeSitterNode, _context: AnalysisContext): ParsedEntity["parameters"] {
     const params: NonNullable<ParsedEntity["parameters"]> = [];
 
     // Lambda parameters are the first children before ':'
@@ -1143,7 +1096,7 @@ export class PythonAnalyzer {
   // =============================================================================
 
   private analyzeMagicMethods(context: AnalysisContext): void {
-    for (const [name, methodInfo] of context.methods.entries()) {
+    for (const [name, _methodInfo] of context.methods.entries()) {
       if (isMagicMethod(name)) {
         context.metrics.advancedFeatures.magicMethodsFound++;
 
@@ -1165,15 +1118,17 @@ export class PythonAnalyzer {
       if (methodInfo.classification === "property") {
         context.metrics.advancedFeatures.propertiesAnalyzed++;
 
-        // Find related setter and getter methods
+        const baseEntity = context.entities.find((e) => e.name === name);
+        const loc = methodInfo.location || baseEntity?.location;
+        if (!loc) continue; 
+
         const setterName = `${name}_setter`;
         const getterName = `${name}_getter`;
 
-        // Create property entity
         const propertyEntity: ParsedEntity = {
           name,
           type: "property",
-          location: methodInfo.location,
+          location: loc,
           pythonInfo: {
             decorators: methodInfo.decorators,
             isProperty: true,
@@ -1181,7 +1136,6 @@ export class PythonAnalyzer {
             hasSetter: context.methods.has(setterName),
           },
         };
-
         context.entities.push(propertyEntity);
       }
     }
@@ -1283,16 +1237,17 @@ export class PythonAnalyzer {
       if (classInfo.baseClasses && classInfo.baseClasses.length > 0) {
         for (const baseClass of classInfo.baseClasses) {
           const relationship: EntityRelationship = {
-            type: "inheritance",
             from: className,
             to: baseClass,
+            type: "inherits",
+            sourceFile: context.filePath,
             metadata: {
-              inheritanceType: "class",
-              location: classInfo.location,
+              isDirectRelation: true,
+              line: classInfo.location?.start.line,
             },
           };
           context.relationships.push(relationship);
-          context.metrics.relationshipMapping.inheritanceRelationships++;
+          context.metrics.relationshipMapping.inheritanceHierarchiesBuilt++;
         }
       }
     }
@@ -1300,23 +1255,29 @@ export class PythonAnalyzer {
 
   private analyzeMethodOverrides(context: AnalysisContext): void {
     for (const [className, classInfo] of context.classes.entries()) {
-      if (classInfo.baseClasses) {
-        for (const method of classInfo.methods) {
-          // Check if method exists in base classes
-          for (const baseClass of classInfo.baseClasses) {
-            const baseClassInfo = context.classes.get(baseClass);
-            if (baseClassInfo?.methods.includes(method)) {
-              const relationship: EntityRelationship = {
-                type: "overrides",
-                from: `${className}.${method}`,
-                to: `${baseClass}.${method}`,
-                metadata: {
-                  overrideType: "method",
-                },
-              };
-              context.relationships.push(relationship);
-              context.metrics.relationshipMapping.methodOverrides++;
-            }
+      const methods = classInfo.methods || [];
+      if (!methods.length) continue;
+      const bases = classInfo.baseClasses || [];
+
+      for (const base of bases) {
+        const baseInfo = context.classes.get(base);
+        if (!baseInfo) continue;
+        const baseMethods = baseInfo.methods || [];
+        if (!baseMethods.length) continue;
+
+        for (const m of methods) {
+          if (baseMethods.includes(m)) {
+            const relationship: EntityRelationship = {
+              from: `${className}.${m}`,
+              to: `${base}.${m}`,
+              type: "overrides",
+              sourceFile: context.filePath,
+              metadata: { isDirectRelation: true },
+            };
+            context.relationships.push(relationship);
+            context.metrics.relationshipMapping.methodOverridesDetected++;
+            context.metrics.relationshipMapping.methodOverrides =
+              (context.metrics.relationshipMapping.methodOverrides || 0) + 1;
           }
         }
       }
@@ -1331,12 +1292,19 @@ export class PythonAnalyzer {
         const nameNode = importNode.namedChildren.find((c) => c.type === "dotted_name");
         if (nameNode) {
           const dependency: ImportDependency = {
-            type: "import",
-            module: nameNode.text,
-            alias: null,
-            isLocal: !nameNode.text.includes("."),
+            sourceFile: context.filePath,
+            targetModule: nameNode.text,
+            importType: "absolute",
+            symbols: [{ name: nameNode.text }],
+            line: importNode.startPosition.row + 1,
+            isUsed: false,
+            usageLocations: [],
           };
           context.imports.push(dependency);
+
+          if (!context.metrics.relationshipMapping.importDependencies) {
+            context.metrics.relationshipMapping.importDependencies = 0;
+          }
           context.metrics.relationshipMapping.importDependencies++;
         }
       } else if (importNode.type === "import_from_statement") {
@@ -1345,14 +1313,22 @@ export class PythonAnalyzer {
 
         if (moduleNode && importList) {
           for (const importItem of importList.namedChildren) {
+            if (importItem.type === "," || !importItem.text) continue; 
+
             const dependency: ImportDependency = {
-              type: "from_import",
-              module: moduleNode.text,
-              imported: importItem.text,
-              alias: null,
-              isLocal: !moduleNode.text.includes("."),
+              sourceFile: context.filePath,
+              targetModule: moduleNode.text,
+              importType: moduleNode.text.startsWith(".") ? "relative" : "absolute",
+              symbols: [{ name: importItem.text }],
+              line: importNode.startPosition.row + 1,
+              isUsed: false,
+              usageLocations: [],
             };
             context.imports.push(dependency);
+
+            if (!context.metrics.relationshipMapping.importDependencies) {
+              context.metrics.relationshipMapping.importDependencies = 0;
+            }
             context.metrics.relationshipMapping.importDependencies++;
           }
         }
@@ -1366,14 +1342,20 @@ export class PythonAnalyzer {
       if (entity.references) {
         for (const ref of entity.references) {
           const relationship: EntityRelationship = {
-            type: "references",
             from: entity.name,
             to: ref,
+            type: "references",
+            sourceFile: context.filePath,
             metadata: {
-              referenceType: "usage",
+              line: entity.location?.start?.line,
+              isDirectRelation: true,
             },
           };
           context.relationships.push(relationship);
+
+          if (!context.metrics.relationshipMapping.crossReferences) {
+            context.metrics.relationshipMapping.crossReferences = 0;
+          }
           context.metrics.relationshipMapping.crossReferences++;
         }
       }
@@ -1383,10 +1365,11 @@ export class PythonAnalyzer {
   private analyzeMethodResolutionOrder(context: AnalysisContext): void {
     for (const [className, classInfo] of context.classes.entries()) {
       if (classInfo.baseClasses && classInfo.baseClasses.length > 0) {
-        // Calculate MRO using C3 linearization (simplified)
         const mro = this.calculateMRO(className, context.classes);
-        classInfo.methodResolutionOrder = mro;
-        context.metrics.relationshipMapping.mroCalculations++;
+        classInfo.mro = mro;
+        classInfo.methodResolutionOrder = mro; 
+        context.metrics.relationshipMapping.mroCalculations =
+          (context.metrics.relationshipMapping.mroCalculations || 0) + 1;
       }
     }
   }
@@ -1403,7 +1386,6 @@ export class PythonAnalyzer {
         }
       }
     }
-
     return mro;
   }
 
@@ -1502,24 +1484,327 @@ export class PythonAnalyzer {
   }
 
   private detectCircularDependencies(context: AnalysisContext): any[] {
-    const dependencies = new Map<string, string[]>();
+    const dependencyGraph = this.buildDependencyGraph(context);
+    const cycles = this.findAllCycles(dependencyGraph);
 
-    // Build dependency graph from imports
+    return cycles.map(cycle => ({
+      cycle: cycle.path,
+      type: this.determineCycleType(cycle, context),
+      severity: this.calculateCycleSeverity(cycle),
+      description: this.generateCycleDescription(cycle),
+      suggestedFix: this.suggestCycleFix(cycle),
+    }));
+  }
+
+  private buildDependencyGraph(context: AnalysisContext): Map<string, Set<string>> {
+    const graph = new Map<string, Set<string>>();
+
+    const currentFile = this.normalizeFilePath(context.filePath);
+    if (!graph.has(currentFile)) {
+      graph.set(currentFile, new Set());
+    }
+
     for (const imp of context.imports) {
-      if (imp.isLocal) {
-        const from = context.filePath;
-        const to = imp.module;
+      const from = currentFile;
+      const to = this.resolveImportPath(imp.targetModule, context.filePath);
 
-        if (!dependencies.has(from)) {
-          dependencies.set(from, []);
-        }
-        dependencies.get(from)!.push(to);
+      if (!to) continue;
+
+      if (!graph.has(from)) {
+        graph.set(from, new Set());
+      }
+      graph.get(from)!.add(to);
+
+      if (!graph.has(to)) {
+        graph.set(to, new Set());
       }
     }
 
-    // Simple cycle detection (would need more sophisticated algorithm for production)
-    return []; // Placeholder - would implement cycle detection algorithm
+    this.addCachedDependencies(graph, currentFile);
+
+    return graph;
   }
+
+  private findAllCycles(graph: Map<string, Set<string>>): Array<{
+    path: string[];
+    edges: Array<{ from: string; to: string }>;
+  }> {
+    const cycles: Array<{ path: string[]; edges: Array<{ from: string; to: string }> }> = [];
+    const visited = new Set<string>();
+    const recursionStack = new Set<string>();
+    const currentPath: string[] = [];
+
+    for (const node of graph.keys()) {
+      if (!visited.has(node)) {
+        this.dfsDetectCycles(
+          node,
+          graph,
+          visited,
+          recursionStack,
+          currentPath,
+          cycles
+        );
+      }
+    }
+
+    return this.deduplicateCycles(cycles);
+  }
+
+  private dfsDetectCycles(
+    node: string,
+    graph: Map<string, Set<string>>,
+    visited: Set<string>,
+    recursionStack: Set<string>,
+    currentPath: string[],
+    cycles: Array<{ path: string[]; edges: Array<{ from: string; to: string }> }>
+  ): void {
+    visited.add(node);
+    recursionStack.add(node);
+    currentPath.push(node);
+
+    const neighbors = graph.get(node) || new Set();
+
+    for (const neighbor of neighbors) {
+      if (!visited.has(neighbor)) {
+        this.dfsDetectCycles(
+          neighbor,
+          graph,
+          visited,
+          recursionStack,
+          currentPath,
+          cycles
+        );
+      } else if (recursionStack.has(neighbor)) {
+        const cycleStartIndex = currentPath.indexOf(neighbor);
+        if (cycleStartIndex !== -1) {
+          const cyclePath = currentPath.slice(cycleStartIndex);
+          cyclePath.push(neighbor);
+
+          const edges: Array<{ from: string; to: string }> = [];
+          for (let i = 0; i < cyclePath.length - 1; i++) {
+            const from = cyclePath[i];
+            const to = cyclePath[i + 1];
+            if (from && to) {
+              edges.push({ from, to });
+            }
+          }
+
+          cycles.push({ path: cyclePath, edges });
+        }
+      }
+    }
+
+    // Backtrack
+    currentPath.pop();
+    recursionStack.delete(node);
+  }
+
+  private determineCycleType(
+    cycle: { path: string[]; edges: Array<{ from: string; to: string }> },
+    context: AnalysisContext
+  ): "import" | "inheritance" | "reference" {
+    let hasImport = false;
+    let hasInheritance = false;
+
+    for (const edge of cycle.edges) {
+      if (context.imports.some(imp =>
+        this.resolveImportPath(imp.targetModule, context.filePath) === edge.to
+      )) {
+        hasImport = true;
+      }
+
+      for (const [_className, classInfo] of context.classes.entries()) {
+        if (classInfo.baseClasses?.some(base =>
+          this.resolveClassPath(base, edge.from) === edge.to
+        )) {
+          hasInheritance = true;
+        }
+      }
+
+      // Check for reference relationships matching this edge
+      if (context.relationships.some(rel =>
+        rel.type === "references" &&
+        rel.sourceFile === edge.from &&
+        rel.targetFile === edge.to
+      )) {
+        // we treat references as a fallback; no variable needed here
+        hasImport = hasImport || false; // no-op to keep logic explicit
+      }
+    }
+
+    if (hasInheritance) return "inheritance";
+    if (hasImport) return "import";
+    return "reference";
+  }
+
+
+  private calculateCycleSeverity(
+    cycle: { path: string[]; edges: Array<{ from: string; to: string }> }
+  ): "warning" | "error" {
+    // Severity criteria:
+    // 1. Cycle length (short cycles are worse)
+    // 2. File type (cycles in core modules are worse)
+    // 3. Number of affected modules
+
+    const cycleLength = cycle.path.length - 1;
+    if (cycleLength <= 3) {
+      return "error";
+    }
+
+    const hasCoreModule = cycle.path.some(path =>
+      path.includes('/core/') ||
+      path.includes('/base/') ||
+      path.includes('__init__')
+    );
+
+    if (hasCoreModule) {
+      return "error";
+    }
+    return "warning";
+  }
+
+  private generateCycleDescription(
+    cycle: { path: string[]; edges: Array<{ from: string; to: string }> }
+  ): string {
+    const cycleLength = cycle.path.length - 1;
+    const fileNames = cycle.path.slice(0, -1).map(p => this.getFileName(p));
+
+    if (cycleLength === 2) {
+      return `Mutual dependency between ${fileNames[0]} and ${fileNames[1]}`;
+    } else if (cycleLength === 3) {
+      return `Triangular dependency: ${fileNames.join(' → ')} → ${fileNames[0]}`;
+    } else {
+      return `Circular dependency chain of ${cycleLength} files: ${fileNames.slice(0, 3).join(' → ')}...`;
+    }
+  }
+
+  private suggestCycleFix(
+    cycle: { path: string[]; edges: Array<{ from: string; to: string }> }
+  ): string {
+    const suggestions: string[] = [];
+
+    const cycleLength = cycle.path.length - 1;
+
+    if (cycleLength === 2) {
+      suggestions.push("Consider extracting shared code to a separate module");
+      suggestions.push("Use dependency injection or interfaces to break the direct dependency");
+    } else {
+      const weakLink = this.findWeakLink(cycle);
+      if (weakLink) {
+        suggestions.push(`Consider refactoring ${this.getFileName(weakLink)} to remove its dependencies`);
+      }
+
+      suggestions.push("Apply the Dependency Inversion Principle");
+      suggestions.push("Consider using event-driven architecture or mediator pattern");
+    }
+
+    return suggestions.join("; ");
+  }
+
+
+  private normalizeFilePath(path: string): string {
+    return path.replace(/\.py$/, '').replace(/\\/g, '/');
+  }
+
+  private resolveImportPath(importModule: string, fromFile: string): string | undefined {
+    if (!importModule) return undefined;
+  
+    const toPosix = (p: string) => p.replace(/\\/g, "/");
+    const norm = (p: string) => toPosix(p).replace(/\/+/g, "/").replace(/^\/+|\/+$/g, "");
+  
+    const fromModuleId = this.normalizeFilePath(fromFile); 
+    const fromDir = fromModuleId.includes("/") ? fromModuleId.slice(0, fromModuleId.lastIndexOf("/")) : "";
+  
+    const rel = /^\.+/.exec(importModule);
+    if (rel) {
+      const dots = rel[0].length;
+  
+      let base = fromDir;
+      for (let i = 1; i < dots; i++) {
+        base = base.includes("/") ? base.slice(0, base.lastIndexOf("/")) : "";
+      }
+  
+      const remainder = importModule.slice(dots).replace(/\./g, "/");
+      let combined = remainder ? [base, remainder].filter(Boolean).join("/") : base;
+  
+      if (!combined) {
+        combined = fromModuleId.split("/")[0] || "";
+      }
+  
+      return norm(combined);
+    }
+  
+    return norm(importModule.replace(/\./g, "/"));
+  }
+
+  private resolveClassPath(className: string, fromFile: string): string {
+    const name = (className || "").trim();
+    if (name.includes(".")) {
+      const parts = name.split(".");
+      parts.pop();
+      const modulePart = parts.join(".");
+      if (modulePart) {
+        return modulePart.replace(/\./g, "/");
+      }
+    }
+    return this.normalizeFilePath(fromFile);
+  }
+
+  private getFileName(path: string): string {
+    const parts = path.split('/');
+    return parts[parts.length - 1] || path;
+  }
+
+  private deduplicateCycles(
+    cycles: Array<{ path: string[]; edges: Array<{ from: string; to: string }> }>
+  ): Array<{ path: string[]; edges: Array<{ from: string; to: string }> }> {
+    const uniqueCycles = new Map<string, { path: string[]; edges: Array<{ from: string; to: string }> }>();
+
+    for (const cycle of cycles) {
+      const nodes = cycle.path.slice(0, -1).sort();
+      const key = nodes.join('|');
+
+      if (!uniqueCycles.has(key)) {
+        uniqueCycles.set(key, cycle);
+      }
+    }
+
+    return Array.from(uniqueCycles.values());
+  }
+
+  private findWeakLink(cycle: { path: string[]; edges: Array<{ from: string; to: string }> }): string | undefined {
+    const edgeCount = new Map<string, number>();
+
+    for (const edge of cycle.edges) {
+      edgeCount.set(edge.from, (edgeCount.get(edge.from) || 0) + 1);
+    }
+
+    let minEdges = Infinity;
+    let weakLink: string | undefined;
+
+    for (const [node, count] of edgeCount.entries()) {
+      if (count < minEdges) {
+        minEdges = count;
+        weakLink = node;
+      }
+    }
+
+    return weakLink;
+  }
+
+  private addCachedDependencies(graph: Map<string, Set<string>>, currentFile: string): void {
+    for (const [node, targets] of PythonAnalyzer.dependencyCache.entries()) {
+      if (!graph.has(node)) {
+        graph.set(node, new Set());
+      }
+      const bucket = graph.get(node)!;
+      for (const t of targets) bucket.add(t);
+    }
+
+    const currentEdges = graph.get(currentFile) || new Set<string>();
+    PythonAnalyzer.dependencyCache.set(currentFile, new Set(currentEdges));
+  }
+
 
   // =============================================================================
   // UTILITY HELPER METHODS

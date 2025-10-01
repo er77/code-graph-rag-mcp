@@ -16,7 +16,7 @@
 import type Database from "better-sqlite3";
 import { nanoid } from "nanoid";
 import type { BatchResult, Entity, ParsedEntity, Relationship } from "../types/storage.js";
-import { EntityType, parsedEntityToEntity, RelationType } from "../types/storage.js";
+import { RelationType } from "../types/storage.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION

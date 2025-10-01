@@ -348,14 +348,17 @@ describe("IndexerAgent", () => {
         type: "entity",
         limit: 1,
       };
-
+    
       const entities = await agent.queryGraph(query);
-
+    
       if (entities.entities.length > 0) {
-        const result = await agent.querySubgraph(entities.entities[0].id, 2);
-
-        expect(result.entities).toBeDefined();
-        expect(result.relationships).toBeDefined();
+        const firstEntity = entities.entities[0];
+        if (firstEntity) {
+          const result = await agent.querySubgraph(firstEntity.id, 2);
+    
+          expect(result.entities).toBeDefined();
+          expect(result.relationships).toBeDefined();
+        }
       }
     });
 

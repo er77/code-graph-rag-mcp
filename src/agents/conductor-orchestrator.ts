@@ -28,6 +28,7 @@ import {
 } from "../types/agent.js";
 import { BaseAgent } from "./base.js";
 import { logger } from "../utils/logger.js";
+import { isEventfulAgent } from "./coordinator.js";
 
 interface ConductorConfig {
   resourceConstraints: ResourceConstraints;
@@ -79,10 +80,6 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   private directImplementationAttempts = 0;
 
   // TASK-004B: Performance optimization features
-  private taskBatchQueue: AgentTask[] = [];
-  private batchProcessingTimer: NodeJS.Timeout | null = null;
-  private readonly BATCH_SIZE = 5;
-  private readonly BATCH_TIMEOUT = 100; // ms
   private agentLoadCache: Map<string, { load: number; timestamp: number }> = new Map();
   private readonly LOAD_CACHE_TTL = 5000; // 5 seconds
   private methodProposalTemplates: Map<string, MethodProposal[]> = new Map();
@@ -146,7 +143,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     this.agents.clear();
   }
 
-  protected canProcessTask(task: AgentTask): boolean {
+  protected canProcessTask(_task: AgentTask): boolean {
     return this.pendingTasks.size < this.config.taskQueueLimit;
   }
 
@@ -176,7 +173,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
                           (task.payload && typeof task.payload === 'object' && 'directory' in task.payload);
 
     if (complexity.requiresApproval && !isIndexingTask) {
-      const proposals = await this.generateMethodProposals(task, complexity);
+      const proposals = await this.generateOptimizedMethodProposals(task, complexity);
       this.methodProposals.set(task.id, proposals);
 
       console.log(`[CONDUCTOR] Generated ${proposals.length} method proposals`);
@@ -264,7 +261,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   }
 
   private async generateMethodProposals(
-    task: AgentTask,
+    _task: AgentTask,
     complexity: TaskComplexityAnalysis,
   ): Promise<MethodProposal[]> {
     const proposals: MethodProposal[] = [];
@@ -351,7 +348,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
           priority: 8,
           payload: {
             type: "index",
-            ...payload,
+            ...(payload || {}),
             excludePatterns: cleanedPatterns,
             batchMode: true,
             batchNumber: 1
@@ -372,7 +369,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
         priority: 8,
         payload: {
           type: "index",
-          ...task.payload
+          ...(task.payload || {})
         }
       });
       return subtasks;
@@ -539,8 +536,10 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     this.agents.set(agent.id, agent);
     console.log(`[CONDUCTOR] Registered agent ${agent.id} of type ${agent.type}`);
 
-    agent.on("task:completed", this.handleTaskCompleted.bind(this));
-    agent.on("task:failed", this.handleTaskFailed.bind(this));
+    if (isEventfulAgent(agent)) {
+      agent.on("task:completed", this.handleTaskCompleted.bind(this));
+      agent.on("task:failed", this.handleTaskFailed.bind(this));
+    } 
 
     this.emit("agent:registered", agent.id);
   }
@@ -594,7 +593,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     if (this.config.mandatoryDelegation) {
       console.warn(`[CONDUCTOR] Route called directly - redirecting to delegation system`);
       await this.processThroughDelegation(task);
-      return undefined; // Don't return an agent for direct processing
+      return undefined; 
     }
 
     return undefined;
@@ -603,21 +602,23 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   // Private helper methods (inherited)
   private selectRoundRobin(type: AgentType, agents: Agent[]): Agent {
     const index = this.roundRobinIndex.get(type) || 0;
-    const selected = agents[index % agents.length];
+    const selected = agents[index % agents.length]!;
     this.roundRobinIndex.set(type, index + 1);
     return selected;
   }
 
   private selectLeastLoaded(agents: Agent[]): Agent {
-    return agents.reduce((least, agent) => {
+    return agents.slice(1).reduce((least, agent) => {
       const leastLoad = least.getTaskQueue().length + least.getMemoryUsage() / 100;
       const agentLoad = agent.getTaskQueue().length + agent.getMemoryUsage() / 100;
       return agentLoad < leastLoad ? agent : least;
-    });
+    }, agents[0]!);
   }
 
   private selectByPriority(agents: Agent[]): Agent {
-    return agents.sort((a, b) => b.capabilities.priority - a.capabilities.priority)[0];
+    return agents
+      .slice()
+      .sort((a, b) => b.capabilities.priority - a.capabilities.priority)[0]!;
   }
 
   private startHealthMonitoring(): void {

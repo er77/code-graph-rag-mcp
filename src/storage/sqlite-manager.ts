@@ -13,7 +13,7 @@
  */
 
 import { existsSync, mkdirSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
@@ -56,6 +56,19 @@ export interface DatabaseInfo {
 // =============================================================================
 // 4. SQLITE MANAGER IMPLEMENTATION
 // =============================================================================
+
+function wrapWithTiming<F extends (...a: any[]) => any>(
+  fn: F,
+  ctx: any,
+  record: (ms: number) => void
+): F {
+  return ((...a: any[]) => {
+    const start = Date.now();
+    const res = (fn as any).apply(ctx, a);
+    record(Date.now() - start);
+    return res;
+  }) as F;
+}
 
 export class SQLiteManager {
   private db: Database.Database | null = null;
@@ -158,39 +171,18 @@ export class SQLiteManager {
   /**
    * Prepare a statement with timing
    */
-  prepare<T = unknown>(sql: string): Database.Statement<T> {
-    const db = this.getConnection();
-    const statement = db.prepare<T>(sql);
+  prepare<
+  BindParams extends unknown[] | Record<string, unknown> = unknown[],
+  Result = unknown
+>(sql: string): Database.Statement<BindParams, Result> {
+  const db = this.getConnection();
+  const statement = db.prepare<BindParams, Result>(sql);
 
-    // Wrap run/get/all methods to track timing
-    const originalRun = statement.run.bind(statement);
-    const originalGet = statement.get.bind(statement);
-    const originalAll = statement.all.bind(statement);
-
-    statement.run = (...args: any[]) => {
-      const start = Date.now();
-      const result = originalRun(...args);
-      this.recordQueryTime(Date.now() - start);
-      return result;
-    };
-
-    statement.get = (...args: any[]) => {
-      const start = Date.now();
-      const result = originalGet(...args);
-      this.recordQueryTime(Date.now() - start);
-      return result;
-    };
-
-    statement.all = (...args: any[]) => {
-      const start = Date.now();
-      const result = originalAll(...args);
-      this.recordQueryTime(Date.now() - start);
-      return result;
-    };
-
-    return statement;
-  }
-
+  statement.run = wrapWithTiming(statement.run, statement, (ms) => this.recordQueryTime(ms)) as typeof statement.run;
+  statement.get = wrapWithTiming(statement.get, statement, (ms) => this.recordQueryTime(ms)) as typeof statement.get;
+  statement.all = wrapWithTiming(statement.all, statement, (ms) => this.recordQueryTime(ms)) as typeof statement.all;
+  return statement;
+}
   /**
    * Execute a transaction
    */

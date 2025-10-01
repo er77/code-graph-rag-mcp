@@ -26,7 +26,6 @@ import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { ConnectionPool } from "../query/connection-pool.js";
 import { GraphQueryProcessor } from "../query/graph-query-processor.js";
 import { QueryCache } from "../query/query-cache.js";
-import { StreamHandler } from "../query/stream-handler.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
 import type {
   Change,
@@ -40,7 +39,6 @@ import type {
   ImpactAnalysis,
   Path,
   QueryOperations,
-  QueryResult,
   Relationship,
   RippleEffect,
 } from "../types/query.js";
@@ -69,7 +67,6 @@ const QUERY_AGENT_CONFIG = {
 export class QueryAgent extends BaseAgent implements QueryOperations {
   private queryProcessor!: GraphQueryProcessor;
   private cache!: QueryCache;
-  private streamHandler!: StreamHandler;
   private connectionPool!: ConnectionPool;
   private concurrencyLimiter = pLimit(QUERY_AGENT_CONFIG.maxConcurrency);
   private queryMetrics = {
@@ -109,7 +106,6 @@ export class QueryAgent extends BaseAgent implements QueryOperations {
 
     this.queryProcessor = new GraphQueryProcessor(this.connectionPool, this.cache);
 
-    this.streamHandler = new StreamHandler();
 
     // Subscribe to knowledge bus events
     this.subscribeToKnowledgeBus();
@@ -220,7 +216,7 @@ export class QueryAgent extends BaseAgent implements QueryOperations {
         id: nanoid(),
         type: "entity",
         operation: "listEntities",
-        params: filter,
+        params: { ...filter }, 
         hash: `entities:${JSON.stringify(filter)}`,
         timestamp: Date.now(),
       };
@@ -511,11 +507,19 @@ export class QueryAgent extends BaseAgent implements QueryOperations {
     cacheHitRate: number;
   } {
     const cacheStats = this.cache.getStats();
+    
+    const totalCacheRequests = cacheStats.totalHits + cacheStats.totalMisses;
+    const cacheHitRate = totalCacheRequests > 0 
+      ? cacheStats.totalHits / totalCacheRequests 
+      : 0;
+    
     return {
       totalQueries: this.queryMetrics.totalQueries,
       averageResponseTime:
-        this.queryMetrics.totalQueries > 0 ? this.queryMetrics.totalTime / this.queryMetrics.totalQueries : 0,
-      cacheHitRate: cacheStats.hitRate,
+        this.queryMetrics.totalQueries > 0 
+          ? this.queryMetrics.totalTime / this.queryMetrics.totalQueries 
+          : 0,
+      cacheHitRate,
     };
   }
 }

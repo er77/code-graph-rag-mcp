@@ -6,10 +6,10 @@
 
 import { BaseAgent } from "./base.js";
 import { AgentTask, AgentType, AgentMessage } from "../types/agent.js";
-import { knowledgeBus } from "../core/knowledge-bus.js";
+import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 
 export class DoraAgent extends BaseAgent {
-  constructor(agentId?: string) {
+  constructor(_agentId?: string) {
     super(AgentType.QUERY, { // Use QUERY type as a research/exploration agent
       maxConcurrency: 2,
       memoryLimit: 128, // MB
@@ -17,23 +17,22 @@ export class DoraAgent extends BaseAgent {
       priority: 6
     });
 
-    if (agentId) {
-      this.id = agentId;
-    }
   }
 
   protected async onInitialize(): Promise<void> {
 
     // Subscribe to research task events
-    knowledgeBus.subscribe("task:research", (entry) => {
-      if (entry.data.targetAgent === "dora") {
-        this.addTask({
-          id: entry.data.taskId,
+    knowledgeBus.subscribe(this.id, "task:research", async (entry: KnowledgeEntry) => {
+      const data = entry.data as { targetAgent?: string; taskId?: string; priority?: number; [k: string]: unknown };
+      if (data?.targetAgent === "dora") {
+        const task: AgentTask = {
+          id: data.taskId || `task-${Date.now()}`,
           type: "research",
-          priority: entry.data.priority || 5,
-          payload: entry.data,
+          priority: data.priority || 5,
+          payload: data,
           createdAt: Date.now(),
-        });
+        };
+        await this.process(task);
       }
     });
 
@@ -105,12 +104,12 @@ export class DoraAgent extends BaseAgent {
       },
     };
 
-    // Publish research completed event
-    knowledgeBus.publish({
-      topic: "research:completed",
-      source: this.id,
-      data: researchResult,
-    });
+    // Publish research completed event (topic, data, source)
+    knowledgeBus.publish(
+      "research:completed",
+      researchResult,
+      this.id
+    );
 
     return researchResult;
   }

@@ -9,7 +9,7 @@ import { AgentTask, AgentType, AgentMessage } from "../types/agent.js";
 // Temporarily disable ParserAgent due to web-tree-sitter ESM issues
 // import { ParserAgent } from "./parser-agent.js";
 import { IndexerAgent } from "./indexer-agent.js";
-import { knowledgeBus } from "../core/knowledge-bus.js";
+import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { readdirSync, statSync } from "fs";
 import { join, extname } from "path";
 
@@ -17,17 +17,13 @@ export class DevAgent extends BaseAgent {
   // private parserAgent: ParserAgent | null = null;
   private indexerAgent: IndexerAgent | null = null;
 
-  constructor(agentId?: string) {
+  constructor(_agentId?: string) {
     super(AgentType.DEV, {
       maxConcurrency: 3,
       memoryLimit: 256, // MB
       cpuAffinity: undefined,
       priority: 7
     });
-
-    if (agentId) {
-      this.id = agentId;
-    }
   }
 
   protected async onInitialize(): Promise<void> {
@@ -47,15 +43,17 @@ export class DevAgent extends BaseAgent {
     }
 
     // Subscribe to relevant knowledge bus topics
-    knowledgeBus.subscribe("task:implementation", (entry) => {
-      if (entry.data.targetAgent === "dev-agent") {
-        this.addTask({
-          id: entry.data.taskId,
+    knowledgeBus.subscribe(this.id, "task:implementation", async (entry: KnowledgeEntry) => {
+      const data = entry.data as { targetAgent: string; taskId: string; priority?: number; [k: string]: unknown };
+      if (data.targetAgent === "dev-agent") {
+        const task: AgentTask = {
+          id: data.taskId,
           type: "implementation",
-          priority: entry.data.priority || 5,
-          payload: entry.data,
+          priority: data.priority || 5,
+          payload: data,
           createdAt: Date.now(),
-        });
+        };
+        await this.process(task);
       }
     });
 
@@ -124,11 +122,12 @@ export class DevAgent extends BaseAgent {
     };
 
     // Publish indexing started event
-    knowledgeBus.publish({
-      topic: "indexing:started",
-      source: this.id,
-      data: result,
-    });
+    // Publish indexing started event (topic, data, source)
+    knowledgeBus.publish(
+      "indexing:started",
+      result,
+      this.id
+    );
 
     // Perform real indexing using parser and indexer agents
     const indexingResult = await this.performRealIndexing(payload);
@@ -193,7 +192,7 @@ export class DevAgent extends BaseAgent {
 
     const directory = payload.directory;
     const excludePatterns = payload.excludePatterns || [];
-    const incremental = payload.incremental || false;
+    // const _incremental = payload.incremental || false;
 
     // Get list of files to process
     const files = await this.collectFiles(directory, excludePatterns);
@@ -209,16 +208,16 @@ export class DevAgent extends BaseAgent {
       const batch = files.slice(i, Math.min(i + batchSize, files.length));
 
       // Parse files using ParserAgent
-      const parseTask: AgentTask = {
-        id: `parse-${Date.now()}-${i}`,
-        type: "parse:batch",
-        priority: 8,
-        payload: {
-          files: batch,
-          incremental,
-        },
-        createdAt: Date.now(),
-      };
+      // const _parseTask: AgentTask = {
+      //   id: `parse-${Date.now()}-${i}`,
+      //   type: "parse:batch",
+      //   priority: 8,
+      //   payload: {
+      //     files: batch,
+      //     incremental,
+      //   },
+      //   createdAt: Date.now(),
+      // };
 
       try {
         // Create real entities from files (since ParserAgent is temporarily disabled)
@@ -352,6 +351,7 @@ export class DevAgent extends BaseAgent {
         // Add cross-file import relationships based on common patterns
         for (let j = 0; j < batch.length; j++) {
           const currentFile = batch[j];
+          if (!currentFile) continue; 
           const currentFileName = currentFile.split('/').pop()?.replace(/\.[^/.]+$/, '') || '';
 
           // Create import relationships for common patterns
