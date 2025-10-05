@@ -334,6 +334,11 @@ export interface TreeSitterNode {
 
   child(index: number): TreeSitterNode | null;
   namedChild(index: number): TreeSitterNode | null;
+  childForFieldName(fieldName: string): TreeSitterNode | null;
+  firstChild: TreeSitterNode | null;
+  lastChild: TreeSitterNode | null;
+  firstNamedChild: TreeSitterNode | null;
+  lastNamedChild: TreeSitterNode | null;
   descendantForPosition(position: { row: number; column: number }): TreeSitterNode;
   descendantsOfType(type: string): TreeSitterNode[];
 }

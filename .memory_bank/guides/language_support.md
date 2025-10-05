@@ -1,21 +1,22 @@
 # Language Support Guide
 
-## TASK-20251005185121: C# and Rust Language Support Implementation
+## Overview
+The code-graph-rag-mcp system provides comprehensive parsing and analysis for multiple programming languages through tree-sitter parsers and language-specific analyzers.
 
-This guide documents the language support capabilities of the code-graph-rag-mcp system, including the newly added C# and Rust analyzers.
-
-## Supported Languages
+## Supported Languages (8 Total)
 
 ### Core Languages
-1. **TypeScript** - Full support via tree-sitter
-2. **JavaScript** - Full support via tree-sitter
-3. **Python** - Enhanced support with python-analyzer.ts
-4. **C** - Basic support via tree-sitter
-5. **C++** - Basic support via tree-sitter
+1. **JavaScript** - Full support via tree-sitter
+2. **TypeScript/TSX** - Full support via tree-sitter
+3. **Python** - Enhanced 4-layer support with python-analyzer.ts
 
-### Newly Added Languages (TASK-20251005185121)
-6. **C#** - Comprehensive support with csharp-analyzer.ts
-7. **Rust** - Comprehensive support with rust-analyzer.ts
+### Phase 1 Languages (TASK-20251005185121)
+4. **C#** - Comprehensive support with csharp-analyzer.ts
+5. **Rust** - Comprehensive support with rust-analyzer.ts
+
+### Phase 2 Languages (TASK-20251005191500)
+6. **C** - Full support with c-analyzer.ts and circuit breakers
+7. **C++** - Advanced support with cpp-analyzer.ts, templates, and circuit breakers
 
 ## C# Language Features
 
@@ -192,7 +193,86 @@ npm test csharp-analyzer
 npm test rust-analyzer
 ```
 
+## C++ Language Features (NEW - TASK-20251005191500)
+
+### Architecture
+The C++ analyzer uses a **two-layer architecture**:
+1. **Syntactic Layer**: Direct CST extraction via tree-sitter-cpp
+2. **Semantic Layer**: Lazy evaluation for complex features
+
+### Phase 3: Core C++ Support
+- **Classes**: With access modifiers (public, private, protected)
+- **Methods**: const, static, virtual, override, final, noexcept
+- **Constructors & Destructors**: Special member functions
+- **Namespaces**: Nested namespace support
+- **Inheritance**: Single and multiple inheritance with virtual bases
+- **Operator Overloading**: All standard operators
+- **Friend Declarations**: Friend classes and functions
+- **Enums**: Including enum classes (C++11)
+
+### Phase 4: Limited Template Support
+- **Simple Templates**: Class and function templates
+- **Template Parameters**: Type and non-type parameters
+- **Skipped Patterns**: SFINAE, variadic templates, complex metaprogramming
+- **Memoization**: Caching for repeated template patterns
+
+### Circuit Breakers
+Comprehensive safety mechanisms to prevent system overload:
+```typescript
+const MAX_RECURSION_DEPTH = 50;
+const PARSE_TIMEOUT_MS = 5000;
+const MAX_COMPLEXITY_SCORE = 100;
+const MAX_TEMPLATE_DEPTH = 10;
+```
+
+### Complexity Scoring
+Dynamic complexity assessment based on:
+- Template depth (weight: 10)
+- Nested classes (weight: 5)
+- Inheritance depth (weight: 3)
+- Operator count (weight: 2)
+
+## C Language Features (TASK-20251005191500)
+
+### Comprehensive C Support
+- **Functions**: static, extern, inline modifiers
+- **Structs & Unions**: Complete member extraction
+- **Enums**: With value extraction
+- **Typedefs**: Type alias tracking
+- **Macros**: Preprocessor directive recognition
+- **Global Variables**: Including constants
+- **Include Relationships**: Header dependency tracking
+
+### Circuit Breakers
+Same robust safety system as C++:
+- Recursion depth limits
+- Parse timeouts
+- Partial result returns on errors
+
 ## Usage Examples
+
+### Analyzing C++ Code
+```typescript
+import { CppAnalyzer } from "./cpp-analyzer";
+
+const analyzer = new CppAnalyzer();
+const result = await analyzer.analyze(treeNode, "MyClass.cpp");
+
+console.log(`Found ${result.entities.length} entities`);
+console.log(`Found ${result.relationships.length} relationships`);
+// Check for circuit breaker triggers in console warnings
+```
+
+### Analyzing C Code
+```typescript
+import { CAnalyzer } from "./c-analyzer";
+
+const analyzer = new CAnalyzer();
+const result = await analyzer.analyze(treeNode, "module.c");
+
+console.log(`Found ${result.entities.length} entities`);
+console.log(`Found ${result.relationships.length} relationships`);
+```
 
 ### Analyzing C# Code
 ```typescript

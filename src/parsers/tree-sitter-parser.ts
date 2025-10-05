@@ -26,6 +26,8 @@ import type {
 import { createPythonAnalyzer } from "./python-analyzer.js";
 import { CSharpAnalyzer } from "./csharp-analyzer.js";
 import { RustAnalyzer } from "./rust-analyzer.js";
+import { CAnalyzer } from "./c-analyzer.js";
+import { CppAnalyzer } from "./cpp-analyzer.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -135,13 +137,15 @@ function convertPosition(node: TreeSitterNode) {
  * High-performance Tree-sitter based parser
  */
 export class TreeSitterParser {
-  private parser: Parser | null = null;
-  private languages: Map<SupportedLanguage, Parser.Language> = new Map();
+  private parser: any | null = null;
+  private languages: Map<SupportedLanguage, any> = new Map();
   private cache: LRUCache<string, ParseCacheEntry>;
   private initialized = false;
   private pythonAnalyzer = createPythonAnalyzer();
   private csharpAnalyzer = new CSharpAnalyzer();
   private rustAnalyzer = new RustAnalyzer();
+  private cAnalyzer = new CAnalyzer();
+  private cppAnalyzer = new CppAnalyzer();
 
   constructor() {
     // TASK-001: Initialize LRU cache with size-based eviction
@@ -245,6 +249,8 @@ export class TreeSitterParser {
 
     // Extract entities - use language-specific analyzers when available
     let entities: ParsedEntity[];
+    let relationships: any[] = [];
+
     if (language === "python") {
       // Use enhanced Python analyzer for comprehensive analysis
       const pythonAnalysis = await this.pythonAnalyzer.analyzePythonCode(filePath, tree.rootNode, content);
@@ -272,6 +278,26 @@ export class TreeSitterParser {
       console.log(
         `[TreeSitterParser] Rust analysis: ${entities.length} entities, ${rustAnalysis.relationships.length} relationships, ${rustAnalysis.patterns.length} patterns`,
       );
+    } else if (language === "c") {
+      // Use C analyzer for comprehensive analysis
+      const cAnalysis = await this.cAnalyzer.analyze(tree.rootNode, filePath);
+      entities = cAnalysis.entities;
+      relationships = cAnalysis.relationships;
+
+      // Log C analysis metrics
+      console.log(
+        `[TreeSitterParser] C analysis: ${entities.length} entities, ${relationships.length} relationships`,
+      );
+    } else if (language === "cpp") {
+      // Use C++ analyzer for comprehensive analysis with circuit breakers
+      const cppAnalysis = await this.cppAnalyzer.analyze(tree.rootNode, filePath);
+      entities = cppAnalysis.entities;
+      relationships = cppAnalysis.relationships;
+
+      // Log C++ analysis metrics
+      console.log(
+        `[TreeSitterParser] C++ analysis: ${entities.length} entities, ${relationships.length} relationships`,
+      );
     } else {
       // Use standard extraction for JavaScript/TypeScript and other languages
       entities = await this.extractEntities(tree.rootNode, content);
@@ -287,7 +313,7 @@ export class TreeSitterParser {
 
     const parseTimeMs = Date.now() - startTime;
 
-    return {
+    const result: ParseResult = {
       filePath,
       language,
       entities,
@@ -296,6 +322,13 @@ export class TreeSitterParser {
       parseTimeMs,
       fromCache: false,
     };
+
+    // Add relationships if available
+    if (relationships.length > 0) {
+      result.relationships = relationships;
+    }
+
+    return result;
   }
 
   /**
