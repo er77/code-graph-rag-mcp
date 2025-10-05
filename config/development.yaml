@@ -51,6 +51,8 @@ parser:
       - "typescript"
       - "javascript"
       - "python"           # Core languages for development
+      - "csharp"           # C# language support
+      - "rust"             # Rust language support
     maxFileSize: 524288     # 512KB for quick parsing
     timeout: 3000          # Quick timeout for development
     

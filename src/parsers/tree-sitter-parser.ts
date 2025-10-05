@@ -24,6 +24,8 @@ import type {
   TreeSitterTree,
 } from "../types/parser.js";
 import { createPythonAnalyzer } from "./python-analyzer.js";
+import { CSharpAnalyzer } from "./csharp-analyzer.js";
+import { RustAnalyzer } from "./rust-analyzer.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -40,6 +42,7 @@ const LANGUAGE_WASM_PATHS: Record<SupportedLanguage, string> = {
   python: "tree-sitter-python.wasm",
   c: "tree-sitter-c.wasm",
   cpp: "tree-sitter-cpp.wasm",
+  csharp: "tree-sitter-c-sharp.wasm",
   rust: "tree-sitter-rust.wasm",
 };
 
@@ -99,6 +102,8 @@ function detectLanguage(filePath: string): SupportedLanguage {
       return "cpp";
     case "rs":
       return "rust";
+    case "cs":
+      return "csharp";
     default:
       return "javascript";
   }
@@ -135,6 +140,8 @@ export class TreeSitterParser {
   private cache: LRUCache<string, ParseCacheEntry>;
   private initialized = false;
   private pythonAnalyzer = createPythonAnalyzer();
+  private csharpAnalyzer = new CSharpAnalyzer();
+  private rustAnalyzer = new RustAnalyzer();
 
   constructor() {
     // TASK-001: Initialize LRU cache with size-based eviction
@@ -236,7 +243,7 @@ export class TreeSitterParser {
       tree = this.parser.parse(content) as unknown as TreeSitterTree;
     }
 
-    // Extract entities - use enhanced Python analysis for Python files
+    // Extract entities - use language-specific analyzers when available
     let entities: ParsedEntity[];
     if (language === "python") {
       // Use enhanced Python analyzer for comprehensive analysis
@@ -247,8 +254,26 @@ export class TreeSitterParser {
       console.log(
         `[TreeSitterParser] Python analysis: ${entities.length} entities, ${pythonAnalysis.relationships.length} relationships`,
       );
+    } else if (language === "csharp") {
+      // Use C# analyzer for comprehensive analysis
+      const csharpAnalysis = await this.csharpAnalyzer.analyze(tree.rootNode, filePath);
+      entities = csharpAnalysis.entities;
+
+      // Log C# analysis metrics
+      console.log(
+        `[TreeSitterParser] C# analysis: ${entities.length} entities, ${csharpAnalysis.relationships.length} relationships, ${csharpAnalysis.patterns.length} patterns`,
+      );
+    } else if (language === "rust") {
+      // Use Rust analyzer for comprehensive analysis
+      const rustAnalysis = await this.rustAnalyzer.analyze(tree.rootNode, filePath);
+      entities = rustAnalysis.entities;
+
+      // Log Rust analysis metrics
+      console.log(
+        `[TreeSitterParser] Rust analysis: ${entities.length} entities, ${rustAnalysis.relationships.length} relationships, ${rustAnalysis.patterns.length} patterns`,
+      );
     } else {
-      // Use standard extraction for JavaScript/TypeScript
+      // Use standard extraction for JavaScript/TypeScript and other languages
       entities = await this.extractEntities(tree.rootNode, content);
     }
 
