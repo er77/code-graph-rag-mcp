@@ -21,7 +21,7 @@
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import { LRUCache } from "lru-cache";
-import type { CacheEntry, MAX_CACHE_ENTRIES, SimilarityResult, VectorEmbedding } from "../types/semantic.js";
+import type { SemanticAnalysis, SimilarityResult, VectorEmbedding } from "../types/semantic.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -50,7 +50,7 @@ interface CacheStats {
   memoryUsage: number;
 }
 
-type CacheValue = VectorEmbedding | SimilarityResult[] | Float32Array | unknown;
+type CacheValue = VectorEmbedding | SimilarityResult[] | Float32Array | SemanticAnalysis;
 
 // =============================================================================
 // 4. UTILITY FUNCTIONS AND HELPERS

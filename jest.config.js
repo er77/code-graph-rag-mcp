@@ -4,7 +4,13 @@ export default {
   testEnvironment: "node",
   extensionsToTreatAsEsm: [".ts"],
   moduleNameMapper: {
+    "^\\.{1,2}/semantic/(.*)\\.js$": "<rootDir>/src/semantic/$1.ts",
     "^(\\.{1,2}/.*)\\.js$": "$1",
+    "^nanoid$": "<rootDir>/src/__mocks__/nanoid.cjs",
+    "^web-tree-sitter$": "<rootDir>/src/__mocks__/web-tree-sitter.cjs",
+    "^p-limit$": "<rootDir>/src/__mocks__/p-limit.cjs"
+    ,
+    ".*/connection-pool\\.js$": "<rootDir>/src/__mocks__/connection-pool.cjs",
   },
   transform: {
     "^.+\\.tsx?$": [
@@ -16,8 +22,13 @@ export default {
     ],
   },
   testMatch: ["**/__tests__/**/*.test.ts", "**/__tests__/**/*.spec.ts"],
-  collectCoverageFrom: ["src/**/*.ts", "!src/**/*.d.ts", "!src/**/__tests__/**"],
+  collectCoverageFrom: ["src/**/*.ts", "!src/**/*.d.ts", "!src/**/__tests__/**", "!src/**/__mocks__/**"],
   coverageDirectory: "coverage",
   coverageReporters: ["text", "lcov", "html"],
   verbose: true,
+  setupFilesAfterEnv: ["<rootDir>/jest.setup.js"],
+  maxWorkers: 1,
+  detectOpenHandles: false,
+  testTimeout: 10000,
+  forceExit: true,
 };

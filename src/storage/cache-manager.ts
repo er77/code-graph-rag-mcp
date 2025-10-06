@@ -50,7 +50,7 @@ export class QueryCacheManager implements CacheManager {
       },
 
       // Disposal handler
-      dispose: (value: CacheEntry, key: string, reason: LRUCache.DisposeReason) => {
+      dispose: (_value: CacheEntry, key: string, reason: LRUCache.DisposeReason) => {
         if (reason === "evict" || reason === "delete") {
           this.stats.evictions++;
           console.debug(`[CacheManager] Evicted cache entry: ${key} (reason: ${reason})`);
@@ -267,7 +267,7 @@ export interface CacheConfig {
  * Decorator to add caching to a method
  */
 export function Cacheable(ttl?: number) {
-  return (target: any, propertyKey: string, descriptor: PropertyDescriptor) => {
+  return (_target: any, propertyKey: string, descriptor: PropertyDescriptor) => {
     const originalMethod = descriptor.value;
     const cacheManager = new QueryCacheManager();
 

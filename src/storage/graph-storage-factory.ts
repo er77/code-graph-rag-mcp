@@ -33,6 +33,8 @@ export async function getGraphStorage(): Promise<GraphStorageImpl> {
   } else {
     console.log('[GraphStorageFactory] Returning EXISTING GraphStorage singleton instance');
   }
+  // Ensure storage is ready (re-prepare statements if manager was reset)
+  await graphStorage.initialize();
   return graphStorage;
 }
 

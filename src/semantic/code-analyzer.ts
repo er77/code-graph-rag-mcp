@@ -17,7 +17,6 @@
 import type {
   CloneGroup,
   CrossLangResult,
-  DEFAULT_SIMILARITY_THRESHOLD,
   RefactoringSuggestion,
   SemanticAnalysis,
   SimilarCode,
@@ -231,7 +230,7 @@ export class CodeAnalyzer {
   /**
    * Detect code clones in the codebase
    */
-  async detectClones(minSimilarity = 0.65): Promise<CloneGroup[]> {
+  async detectClones(_minSimilarity = 0.65): Promise<CloneGroup[]> {
     // Get all embeddings from the vector store
     const allEmbeddings = await this.vectorStore.count();
 

@@ -59,6 +59,11 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
     console.log(`[${this.id}] Shutting down agent...`);
     this.status = AgentStatus.SHUTDOWN;
     await this.onShutdown();
+    // Clear resource monitor if set
+    if (this._resourceMonitorInterval !== undefined) {
+      clearInterval(this._resourceMonitorInterval);
+      this._resourceMonitorInterval = undefined;
+    }
     this.emit("shutdown", this.id);
   }
 
@@ -144,8 +149,10 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
   protected abstract handleMessage(message: AgentMessage): Promise<void>;
 
   // Resource monitoring
+  private _resourceMonitorInterval?: NodeJS.Timeout;
+
   private startResourceMonitoring(): void {
-    setInterval(() => {
+    this._resourceMonitorInterval = setInterval(() => {
       this.updateResourceUsage();
     }, 1000); // Update every second
   }

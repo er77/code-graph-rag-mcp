@@ -223,7 +223,6 @@ export class ResourceManager extends EventEmitter {
   // Private methods
 
   private captureSnapshot(): void {
-    const memUsage = process.memoryUsage();
     const totalMem = os.totalmem();
     const freeMem = os.freemem();
     const usedMem = totalMem - freeMem;
@@ -260,8 +259,10 @@ export class ResourceManager extends EventEmitter {
   private calculateCpuUsage(): number {
     // Simplified CPU usage calculation
     // In production, would track actual CPU time
-    const loadAvg = os.loadavg()[0]; // 1 minute load average
-    const cores = os.cpus().length;
+    // Guard load average as it may return [0,0,0] or be unsupported in some envs
+    const loadAvgArr = os.loadavg();
+    const loadAvg = Array.isArray(loadAvgArr) && typeof loadAvgArr[0] === 'number' ? loadAvgArr[0] : 0;
+    const cores = os.cpus().length || 1;
     return Math.min(100, (loadAvg / cores) * 100);
   }
 

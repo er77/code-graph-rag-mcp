@@ -41,6 +41,52 @@ export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 // =============================================================================
 
 /**
+ * Magic method types for Python special methods
+ */
+export type MagicType =
+  | "init"
+  | "new"
+  | "del"
+  | "str"
+  | "repr"
+  | "format"
+  | "bytes"
+  | "hash"
+  | "bool"
+  | "call"
+  | "len"
+  | "getitem"
+  | "setitem"
+  | "delitem"
+  | "contains"
+  | "iter"
+  | "next"
+  | "reversed"
+  | "enter"
+  | "exit"
+  | "aenter"
+  | "aexit"
+  | "eq"
+  | "ne"
+  | "lt"
+  | "le"
+  | "gt"
+  | "ge"
+  | "add"
+  | "sub"
+  | "mul"
+  | "truediv"
+  | "floordiv"
+  | "mod"
+  | "pow"
+  | "and"
+  | "or"
+  | "xor"
+  | "lshift"
+  | "rshift"
+  | "invert";
+
+/**
  * Represents a parsed entity from the source code
  */
 export interface ParsedEntity {
@@ -120,6 +166,26 @@ export interface ParsedEntity {
     isGenerator?: boolean;
     isAsyncGenerator?: boolean;
     yieldsFrom?: string[];
+
+    awaitCount?: number;
+    yieldCount?: number;
+    generatorType?: "delegating" | "simple";
+    asyncPatterns?: string[];
+  };
+
+  pythonInfo?: {
+    magicMethodType?: MagicType | "other";
+    decorators?: Array<{
+      name: string;
+      module?: string;
+      arguments?: string[];
+      line?: number;
+    }>;
+    isProperty?: boolean;
+    hasGetter?: boolean;
+    hasSetter?: boolean;
+    isDataclass?: boolean;
+    specialClassType?: "dataclass" | "enum" | "namedtuple" | "protocol" | "abstract";
   };
 
   /** Return type for functions/methods */
@@ -514,20 +580,7 @@ export interface PythonMethodInfo {
   }>;
 
   /** Magic method type (if applicable) */
-  magicType?:
-    | "init"
-    | "str"
-    | "repr"
-    | "call"
-    | "enter"
-    | "exit"
-    | "iter"
-    | "next"
-    | "len"
-    | "getitem"
-    | "setitem"
-    | "delitem"
-    | "contains";
+  magicType?: MagicType;
 
   /** Property information (if property) */
   propertyInfo?: {
@@ -545,6 +598,11 @@ export interface PythonMethodInfo {
     parentClass: string;
     callsSuper: boolean;
     changeSignature: boolean;
+  };
+
+  location?: {
+    start: { line: number; column: number; index: number };
+    end: { line: number; column: number; index: number };
   };
 }
 
@@ -583,6 +641,17 @@ export interface PythonClassInfo {
     name: string;
     arguments?: string[];
   }>;
+
+  methods: string[];
+
+  decorators?: string[];
+
+  location?: {
+    start: { line: number; column: number; index: number };
+    end: { line: number; column: number; index: number };
+  };
+
+  methodResolutionOrder?: string[];
 }
 
 /**
@@ -613,6 +682,16 @@ export interface ImportDependency {
 
   /** Usage locations */
   usageLocations: Array<{ line: number; column: number; context: string }>;
+
+  type?: "import" | "from_import";
+
+  module?: string;
+  
+  imported?: string;
+  
+  alias?: string;
+  
+  isLocal?: boolean;
 }
 
 /**
@@ -644,7 +723,15 @@ export interface PythonParserMetrics {
     crossFileReferencesResolved: number;
     circularDependenciesFound: number;
     mappingTimeMs: number;
+
+    timeMs?: number;
+    inheritanceRelationships?: number;
+    methodOverrides?: number;
+    importDependencies?: number;
+    crossReferences?: number;
+    mroCalculations?: number;
   };
+
 
   /** Layer 4 metrics */
   patternRecognition: {
@@ -653,6 +740,9 @@ export interface PythonParserMetrics {
     designPatternsIdentified: number;
     pythonIdiomsDetected: number;
     recognitionTimeMs: number;
+
+    timeMs?: number;
+    totalPatternsFound?: number;
   };
 
   /** Overall metrics */

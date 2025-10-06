@@ -299,7 +299,7 @@ export const migrations: Migration[] = [
 export class SchemaMigration {
   private db: Database.Database;
 
-  constructor(private sqliteManager: SQLiteManager) {
+  constructor(sqliteManager: SQLiteManager) {
     this.db = sqliteManager.getConnection();
   }
 
@@ -395,7 +395,9 @@ export class SchemaMigration {
     // Execute rollback in a transaction
     const transaction = this.db.transaction(() => {
       // Run rollback SQL
-      this.db.exec(migration.down);
+      if (migration.down) {
+        this.db.exec(migration.down);
+      }
 
       // Remove migration record
       this.db

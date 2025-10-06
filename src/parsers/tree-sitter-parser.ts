@@ -23,6 +23,7 @@ import type {
   TreeSitterNode,
   TreeSitterTree,
 } from "../types/parser.js";
+import type * as TreeSitter from "web-tree-sitter";
 import { createPythonAnalyzer } from "./python-analyzer.js";
 import { CSharpAnalyzer } from "./csharp-analyzer.js";
 import { RustAnalyzer } from "./rust-analyzer.js";
@@ -948,7 +949,7 @@ export class TreeSitterParser {
   /**
    * Extract C struct entity
    */
-  private extractCStruct(node: TreeSitterNode, source: string, depth: number): ParsedEntity {
+  private extractCStruct(node: TreeSitterNode, source: string, _depth: number): ParsedEntity {
     const nameNode = this.findNodeByType(node, "type_identifier") || this.findNodeByType(node, "identifier");
     const name = nameNode?.text || "<anonymous>";
 
@@ -977,7 +978,7 @@ export class TreeSitterParser {
   /**
    * Extract C union entity
    */
-  private extractCUnion(node: TreeSitterNode, source: string, depth: number): ParsedEntity {
+  private extractCUnion(node: TreeSitterNode, _source: string, _depth: number): ParsedEntity {
     const nameNode = this.findNodeByType(node, "type_identifier") || this.findNodeByType(node, "identifier");
     const name = nameNode?.text || "<anonymous>";
 
@@ -992,7 +993,7 @@ export class TreeSitterParser {
   /**
    * Extract C enum entity
    */
-  private extractCEnum(node: TreeSitterNode, source: string): ParsedEntity {
+  private extractCEnum(node: TreeSitterNode, _source: string): ParsedEntity {
     const nameNode = this.findNodeByType(node, "type_identifier") || this.findNodeByType(node, "identifier");
     const name = nameNode?.text || "<anonymous>";
 
@@ -1007,7 +1008,7 @@ export class TreeSitterParser {
   /**
    * Extract C++ class entity
    */
-  private extractCppClass(node: TreeSitterNode, source: string, depth: number): ParsedEntity {
+  private extractCppClass(node: TreeSitterNode, source: string, _depth: number): ParsedEntity {
     const nameNode = this.findNodeByType(node, "type_identifier") || this.findNodeByType(node, "identifier");
     const name = nameNode?.text || "<anonymous>";
 
@@ -1039,7 +1040,7 @@ export class TreeSitterParser {
   /**
    * Extract C++ namespace entity
    */
-  private extractCppNamespace(node: TreeSitterNode, source: string, depth: number): ParsedEntity {
+  private extractCppNamespace(node: TreeSitterNode, _source: string, _depth: number): ParsedEntity {
     const nameNode = this.findNodeByType(node, "identifier");
     const name = nameNode?.text || "<anonymous>";
 
@@ -1054,7 +1055,7 @@ export class TreeSitterParser {
   /**
    * Extract C include entity
    */
-  private extractCInclude(node: TreeSitterNode, source: string): ParsedEntity {
+  private extractCInclude(node: TreeSitterNode, _source: string): ParsedEntity {
     const includeNode = this.findNodeByType(node, "string_literal") || this.findNodeByType(node, "system_lib_string");
     const includePath = includeNode?.text || "<unknown>";
 
@@ -1073,7 +1074,7 @@ export class TreeSitterParser {
   /**
    * Extract C macro entity
    */
-  private extractCMacro(node: TreeSitterNode, source: string): ParsedEntity {
+  private extractCMacro(node: TreeSitterNode, _source: string): ParsedEntity {
     const nameNode = this.findNodeByType(node, "identifier");
     const name = nameNode?.text || "<anonymous>";
 
@@ -1133,7 +1134,7 @@ export class TreeSitterParser {
   /**
    * Extract C typedef entity
    */
-  private extractCTypedef(node: TreeSitterNode, source: string): ParsedEntity {
+  private extractCTypedef(node: TreeSitterNode, _source: string): ParsedEntity {
     const nameNode = this.findNodeByType(node, "type_identifier") || this.findNodeByType(node, "identifier");
     const name = nameNode?.text || "<anonymous>";
 
@@ -1148,7 +1149,7 @@ export class TreeSitterParser {
   /**
    * Extract C field from struct/union
    */
-  private extractCField(node: TreeSitterNode, source: string): ParsedEntity | null {
+  private extractCField(node: TreeSitterNode, _source: string): ParsedEntity | null {
     const nameNode = this.findNodeByType(node, "field_identifier") || this.findNodeByType(node, "identifier");
     if (!nameNode) return null;
 
@@ -1166,7 +1167,7 @@ export class TreeSitterParser {
    */
   private extractCParameters(
     node: TreeSitterNode,
-    source: string,
+    _source: string,
   ): Array<{ name: string; type?: string; optional?: boolean }> {
     const params: Array<{ name: string; type?: string; optional?: boolean }> = [];
 
@@ -1197,7 +1198,7 @@ export class TreeSitterParser {
   /**
    * Extract return type for C functions
    */
-  private extractCReturnType(node: TreeSitterNode, source: string): string | undefined {
+  private extractCReturnType(node: TreeSitterNode, _source: string): string | undefined {
     // In C, the return type is typically the first part of the function declaration
     const declarator = this.findNodeByType(node, "function_declarator");
     if (!declarator) return undefined;

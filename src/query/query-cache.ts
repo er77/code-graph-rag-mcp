@@ -18,7 +18,6 @@
  *  - 2025-01-14: Created by Dev-Agent - TASK-002: Initial QueryCache implementation
  */
 
-import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
@@ -256,11 +255,11 @@ export class QueryCache {
       }
     };
 
-    for (const [key, entry] of this.l1Cache.entries()) {
+    for (const [_key, entry] of this.l1Cache.entries()) {
       checkEntry(entry);
     }
 
-    for (const [key, entry] of this.l2Cache.entries()) {
+    for (const [_key, entry] of this.l2Cache.entries()) {
       checkEntry(entry);
     }
 

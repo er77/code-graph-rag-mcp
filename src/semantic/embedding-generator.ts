@@ -32,7 +32,7 @@
 const env = (globalThis as any).env || {};
 type Pipeline = (text: string, opts?: any) => Promise<{ data: number[] } & Record<string, unknown>>;
 
-import type { EmbeddingConfig, MAX_BATCH_SIZE } from "../types/semantic.js";
+import type { EmbeddingConfig } from "../types/semantic.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -44,6 +44,9 @@ const DEFAULT_CONFIG: EmbeddingConfig = {
   localPath: "./models",
   batchSize: 8,
 };
+
+// Embedding dimensions (matches all-MiniLM-L6-v2 model output)
+const EMBEDDING_DIMENSION = 384;
 
 // =============================================================================
 // 3. DATA MODELS AND TYPE DEFINITIONS
@@ -66,6 +69,16 @@ function hashText(text: string): string {
     hash = hash & hash; // Convert to 32-bit integer
   }
   return hash.toString(36);
+}
+
+// Numeric 32-bit hash (seed PRNG in fallback-emdding)
+function hash32(text: string): number {
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) {
+    const char = text.charCodeAt(i);
+    hash = ((hash << 5) - hash + char) | 0; // 32-bit signed
+  }
+  return hash >>> 0; // unsigned
 }
 
 function normalizeText(text: string): string {
@@ -165,7 +178,7 @@ export class EmbeddingGenerator {
 
           const mod: any = await import('@xenova/transformers');
           const pipeFactory = mod.pipeline as (task: string, model: string, options?: any) => Promise<Pipeline>;
-          this.model = await pipeFactory('feature-extraction', this.config.modelName, {
+          this.model = await pipeFactory('feature-extraction', this.config.modelName ?? DEFAULT_MODEL, {
             quantized: this.config.quantized !== false,
             progress_callback: undefined,
           });
@@ -189,7 +202,7 @@ export class EmbeddingGenerator {
       if (!this.model) {
         console.log(`[EmbeddingGenerator] Fallback mode initialized (memory embeddings)`);
         const testEmbedding = this.generateFallbackEmbedding('test');
-        if (testEmbedding.length !== 384) {
+        if (testEmbedding.length !== EMBEDDING_DIMENSION) {
           throw new Error(`[EmbeddingGenerator] TASK-004B: Fallback embedding wrong size: ${testEmbedding.length}`);
         }
         console.log(`[EmbeddingGenerator] Fallback warm-up complete - dimension: ${testEmbedding.length}`);
@@ -282,7 +295,7 @@ export class EmbeddingGenerator {
     }
 
     const results: Float32Array[] = [];
-    const batchSize = this.config.batchSize;
+    const batchSize = this.config.batchSize ?? DEFAULT_CONFIG.batchSize;
 
     // Process in batches for optimal performance
     for (let i = 0; i < texts.length; i += batchSize) {
@@ -290,10 +303,10 @@ export class EmbeddingGenerator {
 
       // Check cache for each item
       const toProcess: { index: number; text: string }[] = [];
-      const batchResults: (Float32Array | null)[] = new Array(batch.length);
+      const batchResults: (Float32Array | null)[] = Array(batch.length).fill(null);
 
       for (let j = 0; j < batch.length; j++) {
-        const normalizedText = normalizeText(batch[j]);
+        const normalizedText = normalizeText(batch[j] ?? '');
         const cacheKey = hashText(normalizedText);
         const cached = this.cache.get(cacheKey);
 
@@ -311,25 +324,32 @@ export class EmbeddingGenerator {
       if (toProcess.length > 0) {
         const embeddings = await this.processBatch(toProcess.map((item) => item.text));
 
-        for (let k = 0; k < toProcess.length; k++) {
-          const { index, text } = toProcess[k];
-          const embedding = embeddings[k];
-          batchResults[index] = embedding;
+        toProcess.forEach((item, k) => {
+          const embedding = embeddings[k] ?? new Float32Array(EMBEDDING_DIMENSION);
+          batchResults[item.index] = embedding;
 
           // Cache the result
-          const cacheKey = hashText(text);
+          const cacheKey = hashText(item.text);
           if (this.cache.size < 5000) {
             this.cache.set(cacheKey, {
-              text,
+              text: item.text,
+              embedding,
+              timestamp: Date.now(),
+            });
+          } else {
+            this.evictOldestCacheEntry();
+            this.cache.set(cacheKey, {
+              text: item.text,
               embedding,
               timestamp: Date.now(),
             });
           }
-        }
+        });
       }
 
       // Add to results
-      results.push(...(batchResults.filter((r) => r !== null) as Float32Array[]));
+      const finalized = batchResults.filter((r): r is Float32Array => r !== null);
+      results.push(...finalized);
     }
 
     return results;
@@ -367,7 +387,7 @@ export class EmbeddingGenerator {
         } catch (err) {
           console.error(`[EmbeddingGenerator] Failed to generate embedding for text: ${text.slice(0, 50)}...`);
           // Return zero vector as fallback
-          results.push(new Float32Array(384));
+          results.push(new Float32Array(EMBEDDING_DIMENSION));
         }
       }
       return results;
@@ -387,32 +407,27 @@ export class EmbeddingGenerator {
    * Generate fallback embedding when transformers is not available
    */
   private generateFallbackEmbedding(text: string): Float32Array {
-    // Generate a deterministic 384-dimension embedding based on text content
-    // This provides basic semantic similarity for development/testing
-    const embedding = new Float32Array(384);
+    
+    const embedding = new Float32Array(EMBEDDING_DIMENSION);
+    let state = hash32(text) || 1;
 
-    // Use simple hash-based approach for consistent embeddings
-    let hash = hashText(text);
-
-    for (let i = 0; i < 384; i++) {
-      // Generate pseudo-random values based on text content and position
-      hash = (hash * 1103515245 + 12345) & 0x7fffffff;
-      embedding[i] = (hash % 10000) / 10000 - 0.5; // Normalize to [-0.5, 0.5]
+    for (let i = 0; i < EMBEDDING_DIMENSION; i++) {
+      // LCG (32-bit)
+      state = (state * 1664525 + 1013904223) >>> 0;
+      // [0, 1) -> [-0.5, 0.5]
+      embedding[i] = (state / 0xffffffff) - 0.5;
     }
 
-    // Normalize the vector to unit length
     let magnitude = 0;
-    for (let i = 0; i < 384; i++) {
-      magnitude += embedding[i] * embedding[i];
+    for (let i = 0; i < EMBEDDING_DIMENSION; i++) {
+      magnitude += (embedding[i] ?? 0) * (embedding[i] ?? 0);
     }
     magnitude = Math.sqrt(magnitude);
-
     if (magnitude > 0) {
-      for (let i = 0; i < 384; i++) {
-        embedding[i] /= magnitude;
+      for (let i = 0; i < EMBEDDING_DIMENSION; i++) {
+        embedding[i] = (embedding[i] ?? 0) / magnitude;
       }
     }
-
     return embedding;
   }
 
