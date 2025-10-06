@@ -135,22 +135,6 @@ transport = "stdio"
 
 ---
 
-## 📚 **Documentation**
-
-| Guide | Description |
-|-------|-------------|
-| [Claude Integration](docs/guides/CLAUDE_INTEGRATION.md) | Complete setup guide for Claude Desktop |
-| [Multi-Codebase Setup](docs/guides/MULTI_CODEBASE_SETUP.md) | Analyze multiple projects simultaneously |
-| [Performance Guide](docs/guides/PERFORMANCE_GUIDE.md) | Optimization and sqlite-vec setup |
-| [MCP Tools Reference](docs/guides/MCP_TOOLS.md) | Complete tool documentation |
-| [Development Guide](docs/AGENTS.md) | Agent governance and workflow |
-| [Troubleshooting](docs/guides/TROUBLESHOOTING.md) | Common issues and solutions |
-| [Gemini CLI Setup](scripts/GEMINI-CORRECT-CONFIG.sh) | Helper script for Gemini configuration |
-| [Codex CLI Setup](scripts/CODEX-CORRECT-CONFIG.sh) | Helper script for Codex CLI configuration |
-| [**Restart Server Script**](scripts/restart-mcp-server.sh) | **Utility to restart MCP server processes** |
-
----
-
 ## 🛠️ **Usage Examples**
 
 ```bash
