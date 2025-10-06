@@ -208,8 +208,6 @@ list_entity_relationships (entityName: "YourEntity", relationshipTypes: ["import
 
 </details>
 
-[**Full Changelog →**](https://github.com/er77/code-graph-rag-mcp/blob/master/CHANGELOG.md)
-
 ---
 
 ## ⚡ **System Requirements**
