@@ -33,7 +33,9 @@ function createSafeEnvironment() {
 createSafeEnvironment();
 
 import { homedir } from "node:os";
-import { join, normalize, resolve } from "node:path";
+import { join, normalize, resolve, dirname } from "node:path";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 // Consolidated MCP SDK imports
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -65,6 +67,46 @@ function expandHome(filepath: string): string {
     return join(homedir(), filepath.slice(1));
   }
   return filepath;
+}
+
+/**
+ * Get version information from package.json
+ */
+function getVersionInfo() {
+  try {
+    // Get the directory of the current file
+    const currentFileUrl = import.meta.url;
+    const currentFilePath = fileURLToPath(currentFileUrl);
+    const currentDir = dirname(currentFilePath);
+
+    // package.json is in the root, one level up from dist/
+    const packageJsonPath = join(currentDir, "../package.json");
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
+
+    return {
+      name: packageJson.name || "@er77/code-graph-rag-mcp",
+      version: packageJson.version || "unknown",
+      description: packageJson.description || "",
+      homepage: packageJson.homepage || "",
+      repository: packageJson.repository?.url || "",
+      nodeVersion: process.version,
+      platform: process.platform,
+      arch: process.arch,
+    };
+  } catch (error) {
+    // Fallback if package.json cannot be read
+    return {
+      name: "@er77/code-graph-rag-mcp",
+      version: "unknown",
+      description: "Multi-agent LiteRAG MCP server for advanced code graph analysis",
+      homepage: "https://github.com/er77/code-graph-rag-mcp",
+      repository: "git+https://github.com/er77/code-graph-rag-mcp.git",
+      nodeVersion: process.version,
+      platform: process.platform,
+      arch: process.arch,
+      error: error instanceof Error ? error.message : "Failed to read package.json",
+    };
+  }
 }
 
 const directory = normalize(resolve(expandHome(args[0] as string)));
@@ -360,6 +402,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "get_metrics",
         description: "Get system metrics and agent performance statistics",
+        inputSchema: zodToJsonSchema(z.object({})) as any,
+      },
+      {
+        name: "get_version",
+        description: "Get MCP server version information and runtime details",
         inputSchema: zodToJsonSchema(z.object({})) as any,
       },
       // New semantic tools - TASK-002
@@ -767,6 +814,51 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     cpuUsage: agent.getCpuUsage(),
                     queueSize: agent.getTaskQueue().length,
                   })),
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+
+      case "get_version": {
+        const versionInfo = getVersionInfo();
+        const uptime = process.uptime();
+        const memoryUsage = process.memoryUsage();
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  server: {
+                    name: versionInfo.name,
+                    version: versionInfo.version,
+                    description: versionInfo.description,
+                    homepage: versionInfo.homepage,
+                    repository: versionInfo.repository,
+                  },
+                  runtime: {
+                    nodeVersion: versionInfo.nodeVersion,
+                    platform: versionInfo.platform,
+                    arch: versionInfo.arch,
+                    pid: process.pid,
+                    uptime: {
+                      seconds: Math.floor(uptime),
+                      formatted: `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m ${Math.floor(uptime % 60)}s`,
+                    },
+                  },
+                  memory: {
+                    rss: `${Math.round(memoryUsage.rss / 1024 / 1024)}MB`,
+                    heapTotal: `${Math.round(memoryUsage.heapTotal / 1024 / 1024)}MB`,
+                    heapUsed: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)}MB`,
+                    external: `${Math.round(memoryUsage.external / 1024 / 1024)}MB`,
+                  },
+                  indexedDirectory: directory,
+                  configEnvironment: config.environment,
                 },
                 null,
                 2,

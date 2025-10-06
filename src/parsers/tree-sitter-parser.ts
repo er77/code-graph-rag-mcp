@@ -11,6 +11,9 @@
 
 import { LRUCache } from "lru-cache";
 import { nanoid } from "nanoid";
+import { existsSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
@@ -40,8 +43,8 @@ import { VbaAnalyzer } from "./vba-analyzer.js";
 const CACHE_MAX_SIZE = 100 * 1024 * 1024; // 100MB cache
 const CACHE_TTL = 1000 * 60 * 60; // 1 hour TTL
 
-// Tree-sitter language WASM paths
-const LANGUAGE_WASM_PATHS: Record<SupportedLanguage, string> = {
+// Tree-sitter language WASM filenames
+const LANGUAGE_WASM_FILENAMES: Record<SupportedLanguage, string> = {
   javascript: "tree-sitter-javascript.wasm",
   typescript: "tree-sitter-typescript.wasm",
   tsx: "tree-sitter-tsx.wasm",
@@ -54,6 +57,22 @@ const LANGUAGE_WASM_PATHS: Record<SupportedLanguage, string> = {
   go: "tree-sitter-go.wasm",
   java: "tree-sitter-java.wasm",
   vba: "", // VBA uses regex-based parsing, no WASM file needed
+};
+
+// Map language names to npm package names
+const LANGUAGE_PACKAGE_NAMES: Record<SupportedLanguage, string> = {
+  javascript: "tree-sitter-javascript",
+  typescript: "tree-sitter-typescript",
+  tsx: "tree-sitter-typescript",
+  jsx: "tree-sitter-javascript",
+  python: "tree-sitter-python",
+  c: "tree-sitter-c",
+  cpp: "tree-sitter-cpp",
+  csharp: "tree-sitter-c-sharp",
+  rust: "tree-sitter-rust",
+  go: "tree-sitter-go",
+  java: "tree-sitter-java",
+  vba: "", // VBA uses regex-based parsing
 };
 
 // =============================================================================
@@ -70,6 +89,94 @@ interface ParseCacheEntry {
 // =============================================================================
 // 4. UTILITY FUNCTIONS AND HELPERS
 // =============================================================================
+
+/**
+ * Resolves WASM file path with multiple fallback strategies
+ *
+ * Supports:
+ * - Local development (project node_modules)
+ * - Global npm install
+ * - NPX execution
+ * - Bundled distribution
+ *
+ * @param language - The language to resolve WASM for
+ * @returns Absolute path to WASM file
+ * @throws Error if WASM file cannot be found
+ */
+function resolveWasmPath(language: SupportedLanguage): string {
+  const wasmFilename = LANGUAGE_WASM_FILENAMES[language];
+  const packageName = LANGUAGE_PACKAGE_NAMES[language];
+
+  if (!wasmFilename || !packageName) {
+    throw new Error(`No WASM file configured for language: ${language}`);
+  }
+
+  // Get current file's directory (__dirname equivalent for ESM)
+  const currentFileUrl = import.meta.url;
+  const currentFilePath = fileURLToPath(currentFileUrl);
+  const currentDir = dirname(currentFilePath);
+
+  // Strategy 1: Relative to current file (dist/parsers or src/parsers)
+  // For bundled: dist/parsers -> ../node_modules
+  // For source: src/parsers -> ../../node_modules
+  const relativeToFile = [
+    join(currentDir, "../../node_modules", packageName, wasmFilename),
+    join(currentDir, "../node_modules", packageName, wasmFilename),
+  ];
+
+  // Strategy 2: Relative to process.cwd() (local development)
+  const relativeToCwd = [
+    join(process.cwd(), "node_modules", packageName, wasmFilename),
+  ];
+
+  // Strategy 3: Global npm installation
+  // Try to find npm root from process.execPath
+  const globalPaths: string[] = [];
+  if (process.env.NODE_PATH) {
+    const nodePaths = process.env.NODE_PATH.split(process.platform === "win32" ? ";" : ":");
+    globalPaths.push(...nodePaths.map(p => join(p, packageName, wasmFilename)));
+  }
+
+  // Strategy 4: NPX cache locations
+  if (process.env.npm_config_cache) {
+    globalPaths.push(
+      join(process.env.npm_config_cache, "_npx", "**", "node_modules", packageName, wasmFilename)
+    );
+  }
+
+  // Strategy 5: Common global npm locations
+  const homeDir = process.env.HOME || process.env.USERPROFILE;
+  if (homeDir) {
+    globalPaths.push(
+      // Unix/Mac global install
+      join(homeDir, ".nvm/versions/node", process.version, "lib/node_modules", "@er77/code-graph-rag-mcp/node_modules", packageName, wasmFilename),
+      join("/usr/local/lib/node_modules", "@er77/code-graph-rag-mcp/node_modules", packageName, wasmFilename),
+      // Windows global install
+      join(process.env.APPDATA || "", "npm/node_modules", "@er77/code-graph-rag-mcp/node_modules", packageName, wasmFilename),
+    );
+  }
+
+  // Try all paths in order
+  const allPaths = [...relativeToFile, ...relativeToCwd, ...globalPaths];
+
+  for (const path of allPaths) {
+    if (existsSync(path)) {
+      console.log(`[TreeSitterParser] Found WASM for ${language} at: ${path}`);
+      return path;
+    }
+  }
+
+  // If not found, provide helpful error message
+  const searchedPaths = allPaths.join("\n  - ");
+  throw new Error(
+    `Cannot find WASM file for language '${language}' (${packageName}).\n` +
+    `Searched paths:\n  - ${searchedPaths}\n\n` +
+    `Please ensure ${packageName} is installed:\n` +
+    `  npm install ${packageName}\n\n` +
+    `For global installation:\n` +
+    `  npm install -g @er77/code-graph-rag-mcp`
+  );
+}
 
 /**
  * Detects language from file extension
@@ -213,14 +320,19 @@ export class TreeSitterParser {
 
     this.parser = new Parser();
 
-    // Load language grammars
-    for (const [lang, wasmPath] of Object.entries(LANGUAGE_WASM_PATHS)) {
+    // Load language grammars with dynamic path resolution
+    for (const lang of Object.keys(LANGUAGE_WASM_FILENAMES) as SupportedLanguage[]) {
+      // Skip VBA (uses regex-based parsing)
+      if (lang === "vba") continue;
+
       try {
+        const wasmPath = resolveWasmPath(lang);
         const language = await Parser.Language.load(wasmPath);
-        this.languages.set(lang as SupportedLanguage, language);
+        this.languages.set(lang, language);
         console.log(`[TreeSitterParser] Loaded language: ${lang}`);
       } catch (error) {
-        console.error(`[TreeSitterParser] Failed to load ${lang}: ${error}`);
+        console.error(`[TreeSitterParser] Failed to load ${lang}:`, error);
+        // Don't throw - allow parser to continue with other languages
       }
     }
 

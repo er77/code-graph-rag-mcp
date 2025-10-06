@@ -20,6 +20,18 @@ export default defineConfig({
   external: [
     // Keep heavy dependencies external to reduce memory footprint
     "@modelcontextprotocol/sdk",
+
+    // Tree-sitter dependencies must remain external (contain WASM files)
+    "web-tree-sitter",
+    "tree-sitter-javascript",
+    "tree-sitter-typescript",
+    "tree-sitter-python",
+    "tree-sitter-c",
+    "tree-sitter-cpp",
+    "tree-sitter-c-sharp",
+    "tree-sitter-rust",
+    "tree-sitter-go",
+    "tree-sitter-java",
   ],
 
   // Type generation

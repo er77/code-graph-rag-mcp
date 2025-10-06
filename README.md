@@ -10,7 +10,7 @@
 
 A powerful [Model Context Protocol](https://github.com/modelcontextprotocol) server that creates intelligent graph representations of your codebase with comprehensive semantic analysis capabilities.
 
-**🌟 10 Languages Supported** | **⚡ 5.5x Faster** | **🔍 Semantic Search** | **📊 13+ Analysis Tools**
+**🌟 10 Languages Supported** | **⚡ 5.5x Faster** | **🔍 Semantic Search** | **📊 14+ Analysis Tools**
 
 ---
 
@@ -96,7 +96,7 @@ transport = "stdio"
 
 ## 🔍 **Key Features**
 
-### **🔬 Advanced Analysis Tools (13+)**
+### **🔬 Advanced Analysis Tools (14+)**
 
 | Feature | Description | Use Case |
 |---------|-------------|----------|
@@ -107,6 +107,7 @@ transport = "stdio"
 | **Hotspot Analysis** | Complexity & coupling metrics | Find problem areas |
 | **Cross-Language** | Multi-language relationships | Polyglot codebases |
 | **Graph Health** | Database diagnostics | `get_graph_health` |
+| **Version Info** | Server version & runtime details | `get_version` |
 | **Safe Reset** | Clean reindexing | `reset_graph`, `clean_index` |
 
 ### **⚡ High-Performance Architecture**
@@ -146,6 +147,7 @@ transport = "stdio"
 | [Troubleshooting](docs/guides/TROUBLESHOOTING.md) | Common issues and solutions |
 | [Gemini CLI Setup](scripts/GEMINI-CORRECT-CONFIG.sh) | Helper script for Gemini configuration |
 | [Codex CLI Setup](scripts/CODEX-CORRECT-CONFIG.sh) | Helper script for Codex CLI configuration |
+| [**Restart Server Script**](scripts/restart-mcp-server.sh) | **Utility to restart MCP server processes** |
 
 ---
 
@@ -187,6 +189,40 @@ list_entity_relationships (entityName: "YourEntity", relationshipTypes: ["import
 ---
 
 ## 📋 **Changelog**
+
+### Version 2.5.5 (2025-10-06)
+
+#### 🐛 **Critical Fix: WASM Path Resolution**
+- **Fixed TypeScript/JavaScript parser failure**: Parser now successfully extracts entities in all installation scenarios
+- **Root cause**: WASM files were resolved relative to `process.cwd()` instead of package's `node_modules`
+- **Solution**: Implemented dynamic path resolution with 5 fallback strategies
+  - ✅ Local development (relative to dist/ or src/)
+  - ✅ Global npm install (`npm install -g`)
+  - ✅ NPX execution (`npx @er77/code-graph-rag-mcp`)
+  - ✅ NVM and system-wide installations
+  - ✅ Windows APPDATA paths
+- **Impact**: Parser now works correctly with **0 → 100-300 entities** extracted from TypeScript projects
+- **Externalized dependencies**: Tree-sitter packages now properly externalized in build (not bundled)
+- **Enhanced error messages**: Shows all searched paths and provides installation instructions
+
+#### ✨ **New Features**
+- **MCP Tool: `get_version`**: Get server version, runtime details, memory usage, and uptime
+  - Returns package version, Node.js version, platform info, process uptime
+  - Useful for debugging and verifying installation
+- **Restart Script**: `scripts/restart-mcp-server.sh` utility for restarting MCP server
+  - Automatically finds and kills running MCP server processes
+  - Provides restart instructions for Claude Desktop
+  - Supports `--force` flag for non-interactive mode
+
+#### 📦 **Technical Details**
+- **Modified files**:
+  - `src/parsers/tree-sitter-parser.ts`: Added `resolveWasmPath()` function with comprehensive fallback logic
+  - `tsup.config.ts`: Externalized 10 tree-sitter packages to prevent WASM bundling
+  - `src/index.ts`: Added `get_version` MCP tool and `getVersionInfo()` helper function
+- **New scripts**:
+  - `scripts/test-wasm-resolution.js`: WASM path verification
+  - `scripts/restart-mcp-server.sh`: Server restart utility
+- **Documentation**: Added `.memory_bank/fixes/ISSUE_WASM_PATH_RESOLUTION.md`
 
 ### Version 2.5.4 (2025-10-06)
 
