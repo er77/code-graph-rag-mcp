@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
 
-[Sponsor https://accelerator.slider-ai.ru/ ](https://accelerator.slider-ai.ru/)
+[Sponsor https://accelerator.slider-ai.ru/ ](https://t.me/SliderQuery)
 
 **Advanced Multi-Language Code Analysis with Semantic Intelligence**
 
