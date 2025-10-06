@@ -216,7 +216,7 @@ export class QueryAgent extends BaseAgent implements QueryOperations {
         id: nanoid(),
         type: "entity",
         operation: "listEntities",
-        params: { ...filter }, 
+        params: filter as Record<string, unknown>,
         hash: `entities:${JSON.stringify(filter)}`,
         timestamp: Date.now(),
       };

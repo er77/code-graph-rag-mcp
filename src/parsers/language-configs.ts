@@ -57,8 +57,24 @@ export const FILE_EXTENSIONS: Record<string, SupportedLanguage> = {
   hxx: "cpp",
   hh: "cpp",
 
+  // C#
+  cs: "csharp",
+
   // Rust
   rs: "rust",
+
+  // Go
+  go: "go",
+  mod: "go",
+
+  // Java
+  java: "java",
+
+  // VBA
+  vba: "vba",
+  bas: "vba",
+  cls: "vba",
+  frm: "vba",
 };
 
 /**
@@ -149,6 +165,30 @@ export const LANGUAGE_KEYWORDS: Record<
     imports: ["use", "extern", "crate"],
     exports: ["pub"],
     types: ["type"],
+  },
+
+  go: {
+    functions: ["func"],
+    classes: ["type", "struct", "interface"],
+    imports: ["import"],
+    exports: [], // Go uses capitalization for exports
+    types: ["type", "interface", "struct"],
+  },
+
+  java: {
+    functions: ["void", "public", "private", "protected", "static", "final"],
+    classes: ["class", "interface", "enum", "record", "@interface"],
+    imports: ["import"],
+    exports: ["public", "protected"],
+    types: ["int", "long", "double", "float", "char", "boolean", "String", "void"],
+  },
+
+  vba: {
+    functions: ["Sub", "Function", "Property"],
+    classes: ["Class", "Type", "Enum"],
+    imports: [],
+    exports: ["Public", "Global"],
+    types: ["Integer", "Long", "Double", "Single", "String", "Boolean", "Variant", "Object", "Date"],
   },
 };
 

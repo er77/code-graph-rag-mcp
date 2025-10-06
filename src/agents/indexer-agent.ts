@@ -19,7 +19,7 @@ import { GraphStorageImpl } from "../storage/graph-storage.js";
 import { getGraphStorage } from "../storage/graph-storage-factory.js";
 import { getSQLiteManager, type SQLiteManager } from "../storage/sqlite-manager.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
-import type { ParsedEntity, ParseResult } from "../types/parser.js";
+import type { EntityRelationship, ParsedEntity, ParseResult } from "../types/parser.js";
 import type {
   BatchResult,
   Entity,
@@ -68,7 +68,7 @@ export interface IndexerTask extends AgentTask {
     query?: GraphQuery;
     entityId?: string;
     depth?: number;
-    relationships?: ProvidedRelationship[];
+    relationships?: EntityRelationship[];
   };
 }
 
@@ -410,12 +410,10 @@ export class IndexerAgent extends BaseAgent {
     const { timeMs: _throwAway, ...restBase } = entityResult;
 
     return {
-      ...restBase,
-      failed,
-      errors,
-      timeMs: indexTime, 
-      entitiesIndexed: entityResult.processed,
-      relationshipsCreated: relResult.processed,
+      processed: entityResult.processed,
+      failed: entityResult.failed,
+      errors: entityResult.errors,
+      timeMs: indexTime
     };
   }
 

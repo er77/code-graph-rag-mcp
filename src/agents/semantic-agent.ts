@@ -417,11 +417,8 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
         console.warn(`[${this.id}] TASK-004B: Semantic search fallback for query: ${query}`);
         return {
           results: [],
-          totalResults: 0,
-          searchTime: 0,
-          processingTime: 0, 
           query,
-          degraded: true, // Indicate degraded service
+          processingTime: 0,
         } as SemanticResult;
       },
       "semanticSearch"
@@ -690,13 +687,13 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
   private updateEmbeddingTime(time: number): void {
     const prev = this.semanticMetrics.avgEmbeddingTime;
     const count = this.semanticMetrics.embeddingsGenerated;
-    this.semanticMetrics.avgEmbeddingTime = (prev * (count - 1) + time) / Math.max(1, count);
+    this.semanticMetrics.avgEmbeddingTime = (prev * (count - 1) + time) / count;
   }
 
   private updateSearchTime(time: number): void {
     const prev = this.semanticMetrics.avgSearchTime;
     const count = this.semanticMetrics.searchesPerformed;
-    this.semanticMetrics.avgSearchTime = (prev * (count - 1) + time) / Math.max(1, count);
+    this.semanticMetrics.avgSearchTime = (prev * (count - 1) + time) / count;
   }
 
   private updateCacheHitRate(_hit: boolean): void {

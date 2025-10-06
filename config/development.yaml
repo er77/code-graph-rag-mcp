@@ -51,6 +51,13 @@ parser:
       - "typescript"
       - "javascript"
       - "python"           # Core languages for development
+      - "c"                # C language support
+      - "cpp"              # C++ language support
+      - "csharp"           # C# language support
+      - "rust"             # Rust language support
+      - "go"               # Go language support
+      - "java"             # Java language support
+      - "vba"              # VBA language support (regex-based)
     maxFileSize: 524288     # 512KB for quick parsing
     timeout: 3000          # Quick timeout for development
     
