@@ -22,7 +22,7 @@ mcp:
     timeout: 15000         # Shorter timeout for quick feedback
     
   agents:
-    maxConcurrent: 3       # Lower concurrency for development
+    maxConcurrent: 10      # Allow sufficient agents for parallel operations
     defaultTimeout: 5000   # Quick timeout for development
 
 # Database Configuration (Development)

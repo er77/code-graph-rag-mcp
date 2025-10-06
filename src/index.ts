@@ -286,7 +286,7 @@ const SemanticSearchSchema = z.object({
 
 const FindSimilarCodeSchema = z.object({
   code: z.string().describe("Code snippet to find similar code for"),
-  threshold: z.number().optional().default(0.7).describe("Similarity threshold (0-1)"),
+  threshold: z.number().optional().default(0.5).describe("Similarity threshold (0-1)"),
   limit: z.number().optional().default(10).describe("Maximum results to return"),
 });
 
@@ -918,7 +918,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const semanticAgent = await getSemanticAgent();
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
         const sim = await withTimeout(
-          semanticAgent.findSimilarCode(code, threshold ?? 0.7),
+          semanticAgent.findSimilarCode(code, threshold ?? 0.5),
           timeoutMs,
           "find_similar_code",
           requestId,
@@ -1049,9 +1049,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "find_related_concepts": {
         const { entityId, limit } = FindRelatedConceptsSchema.parse(args);
         const storage = await getGraphStorage();
-        const entity = await storage.getEntity(entityId);
+        let entity = await storage.getEntity(entityId);
+
+        // If entity not found by ID, try searching by name
         if (!entity) {
-          return { content: [ { type: "text", text: JSON.stringify({ success: false, error: `Entity not found: ${entityId}` }, null, 2) } ] };
+          const queryByName: import("./types/storage.js").GraphQuery = {
+            type: "entity",
+            filters: { name: entityId },
+            limit: 10
+          };
+          const entitiesByName = await storage.findEntities(queryByName);
+          entity = entitiesByName.find((e: import("./types/storage.js").Entity) =>
+            e.name === entityId ||
+            e.name.toLowerCase() === entityId.toLowerCase() ||
+            e.id === entityId
+          ) || null;
+        }
+
+        if (!entity) {
+          return { content: [ { type: "text", text: JSON.stringify({ success: false, error: `Entity not found: ${entityId}. Try using the exact entity ID from list_entities or get_graph.` }, null, 2) } ] };
         }
 
         // Read code snippet for this entity using stored location

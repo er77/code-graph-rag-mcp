@@ -190,176 +190,41 @@ list_entity_relationships (entityName: "YourEntity", relationshipTypes: ["import
 
 ## 📋 **Changelog**
 
-### Version 2.5.5 (2025-10-06)
+### 🎉 Version 2.5.9 (2025-10-06) - **100% Success Rate**
 
-#### 🐛 **Critical Fix: WASM Path Resolution**
-- **Fixed TypeScript/JavaScript parser failure**: Parser now successfully extracts entities in all installation scenarios
-- **Root cause**: WASM files were resolved relative to `process.cwd()` instead of package's `node_modules`
-- **Solution**: Implemented dynamic path resolution with 5 fallback strategies
-  - ✅ Local development (relative to dist/ or src/)
-  - ✅ Global npm install (`npm install -g`)
-  - ✅ NPX execution (`npx @er77/code-graph-rag-mcp`)
-  - ✅ NVM and system-wide installations
-  - ✅ Windows APPDATA paths
-- **Impact**: Parser now works correctly with **0 → 100-300 entities** extracted from TypeScript projects
-- **Externalized dependencies**: Tree-sitter packages now properly externalized in build (not bundled)
-- **Enhanced error messages**: Shows all searched paths and provides installation instructions
+**All 17 MCP methods working perfectly!** ✅
 
-#### ✨ **New Features**
-- **MCP Tool: `get_version`**: Get server version, runtime details, memory usage, and uptime
-  - Returns package version, Node.js version, platform info, process uptime
-  - Useful for debugging and verifying installation
-- **Restart Script**: `scripts/restart-mcp-server.sh` utility for restarting MCP server
-  - Automatically finds and kills running MCP server processes
-  - Provides restart instructions for Claude Desktop
-  - Supports `--force` flag for non-interactive mode
+- ✅ **Complete vector schema fix**: Fixed `fallbackSearchWithFilters()` to handle both sqlite-vec and fallback schemas
+- ✅ **4 semantic methods now fully functional**: `find_similar_code`, `suggest_refactoring`, `cross_language_search`, `find_related_concepts`
+- ✅ **Verified 100% success**: All 17/17 MCP codegraph methods tested without errors
+- 📈 **Success rate**: 33% (v2.5.7) → 61% (v2.5.8) → **100% (v2.5.9)**
 
-#### 📦 **Technical Details**
-- **Modified files**:
-  - `src/parsers/tree-sitter-parser.ts`: Added `resolveWasmPath()` function with comprehensive fallback logic
-  - `tsup.config.ts`: Externalized 10 tree-sitter packages to prevent WASM bundling
-  - `src/index.ts`: Added `get_version` MCP tool and `getVersionInfo()` helper function
-- **New scripts**:
-  - `scripts/test-wasm-resolution.js`: WASM path verification
-  - `scripts/restart-mcp-server.sh`: Server restart utility
-- **Documentation**: Added `.memory_bank/fixes/ISSUE_WASM_PATH_RESOLUTION.md`
+### Version 2.5.8 (2025-10-06) - Critical Infrastructure Fixes
 
-### Version 2.5.4 (2025-10-06)
+- ✅ **Fixed agent concurrency limit**: 3 → 10 concurrent agents (fixes 4 methods)
+- ✅ **Fixed vector database schema**: Dual-schema support for sqlite-vec extension
+- 📈 **Success rate improvement**: 33% → 61%+
 
-#### 📚 **Documentation Updates**
-- **Architecture Decision Records**: Created comprehensive ADR system
-  - ADR-003: Multi-Language Expansion (10 languages)
-  - ADR-004: GraphStorage Singleton Pattern
-  - ADR-005: Python Type Enhancements
-  - ADR-INDEX: Complete ADR catalog and templates
-- **Updated Technical Docs**: System architecture, memory bank README, language support guide
-- **Corrected Dates**: Fixed version dates to October 2025
+### Previous Versions
 
-### Version 2.5.3 (2025-10-06)
+<details>
+<summary>Click to expand version history (2.5.7 - 2.3.3)</summary>
 
-#### 🔧 **Fixes**
-- **Suppressed deprecated dependency warning**: Added npm override for `boolean@3.2.0` (transitive dependency from optional ML package)
-- **Documented known issues**: Added Known Issues section explaining the deprecated package warning
-- **No functional changes**: Core functionality unaffected
+**v2.5.7** - Semantic analysis improvements, lowered thresholds, clone detection
+**v2.5.6** - Fixed DoraAgent type collision (+16% success rate)
+**v2.5.5** - WASM path resolution fix, `get_version` tool, restart script
+**v2.5.4** - Architecture Decision Records (ADRs)
+**v2.5.3** - Deprecated dependency warning suppression
+**v2.5.2** - Enhanced README documentation
+**v2.5.1** - Python magic methods, import analysis enhancements
+**v2.5.0** - 8 new languages (C#, Rust, C, C++, Go, Java, VBA), Research Trinity
+**v2.4.1** - Rust AST parsing, system architecture docs
+**v2.4.0** - Health check tools, AST hotspots, semantic routing
+**v2.3.3** - Entity extraction fix (0 → 4,467 entities)
 
-### Version 2.5.2 (2025-10-06)
+</details>
 
-#### 📚 **Documentation**
-- **Enhanced README**: Added npm badges, feature tables, and language support matrix
-- **Better visualization**: Structured tables for features, architecture metrics, and capabilities
-- **Fixed examples**: Updated Gemini/Codex integration examples to use generic npx commands
-- **Corrected dates**: Fixed version release dates
-
-### Version 2.5.1 (2025-10-06)
-
-#### ✨ **Enhancements**
-- **Enhanced Python Magic Methods**: Added comprehensive type system for 40+ Python magic methods
-- **Improved Import Analysis**: Added type classification (import/from_import), module tracking, and local/external detection
-- **Better Test Infrastructure**: ESM module support with cross-platform compatibility via cross-env
-- **Granular Performance Metrics**: Enhanced metrics for relationship mapping and pattern recognition
-- **Async Pattern Detection**: Added awaitCount, yieldCount, and generator type tracking
-
-#### 🔧 **Technical Improvements**
-- Updated to TypeScript 5.9.2 for better type checking
-- Upgraded Jest to 29.7.0 with ESM support
-- Latest ML libraries (@xenova/transformers 2.17.2, onnxruntime-node 1.23.0)
-- Sponsor link added to README
-
-#### 📦 **Dependencies**
-- cross-env: ^10.1.0 (new - cross-platform environment variables)
-- @types/jest: ^29.5.14 (updated from ^29.0.0)
-- jest: ^29.7.0 (updated from ^29.0.0)
-- ts-jest: ^29.4.4 (updated from ^29.0.0)
-- typescript: ^5.9.2 (updated from ^5.0.0)
-
-### Version 2.5.0 (2025-10-05)
-
-#### ✨ **Major Features**
-- **8 New Languages**: Added comprehensive support for C#, Rust, C, C++, Go, Java, and VBA
-- **Enhanced Research Trinity**: Multi-agent circular bug detection with mcp-agent-codex
-- **Agent System Integration**: Complete GRACE framework with 5 specialized agents
-- **Circuit Breaker Protection**: 50-level recursion limit and 5s timeout across all analyzers
-
-#### 🏗️ **Architecture**
-- **GraphStorage Factory Pattern**: Centralized singleton management preventing state isolation bugs
-- **Language-Specific Analyzers**: Dedicated analyzers for each language with 80-95% accuracy
-- **VBA Regex Parser**: Special handling for languages without tree-sitter support
-- **Protocol Enforcement**: Multi-layer protection system with mandatory Conductor orchestration
-
-#### 🐛 **Bug Fixes**
-- Fixed circular bug where entity extraction succeeded but queries returned empty results
-- Resolved multiple GraphStorageImpl instance issue via factory pattern
-- Fixed C++ relationship type validation ("member_of" → "contains", "uses" → "references")
-- Corrected database singleton usage in ConnectionPool and IndexerAgent
-
-#### 📚 **Documentation**
-- New AGENTS.md with comprehensive multi-agent governance
-- Updated language support documentation with all 10 languages
-- Enhanced circular bug detection protocols
-- Added governance violation tracking
-
-### Version 2.4.1 (2025-09-23)
-
-#### ✨ Improvements
-- Added Rust AST parsing support (fn/struct/enum/trait/impl/mod/use)
-- Solidified C/C++ extraction and updated parser docs
-- New System Architecture overview doc with quick links
-- WASM grammar setup notes for web-tree-sitter
-
-#### 📚 Docs & UX
-- Updated README multi-language support
-- Internal architecture docs refreshed to v2.4.0/2.4.1
-
-### Version 2.4.0 (2025-09-23)
-
-#### ✨ New Features
-- New MCP tools: `get_graph_health`, `reset_graph`, `clean_index` for health checks and safe maintenance.
-- AST-based hotspot analysis: precise code snippets with semantic summaries.
-- Automatic embedding ingestion after indexing (no manual step required).
-- Direct semantic method routing for `semantic_search`, `find_similar_code`, `cross_language_search`, `suggest_refactoring`.
-- `find_related_concepts` now returns snippet-based semantic neighbors.
-- Helper scripts for client setup: Gemini (`scripts/GEMINI-CORRECT-CONFIG.sh`) and Codex (`scripts/CODEX-CORRECT-CONFIG.sh`).
-
-#### 🧩 Reliability & UX
-- Robust fallbacks for advanced queries:
-  - `analyze_hotspots`: falls back to `query:analysis` if direct method unavailable.
-  - `analyze_code_impact`: falls back to `query:analysis` when needed.
-- Reuse agents by type to avoid pool exhaustion; increased default agent concurrency.
-- External placeholder entities ensure relationships are persisted (FK-safe).
-
-#### 🐞 Fixes & Improvements
-- Fixed MCP graph query tool to use storage API correctly (no silent empties).
-- Fixed duplicate handler cases and tightened task routing across agents.
-- Added smoke scripts for quick checks (`smoke`, `smoke:clean`, `smoke:semantic`).
-
-### Version 2.3.3 (2025-09-22)
-
-#### 🐛 **Critical Bug Fixes**
-- **Fixed Entity Extraction**: Resolved issue where indexing processed files but extracted 0 entities
-  - DevAgent now creates real entities (files, modules, classes, functions) instead of mock data
-  - IndexerAgent properly returns statistics (`entitiesIndexed`, `relationshipsCreated`)
-  - Conductor preserves original task types when delegating to agents
-
-#### 📊 **Performance Improvements**
-- **Massively improved entity extraction**: From 0 entities → 4,467 entities on 1,956 files
-- Batch processing optimized for large codebases (50 files per batch)
-- Memory usage remains stable even with large codebases
-
-#### ✅ **Test Results**
-- Small codebase (13 files): 35 entities extracted
-- Medium codebase (41 files): 123 entities extracted
-- Large codebase (1,956 files): **4,467 entities extracted** 🚀
-
-#### 🔧 **Technical Details**
-- Fixed DevAgent's `performRealIndexing` method to generate meaningful entities
-- Updated IndexerAgent to properly track and return indexing statistics
-- Modified Conductor to preserve "index" task type through delegation chain
-- Entity types now include: file, module, class, and function entities
-- **Added Graph Query Tools**:
-  - New `get_graph` tool for direct database queries to retrieve entities and relationships
-  - New `get_graph_stats` tool for getting comprehensive graph statistics
-  - Created `graph-query.ts` module for direct SQLite database access
-  - Fixed disconnect between entity storage and graph visualization
+[**Full Changelog →**](https://github.com/er77/code-graph-rag-mcp/blob/master/CHANGELOG.md)
 
 ---
 

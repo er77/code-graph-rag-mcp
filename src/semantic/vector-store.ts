@@ -448,25 +448,58 @@ export class VectorStore {
   private async fallbackSearch(queryVector: Float32Array, limit: number): Promise<SimilarityResult[]> {
     if (!this.db) throw new Error("Database not initialized");
 
-    const stmt = this.db.prepare(`
-      SELECT id, content, vector, metadata
-      FROM embeddings
-    `);
-
-    const rows = stmt.all() as VectorRow[];
+    const hasVecExtension = this.checkVecExtension();
     const results: Array<SimilarityResult & { score: number }> = [];
 
-    for (const row of rows) {
-      const vector = bufferToFloat32Array(row.vector);
-      const similarity = this.cosineSimilarity(queryVector, vector);
+    if (hasVecExtension) {
+      // With sqlite-vec: need to join with vec_embeddings table
+      const stmt = this.db.prepare(`
+        SELECT e.id, e.content, e.metadata, v.embedding
+        FROM embeddings e
+        LEFT JOIN vec_embeddings v ON e.id = v.id
+      `);
 
-      results.push({
-        id: row.id,
-        content: row.content,
-        similarity,
-        score: similarity,
-        metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
-      });
+      const rows = stmt.all() as Array<{
+        id: string;
+        content: string;
+        metadata: string | null;
+        embedding: any;
+      }>;
+
+      for (const row of rows) {
+        if (!row.embedding) continue;
+        const vector = new Float32Array(row.embedding);
+        const similarity = this.cosineSimilarity(queryVector, vector);
+
+        results.push({
+          id: row.id,
+          content: row.content,
+          similarity,
+          score: similarity,
+          metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+        });
+      }
+    } else {
+      // Fallback mode: vector stored in embeddings table
+      const stmt = this.db.prepare(`
+        SELECT id, content, vector, metadata
+        FROM embeddings
+      `);
+
+      const rows = stmt.all() as VectorRow[];
+
+      for (const row of rows) {
+        const vector = bufferToFloat32Array(row.vector);
+        const similarity = this.cosineSimilarity(queryVector, vector);
+
+        results.push({
+          id: row.id,
+          content: row.content,
+          similarity,
+          score: similarity,
+          metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+        });
+      }
     }
 
     // Sort by similarity and limit
@@ -576,30 +609,45 @@ export class VectorStore {
     if (!this.db) throw new Error("Database not initialized");
 
     const { limit = 10, threshold = 0.0, metadataFilter, dateRange } = options;
+    const hasVecExtension = this.checkVecExtension();
 
     // Build WHERE conditions for SQL
     const conditions: string[] = [];
     const params: any[] = [];
 
     if (dateRange?.start != null) {
-      conditions.push("created_at >= ?");
+      conditions.push("e.created_at >= ?");
       params.push(dateRange.start);
     }
 
     if (dateRange?.end != null) {
-      conditions.push("created_at <= ?");
+      conditions.push("e.created_at <= ?");
       params.push(dateRange.end);
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
-    const stmt = this.db.prepare(`
-      SELECT id, content, vector, metadata, created_at
-      FROM embeddings
-      ${whereClause}
-    `);
+    let rows: any[];
 
-    const rows = stmt.all(...params) as VectorRow[];
+    if (hasVecExtension) {
+      // sqlite-vec mode: JOIN with vec_embeddings table
+      const stmt = this.db.prepare(`
+        SELECT e.id, e.content, e.metadata, e.created_at, v.embedding
+        FROM embeddings e
+        LEFT JOIN vec_embeddings v ON e.id = v.id
+        ${whereClause}
+      `);
+      rows = stmt.all(...params);
+    } else {
+      // Fallback mode: vector stored in embeddings table
+      const stmt = this.db.prepare(`
+        SELECT id, content, vector, metadata, created_at
+        FROM embeddings e
+        ${whereClause}
+      `);
+      rows = stmt.all(...params) as VectorRow[];
+    }
+
     const results: Array<SimilarityResult & { score: number }> = [];
 
     for (const row of rows) {
@@ -618,7 +666,15 @@ export class VectorStore {
         if (!matches) continue;
       }
 
-      const vector = bufferToFloat32Array(row.vector);
+      // Get vector based on schema type
+      let vector: Float32Array;
+      if (hasVecExtension) {
+        if (!row.embedding) continue; // Skip entries without embeddings
+        vector = new Float32Array(row.embedding);
+      } else {
+        vector = bufferToFloat32Array(row.vector);
+      }
+
       const similarity = this.cosineSimilarity(queryVector, vector);
 
       if (similarity >= threshold) {
@@ -692,21 +748,47 @@ export class VectorStore {
       throw new Error("Vector store not initialized");
     }
 
-    const stmt = this.db.prepare(`
-      SELECT * FROM embeddings WHERE id = ?
-    `);
+    const hasVecExtension = this.checkVecExtension();
 
-    const row = stmt.get(id) as VectorRow | undefined;
+    if (hasVecExtension) {
+      // With sqlite-vec: need to join with vec_embeddings table
+      const stmt = this.db.prepare(`
+        SELECT e.id, e.content, e.metadata, e.created_at, v.embedding
+        FROM embeddings e
+        LEFT JOIN vec_embeddings v ON e.id = v.id
+        WHERE e.id = ?
+      `);
 
-    if (!row) return null;
+      const row = stmt.get(id) as any;
+      if (!row) return null;
 
-    return {
-      id: row.id,
-      content: row.content,
-      vector: bufferToFloat32Array(row.vector),
-      metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
-      createdAt: row.created_at,
-    };
+      // Convert embedding from sqlite-vec format to Float32Array
+      const vector = row.embedding ? new Float32Array(row.embedding) : new Float32Array(this.config.dimensions);
+
+      return {
+        id: row.id,
+        content: row.content,
+        vector,
+        metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+        createdAt: row.created_at,
+      };
+    } else {
+      // Fallback mode: vector stored in embeddings table
+      const stmt = this.db.prepare(`
+        SELECT * FROM embeddings WHERE id = ?
+      `);
+
+      const row = stmt.get(id) as VectorRow | undefined;
+      if (!row) return null;
+
+      return {
+        id: row.id,
+        content: row.content,
+        vector: bufferToFloat32Array(row.vector),
+        metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+        createdAt: row.created_at,
+      };
+    }
   }
 
   /**

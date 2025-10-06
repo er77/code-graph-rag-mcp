@@ -10,7 +10,7 @@ import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 
 export class DoraAgent extends BaseAgent {
   constructor(_agentId?: string) {
-    super(AgentType.QUERY, { // Use QUERY type as a research/exploration agent
+    super(AgentType.DORA, { // Use DORA type for research/exploration agent
       maxConcurrency: 2,
       memoryLimit: 128, // MB
       cpuAffinity: undefined,

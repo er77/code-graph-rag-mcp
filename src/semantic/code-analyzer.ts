@@ -206,7 +206,7 @@ export class CodeAnalyzer {
   /**
    * Find similar code snippets
    */
-  async findSimilarCode(code: string, threshold = 0.7): Promise<SimilarCode[]> {
+  async findSimilarCode(code: string, threshold = 0.5): Promise<SimilarCode[]> {
     // Generate embedding for the code
     const embedding = await this.embeddingGen.generateCodeEmbedding(code);
 
@@ -230,23 +230,109 @@ export class CodeAnalyzer {
   /**
    * Detect code clones in the codebase
    */
-  async detectClones(_minSimilarity = 0.65): Promise<CloneGroup[]> {
-    // Get all embeddings from the vector store
-    const allEmbeddings = await this.vectorStore.count();
+  async detectClones(minSimilarity = 0.65): Promise<CloneGroup[]> {
+    // Get total count
+    const totalCount = await this.vectorStore.count();
 
-    if (allEmbeddings === 0) {
+    if (totalCount === 0) {
       return [];
     }
 
-    const cloneGroups: Map<string, CloneGroup> = new Map();
+    // Limit clone detection to avoid performance issues on large codebases
+    const maxSamples = Math.min(100, totalCount);
+    const cloneGroupMap: Map<string, Set<string>> = new Map();
+    const processedPairs: Set<string> = new Set();
 
-    // Note: In a real implementation, we would batch process all vectors
-    // For now, we'll return a simplified result
-    console.log(`[CodeAnalyzer] Clone detection would analyze ${allEmbeddings} code fragments`);
+    console.log(`[CodeAnalyzer] Analyzing ${maxSamples} code fragments for clones (threshold: ${minSimilarity})`);
 
-    // Return empty for now - full implementation would require
-    // loading all vectors and computing pairwise similarities
-    return Array.from(cloneGroups.values());
+    // Sample vectors by getting random entities
+    // We'll use a simple approach: search with random small vectors to get diverse samples
+    const sampleVectors: Array<{ id: string; vector: Float32Array; content: string; metadata: any }> = [];
+
+    // Get sample embeddings using multiple random searches
+    for (let i = 0; i < Math.min(5, Math.ceil(maxSamples / 20)); i++) {
+      const randomVector = new Float32Array(384).map(() => Math.random() - 0.5);
+      const results = await this.vectorStore.search(randomVector, 20);
+
+      for (const result of results) {
+        if (sampleVectors.length >= maxSamples) break;
+        if (!sampleVectors.some(v => v.id === result.id)) {
+          // Reconstruct vector by doing another search with this result as query
+          const entity = await this.vectorStore.get(result.id);
+          if (entity) {
+            sampleVectors.push({
+              id: result.id,
+              vector: entity.vector,
+              content: result.content,
+              metadata: result.metadata
+            });
+          }
+        }
+      }
+    }
+
+    // For each sample, find similar code
+    for (const sample of sampleVectors) {
+      const similar = await this.vectorStore.search(sample.vector, 50);
+
+      for (const match of similar) {
+        // Skip self-matches
+        if (match.id === sample.id) continue;
+
+        // Only process if similarity meets threshold
+        if (match.similarity < minSimilarity) continue;
+
+        // Create unique pair key (sorted to avoid duplicates)
+        const pairKey = [sample.id, match.id].sort().join('|');
+        if (processedPairs.has(pairKey)) continue;
+        processedPairs.add(pairKey);
+
+        // Find or create clone group
+        let groupId: string | null = null;
+        for (const [gid, members] of cloneGroupMap) {
+          if (members.has(sample.id) || members.has(match.id)) {
+            groupId = gid;
+            members.add(sample.id);
+            members.add(match.id);
+            break;
+          }
+        }
+
+        if (!groupId) {
+          groupId = `clone-${cloneGroupMap.size + 1}`;
+          cloneGroupMap.set(groupId, new Set([sample.id, match.id]));
+        }
+      }
+    }
+
+    // Convert to CloneGroup format
+    const cloneGroups: CloneGroup[] = [];
+    for (const [groupId, memberIds] of cloneGroupMap) {
+      if (memberIds.size < 2) continue; // Skip groups with single member
+
+      const members = Array.from(memberIds);
+      const clones = await Promise.all(
+        members.map(async (id) => {
+          const embedding = await this.vectorStore.get(id);
+          return {
+            id,
+            path: (embedding?.metadata?.path as string) || "",
+            content: embedding?.content || "",
+            similarity: minSimilarity, // Approximate
+          };
+        })
+      );
+
+      cloneGroups.push({
+        id: groupId,
+        type: this.determineCloneType(minSimilarity),
+        members: clones,
+        size: members.length,
+      });
+    }
+
+    console.log(`[CodeAnalyzer] Found ${cloneGroups.length} clone groups`);
+    return cloneGroups;
   }
 
   /**
@@ -395,6 +481,18 @@ export class CodeAnalyzer {
       return "near";
     } else {
       return "semantic";
+    }
+  }
+
+  private determineCloneType(similarity: number): CloneGroup["type"] {
+    if (similarity >= CLONE_TYPE_THRESHOLDS.type1) {
+      return "type1"; // Exact clones
+    } else if (similarity >= CLONE_TYPE_THRESHOLDS.type2) {
+      return "type2"; // Renamed clones
+    } else if (similarity >= CLONE_TYPE_THRESHOLDS.type3) {
+      return "type3"; // Gapped clones
+    } else {
+      return "type4"; // Semantic clones
     }
   }
 
