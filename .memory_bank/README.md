@@ -6,9 +6,11 @@
 
 ### Current Status
 - **Phase**: Production Ready
-- **Version**: v2.4.0
-- **Last Updated**: 2025-09-23
-- **Next Milestone**: Enhanced Multi-Language Support
+- **Version**: v2.5.3
+- **Last Updated**: 2025-10-06
+- **Languages**: 10 (JS, TS, Python, C, C++, C#, Rust, Go, Java, VBA)
+- **Performance**: 5.5x faster than native Claude tools
+- **Architecture**: Multi-agent with GRACE framework
 
 ## 🗺️ Navigation Guide
 
@@ -32,9 +34,12 @@
 - [**Agent Architecture**](./workflows/agent_coordination.md) - Multi-agent system workflows
 
 ### 🏗️ Architecture & Patterns
-- [**Architectural Decisions**](./patterns/architectural_decisions.md) - ADR documentation for MCP architecture
+- [**ADR Index**](./patterns/ADR-INDEX.md) - Architecture Decision Records index and templates
+- [**ADR-002**: C# and Rust Support](./patterns/ADR-002-csharp-rust-support.md) - Language analyzer pattern
+- [**ADR-003**: Multi-Language Expansion](./patterns/ADR-003-multi-language-expansion.md) - 10 language support
+- [**ADR-004**: GraphStorage Singleton](./patterns/ADR-004-graphstorage-singleton.md) - Factory pattern fix
+- [**ADR-005**: Python Type Enhancements](./patterns/ADR-005-python-type-enhancements.md) - Magic methods & types
 - [**Agent Delegation**](./patterns/agent_delegation.md) - Multi-agent coordination patterns
-- [**Code Analysis Patterns**](./patterns/code_analysis.md) - Entity extraction and relationship mapping
 - [**Database Schema**](./patterns/database_schema.md) - SQLite graph storage design
 - [**Task Tracking**](./patterns/task_tracking.md) - TASK-XXX lifecycle and coordination
 

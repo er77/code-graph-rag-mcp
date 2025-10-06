@@ -190,3 +190,5 @@ AGENTS.md
 /tmp
 /tmp
 /.memory_bank/logs_llm
+/.memory_bank
+/.memory_bank

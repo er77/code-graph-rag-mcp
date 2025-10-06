@@ -10,6 +10,7 @@
  */
 
 import { LRUCache } from "lru-cache";
+import { nanoid } from "nanoid";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
@@ -52,6 +53,7 @@ const LANGUAGE_WASM_PATHS: Record<SupportedLanguage, string> = {
   rust: "tree-sitter-rust.wasm",
   go: "tree-sitter-go.wasm",
   java: "tree-sitter-java.wasm",
+  vba: "", // VBA uses regex-based parsing, no WASM file needed
 };
 
 // =============================================================================
@@ -62,6 +64,7 @@ interface ParseCacheEntry {
   entities: ParsedEntity[];
   hash: string;
   timestamp: number;
+  relationships?: any[]; // Support relationships for advanced analyzers
 }
 
 // =============================================================================
@@ -132,6 +135,17 @@ function convertPosition(node: TreeSitterNode) {
       column: node.endPosition.column,
       index: node.endIndex,
     },
+  };
+}
+
+/**
+ * Creates base entity fields (id, filePath, location)
+ */
+function createBaseEntity(node: TreeSitterNode, filePath: string): Pick<ParsedEntity, "id" | "filePath" | "location"> {
+  return {
+    id: nanoid(),
+    filePath,
+    location: convertPosition(node),
   };
 }
 
@@ -564,7 +578,7 @@ export class TreeSitterParser {
   /**
    * Extract function entity
    */
-  private extractFunction(node: TreeSitterNode, source: string): ParsedEntity {
+  private extractFunction(node: TreeSitterNode, source: string, filePath: string = ""): ParsedEntity {
     const nameNode = node.namedChildren.find((c) => c.type === "identifier" || c.type === "property_identifier");
 
     const name = nameNode?.text || "<anonymous>";
@@ -579,6 +593,8 @@ export class TreeSitterParser {
     const parameters = this.extractParameters(node, source);
 
     return {
+      id: nanoid(),
+      filePath,
       name,
       type: node.parent?.type === "method_definition" ? "method" : "function",
       location: convertPosition(node),
@@ -590,7 +606,7 @@ export class TreeSitterParser {
   /**
    * Extract class entity with methods
    */
-  private extractClass(node: TreeSitterNode, source: string, _depth: number): ParsedEntity {
+  private extractClass(node: TreeSitterNode, source: string, _depth: number, filePath: string = ""): ParsedEntity {
     const nameNode = node.namedChildren.find((c) => c.type === "identifier");
     const name = nameNode?.text || "<anonymous>";
 
@@ -601,13 +617,15 @@ export class TreeSitterParser {
       for (const child of bodyNode.namedChildren) {
         if (child.type === "method_definition" || child.type === "property_definition") {
           // Note: For simplicity, extracting methods inline rather than recursively
-          const methodEntity = this.extractFunction(child, source);
+          const methodEntity = this.extractFunction(child, source, filePath);
           children.push(methodEntity);
         }
       }
     }
 
     return {
+      id: nanoid(),
+      filePath,
       name,
       type: "class",
       location: convertPosition(node),
@@ -618,11 +636,13 @@ export class TreeSitterParser {
   /**
    * Extract interface entity
    */
-  private extractInterface(node: TreeSitterNode, _source: string): ParsedEntity {
+  private extractInterface(node: TreeSitterNode, _source: string, filePath: string = ""): ParsedEntity {
     const nameNode = node.namedChildren.find((c) => c.type === "type_identifier");
     const name = nameNode?.text || "<anonymous>";
 
     return {
+      id: nanoid(),
+      filePath,
       name,
       type: "interface",
       location: convertPosition(node),
@@ -632,11 +652,13 @@ export class TreeSitterParser {
   /**
    * Extract type alias
    */
-  private extractTypeAlias(node: TreeSitterNode, _source: string): ParsedEntity {
+  private extractTypeAlias(node: TreeSitterNode, _source: string, filePath: string = ""): ParsedEntity {
     const nameNode = node.namedChildren.find((c) => c.type === "type_identifier");
     const name = nameNode?.text || "<anonymous>";
 
     return {
+      id: nanoid(),
+      filePath,
       name,
       type: "type",
       location: convertPosition(node),
@@ -646,7 +668,7 @@ export class TreeSitterParser {
   /**
    * Extract import statement
    */
-  private extractImport(node: TreeSitterNode, _source: string): ParsedEntity {
+  private extractImport(node: TreeSitterNode, _source: string, filePath: string = ""): ParsedEntity {
     const sourceNode = node.descendantsOfType("string")[0];
     const importSource = sourceNode?.text.slice(1, -1) || "";
 
@@ -667,6 +689,8 @@ export class TreeSitterParser {
     const isDefault = !!defaultImport && !specifiers.length;
 
     return {
+      id: nanoid(),
+      filePath,
       name: importSource,
       type: "import",
       location: convertPosition(node),

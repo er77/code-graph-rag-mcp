@@ -1,4 +1,8 @@
-# System Architecture Overview (v2.4.0)
+# System Architecture Overview (v2.5.3)
+
+**Last Updated**: 2025-10-06
+**Status**: Production
+**Languages Supported**: 10 (JS, TS, Python, C, C++, C#, Rust, Go, Java, VBA)
 
 ## 🎯 Purpose
 A high-level map of the Code Graph RAG MCP server: components, data flows, and how to navigate deeper docs. Links to MCP, parser, vector store, and multi‑agent architecture pages.

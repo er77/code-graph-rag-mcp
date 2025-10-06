@@ -1,10 +1,16 @@
 # Code Graph RAG MCP Server
 
+[![npm version](https://badge.fury.io/js/@er77%2Fcode-graph-rag-mcp.svg)](https://www.npmjs.com/package/@er77/code-graph-rag-mcp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
+
 [Sponsor https://accelerator.slider-ai.ru/ ](https://accelerator.slider-ai.ru/)
 
 **Advanced Multi-Language Code Analysis with Semantic Intelligence**
 
 A powerful [Model Context Protocol](https://github.com/modelcontextprotocol) server that creates intelligent graph representations of your codebase with comprehensive semantic analysis capabilities.
+
+**🌟 10 Languages Supported** | **⚡ 5.5x Faster** | **🔍 Semantic Search** | **📊 13+ Analysis Tools**
 
 ---
 
@@ -36,8 +42,8 @@ npx @modelcontextprotocol/inspector add code-graph-rag \
 
 # Or manually (example)
 gemini mcp add-json code-graph-rag '{
-  "command": "node",
-  "args": ["/home/er77/_work_fodler/code-graph-rag-mcp/dist/index.js", "/home/er77/_work_fodler/baserow-develop"]
+  "command": "npx",
+  "args": ["@er77/code-graph-rag-mcp", "/path/to/your/codebase"]
 }'
 ```
 
@@ -47,9 +53,9 @@ gemini mcp add-json code-graph-rag '{
 ./scripts/CODEX-CORRECT-CONFIG.sh
 
 # Project-scoped MCP server in ~/.codex/config.toml
-[projects."/home/er77/_work_fodler/code-graph-rag-mcp".mcp_servers.code_graph_rag]
-command = "node"
-args = ["/home/er77/_work_fodler/code-graph-rag-mcp/dist/index.js", "/home/er77/_work_fodler/baserow-develop"]
+[projects."/path/to/your/project".mcp_servers.code_graph_rag]
+command = "npx"
+args = ["@er77/code-graph-rag-mcp", "/path/to/your/codebase"]
 transport = "stdio"
 ```
 
@@ -79,32 +85,41 @@ transport = "stdio"
 
 ## 🔍 **Key Features**
 
-### **13+ Advanced Analysis Tools**
-- **Semantic code search** with natural language
-- **Code similarity** and duplicate detection
-- **Impact analysis** for changes
-- **Refactoring suggestions** with AI
-- **Hotspot analysis** and complexity metrics
-- **Cross-language** relationship mapping
- - New: `get_graph_health`, `reset_graph`, `clean_index` (safe ops & diagnostics)
+### **🔬 Advanced Analysis Tools (13+)**
 
-### **High-Performance Architecture**
-- **100+ files/second** parsing throughput
-- **<100ms** query response time
-- **Multi-agent coordination** with resource management
-- **Hardware-accelerated** vector search (optional)
- - Automatic embedding ingestion after indexing (no manual step required)
- - AST-based hotspot summaries (precise snippets + semantic context)
+| Feature | Description | Use Case |
+|---------|-------------|----------|
+| **Semantic Search** | Natural language code search | "Find authentication functions" |
+| **Code Similarity** | Duplicate & clone detection | Identify refactoring opportunities |
+| **Impact Analysis** | Change impact prediction | Assess modification risks |
+| **AI Refactoring** | Intelligent code suggestions | Improve code quality |
+| **Hotspot Analysis** | Complexity & coupling metrics | Find problem areas |
+| **Cross-Language** | Multi-language relationships | Polyglot codebases |
+| **Graph Health** | Database diagnostics | `get_graph_health` |
+| **Safe Reset** | Clean reindexing | `reset_graph`, `clean_index` |
 
-### **Multi-Language Support (10 Languages)**
-- **Python** ✅ - Advanced syntax, async/await, decorators, magic methods, dataclasses
-- **TypeScript/JavaScript** ✅ - Full ES6+, JSX, TSX
-- **C/C++** ✅ - Functions, structs/unions/enums, classes/namespaces/templates
-- **C#** ✅ - Classes, interfaces, enums, properties, LINQ, async/await
-- **Rust** ✅ - Functions, structs, enums, traits, impls, modules, use
-- **Go** ✅ - Packages, functions, structs, interfaces, goroutines, channels
-- **Java** ✅ - Classes, interfaces, enums, records (Java 14+), generics, lambdas
-- **VBA** ✅ - Modules, subs, functions, properties, user-defined types
+### **⚡ High-Performance Architecture**
+
+| Metric | Capability | Details |
+|--------|-----------|---------|
+| **Parsing Speed** | 100+ files/second | Tree-sitter based |
+| **Query Response** | <100ms | Optimized SQLite + vector search |
+| **Agent System** | Multi-agent coordination | Resource-managed execution |
+| **Vector Search** | Hardware-accelerated (optional) | Automatic embedding ingestion |
+| **AST Analysis** | Precise code snippets | Semantic context extraction |
+
+### **🌐 Multi-Language Support (10 Languages)**
+
+| Language | Features | Support Level |
+|----------|----------|---------------|
+| **Python** | Async/await, decorators, magic methods (40+), dataclasses | ✅ Advanced (95%) |
+| **TypeScript/JavaScript** | Full ES6+, JSX, TSX, React patterns | ✅ Complete (100%) |
+| **C/C++** | Functions, structs/unions/enums, classes, namespaces, templates | ✅ Advanced (90%) |
+| **C#** | Classes, interfaces, enums, properties, LINQ, async/await | ✅ Advanced (90%) |
+| **Rust** | Functions, structs, enums, traits, impls, modules, use | ✅ Advanced (90%) |
+| **Go** | Packages, functions, structs, interfaces, goroutines, channels | ✅ Advanced (90%) |
+| **Java** | Classes, interfaces, enums, records (Java 14+), generics, lambdas | ✅ Advanced (90%) |
+| **VBA** | Modules, subs, functions, properties, user-defined types | ✅ Regex-based (80%) |
 
 ---
 
@@ -162,7 +177,55 @@ list_entity_relationships (entityName: "YourEntity", relationshipTypes: ["import
 
 ## 📋 **Changelog**
 
-### Version 2.5.0 (2025-10-06)
+### Version 2.5.4 (2025-10-06)
+
+#### 📚 **Documentation Updates**
+- **Architecture Decision Records**: Created comprehensive ADR system
+  - ADR-003: Multi-Language Expansion (10 languages)
+  - ADR-004: GraphStorage Singleton Pattern
+  - ADR-005: Python Type Enhancements
+  - ADR-INDEX: Complete ADR catalog and templates
+- **Updated Technical Docs**: System architecture, memory bank README, language support guide
+- **Corrected Dates**: Fixed version dates to October 2025
+
+### Version 2.5.3 (2025-10-06)
+
+#### 🔧 **Fixes**
+- **Suppressed deprecated dependency warning**: Added npm override for `boolean@3.2.0` (transitive dependency from optional ML package)
+- **Documented known issues**: Added Known Issues section explaining the deprecated package warning
+- **No functional changes**: Core functionality unaffected
+
+### Version 2.5.2 (2025-10-06)
+
+#### 📚 **Documentation**
+- **Enhanced README**: Added npm badges, feature tables, and language support matrix
+- **Better visualization**: Structured tables for features, architecture metrics, and capabilities
+- **Fixed examples**: Updated Gemini/Codex integration examples to use generic npx commands
+- **Corrected dates**: Fixed version release dates
+
+### Version 2.5.1 (2025-10-06)
+
+#### ✨ **Enhancements**
+- **Enhanced Python Magic Methods**: Added comprehensive type system for 40+ Python magic methods
+- **Improved Import Analysis**: Added type classification (import/from_import), module tracking, and local/external detection
+- **Better Test Infrastructure**: ESM module support with cross-platform compatibility via cross-env
+- **Granular Performance Metrics**: Enhanced metrics for relationship mapping and pattern recognition
+- **Async Pattern Detection**: Added awaitCount, yieldCount, and generator type tracking
+
+#### 🔧 **Technical Improvements**
+- Updated to TypeScript 5.9.2 for better type checking
+- Upgraded Jest to 29.7.0 with ESM support
+- Latest ML libraries (@xenova/transformers 2.17.2, onnxruntime-node 1.23.0)
+- Sponsor link added to README
+
+#### 📦 **Dependencies**
+- cross-env: ^10.1.0 (new - cross-platform environment variables)
+- @types/jest: ^29.5.14 (updated from ^29.0.0)
+- jest: ^29.7.0 (updated from ^29.0.0)
+- ts-jest: ^29.4.4 (updated from ^29.0.0)
+- typescript: ^5.9.2 (updated from ^5.0.0)
+
+### Version 2.5.0 (2025-10-05)
 
 #### ✨ **Major Features**
 - **8 New Languages**: Added comprehensive support for C#, Rust, C, C++, Go, Java, and VBA
@@ -257,6 +320,10 @@ list_entity_relationships (entityName: "YourEntity", relationshipTypes: ["import
 
 **Minimum**: Node.js 18+, 2GB RAM, Dual-core CPU
 **Recommended**: Node.js 18+, 8GB RAM, Quad-core CPU with SSD
+
+### **Known Issues**
+
+- **Deprecated `boolean@3.2.0` warning**: This is a transitive dependency from the optional `onnxruntime-node` package (used for ML embeddings). The package is deprecated but functional. The warning can be safely ignored as it doesn't affect core functionality.
 
 ---
 

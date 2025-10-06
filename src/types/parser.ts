@@ -91,7 +91,7 @@ export type MagicType =
  */
 export interface ParsedEntity {
   /** Unique identifier for the entity */
-  id: string;
+  id?: string; // Optional for backward compatibility
 
   /** Entity name (function name, class name, etc.) */
   name: string;
@@ -125,7 +125,7 @@ export interface ParsedEntity {
     | "typedef";
 
   /** File path containing this entity */
-  filePath: string;
+  filePath?: string; // Optional for backward compatibility
 
   /** Source location */
   location: {
