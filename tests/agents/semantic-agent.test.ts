@@ -89,11 +89,11 @@ jest.mock("../../semantic/code-analyzer", () => {
 }, { virtual: true });
 
 
-import { knowledgeBus } from "../../core/knowledge-bus";
-import type { AgentTask } from "../../types/agent";
-import { AgentStatus, AgentType } from "../../types/agent";
-import { SemanticTaskType } from "../../types/semantic";
-import { SemanticAgent } from "../semantic-agent";
+import { knowledgeBus } from "../../src/core/knowledge-bus";
+import type { AgentTask } from "../../src/types/agent";
+import { AgentStatus, AgentType } from "../../src/types/agent";
+import { SemanticTaskType } from "../../src/types/semantic";
+import { SemanticAgent } from "../../src/agents/semantic-agent";
 
 describe("SemanticAgent", () => {
   let agent: SemanticAgent;

@@ -32,6 +32,17 @@ npx @modelcontextprotocol/inspector add code-graph-rag \
   --command "npx" \
   --args "@er77/code-graph-rag-mcp /path/to/your/codebase"
 ```
+or
+```
+# Быстрая настройка (рекомендуется)
+  claude mcp add-json  code-graph-rag ' { 
+        "command": "npx",
+        "args": ["@er77/code-graph-rag-mcp", "/_work_fodler"],
+  "env": {
+    "MCP_TIMEOUT": "80000"
+  }
+      }
+```
 
 **Manual setup**: Add to Claude Desktop config → [See detailed instructions](docs/guides/CLAUDE_INTEGRATION.md)
 

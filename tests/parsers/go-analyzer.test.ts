@@ -4,8 +4,8 @@
  * Test suite for Go language analyzer functionality
  */
 
-import { GoAnalyzer } from "../go-analyzer";
-import { TreeSitterParser } from "../tree-sitter-parser";
+import { GoAnalyzer } from "../../src/parsers/go-analyzer";
+import { TreeSitterParser } from "../../src/parsers/tree-sitter-parser";
 
 describe("GoAnalyzer", () => {
   let parser: TreeSitterParser;

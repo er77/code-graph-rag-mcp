@@ -9,8 +9,8 @@
  */
 
 import { describe, it, expect, beforeAll } from "@jest/globals";
-import { CSharpAnalyzer } from "../src/parsers/csharp-analyzer";
-import type { TreeSitterNode } from "../src/types/parser";
+import { CSharpAnalyzer } from "../../src/parsers/csharp-analyzer";
+import type { TreeSitterNode } from "../../src/types/parser";
 
 describe("CSharpAnalyzer", () => {
   let analyzer: CSharpAnalyzer;

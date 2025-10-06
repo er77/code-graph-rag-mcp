@@ -10,8 +10,8 @@
  */
 
 import { describe, it, expect, beforeEach } from "@jest/globals";
-import { CppAnalyzer } from "../cpp-analyzer";
-import { TreeSitterParser } from "../tree-sitter-parser";
+import { CppAnalyzer } from "../../src/parsers/cpp-analyzer";
+import { TreeSitterParser } from "../../src/parsers/tree-sitter-parser";
 
 describe("CppAnalyzer", () => {
   let analyzer: CppAnalyzer;

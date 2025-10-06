@@ -9,8 +9,8 @@
  */
 
 import { describe, it, expect, beforeAll } from "@jest/globals";
-import { RustAnalyzer } from "../src/parsers/rust-analyzer";
-import type { TreeSitterNode } from "../src/types/parser";
+import { RustAnalyzer } from "../../src/parsers/rust-analyzer";
+import type { TreeSitterNode } from "../../src/types/parser";
 
 describe("RustAnalyzer", () => {
   let analyzer: RustAnalyzer;

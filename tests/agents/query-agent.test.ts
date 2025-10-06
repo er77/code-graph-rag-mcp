@@ -25,11 +25,11 @@ import Database from "better-sqlite3";
 // =============================================================================
 import { afterEach, beforeEach, describe, expect, it, jest } from "@jest/globals";
 const vi = jest;
-import { SQLiteManager } from "../../storage/sqlite-manager.js";
-import { QueryCache } from "../../query/query-cache.js";
-import { AgentStatus, type AgentTask } from "../../types/agent.js";
-import type { Entity, Relationship } from "../../types/storage.js";
-import { QueryAgent } from "../query-agent.js";
+import { SQLiteManager } from "../../src/storage/sqlite-manager.js";
+import { QueryCache } from "../../src/query/query-cache.js";
+import { AgentStatus, type AgentTask } from "../../src/types/agent.js";
+import type { Entity, Relationship } from "../../src/types/storage.js";
+import { QueryAgent } from "../../src/agents/query-agent.js";
 
 // =============================================================================
 // 2. TEST SETUP AND FIXTURES

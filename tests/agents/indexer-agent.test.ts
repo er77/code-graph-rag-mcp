@@ -15,14 +15,14 @@ import { existsSync, rmSync } from "node:fs";
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import { afterEach, beforeEach, describe, expect, jest, test } from "@jest/globals";
-import { knowledgeBus } from "../../core/knowledge-bus.js";
-import { resetCacheManager } from "../../storage/cache-manager.js";
-import { resetSQLiteManager } from "../../storage/sqlite-manager.js";
-import { AgentStatus } from "../../types/agent.js";
-import type { ParsedEntity, ParseResult } from "../../types/parser.js";
-import type { Entity, EntityChange, GraphQuery } from "../../types/storage.js";
-import { EntityType, RelationType } from "../../types/storage.js";
-import { IndexerAgent } from "../indexer-agent.js";
+import { knowledgeBus } from "../../src/core/knowledge-bus.js";
+import { resetCacheManager } from "../../src/storage/cache-manager.js";
+import { resetSQLiteManager } from "../../src/storage/sqlite-manager.js";
+import { AgentStatus } from "../../src/types/agent.js";
+import type { ParsedEntity, ParseResult } from "../../src/types/parser.js";
+import type { Entity, EntityChange, GraphQuery } from "../../src/types/storage.js";
+import { EntityType, RelationType } from "../../src/types/storage.js";
+import { IndexerAgent } from "../../src/agents/indexer-agent.js";
 
 // =============================================================================
 // 2. TEST CONFIGURATION

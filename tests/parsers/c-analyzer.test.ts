@@ -4,8 +4,8 @@
  * Test suite for C language analyzer functionality
  */
 
-import { CAnalyzer } from "../c-analyzer";
-import { TreeSitterParser } from "../tree-sitter-parser";
+import { CAnalyzer } from "../../src/parsers/c-analyzer";
+import { TreeSitterParser } from "../../src/parsers/tree-sitter-parser";
 import path from "path";
 
 describe("CAnalyzer", () => {
