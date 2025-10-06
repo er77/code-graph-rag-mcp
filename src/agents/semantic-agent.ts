@@ -138,7 +138,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
   private failureWindow: number[] = [];
   private debugMode = process.env.SEMANTIC_AGENT_DEBUG === 'true';
 
-  private metrics: SemanticMetrics = {
+  private semanticMetrics: SemanticMetrics = {
     embeddingsGenerated: 0,
     searchesPerformed: 0,
     avgEmbeddingTime: 0,
@@ -188,9 +188,9 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
     this.subscribeToKnowledgeBus();
 
     // Update initial metrics
-    this.metrics.vectorsStored = await this.vectorStore.count();
+    this.semanticMetrics.vectorsStored = await this.vectorStore.count();
 
-    console.log(`[${this.id}] Semantic agent initialized with ${this.metrics.vectorsStored} vectors`);
+    console.log(`[${this.id}] Semantic agent initialized with ${this.semanticMetrics.vectorsStored} vectors`);
   }
 
   // TASK-004B: Circuit breaker implementation methods
@@ -384,7 +384,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
 
     const embedding = await this.generateCodeEmbedding(payload.code || "");
 
-    this.metrics.embeddingsGenerated++;
+    this.semanticMetrics.embeddingsGenerated++;
     this.updateEmbeddingTime(Date.now() - startTime);
 
     return embedding;
@@ -395,7 +395,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
 
     const result = await this.semanticSearch(payload.query || "", payload.limit);
 
-    this.metrics.searchesPerformed++;
+    this.semanticMetrics.searchesPerformed++;
     this.updateSearchTime(Date.now() - startTime);
 
     return result;
@@ -439,10 +439,8 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
         console.warn(`[${this.id}] TASK-004B: Semantic search fallback for query: ${query}`);
         return {
           results: [],
-          totalResults: 0,
-          searchTime: 0,
           query,
-          degraded: true, // Indicate degraded service
+          processingTime: 0,
         } as SemanticResult;
       },
       "semanticSearch"
@@ -664,8 +662,8 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
     await this.vectorStore.insertBatch(vectorEmbeddings);
 
     // Update metrics
-    this.metrics.embeddingsGenerated += embeddings.length;
-    this.metrics.vectorsStored = await this.vectorStore.count();
+    this.semanticMetrics.embeddingsGenerated += embeddings.length;
+    this.semanticMetrics.vectorsStored = await this.vectorStore.count();
 
     // Publish completion event
     knowledgeBus.publish("semantic:embeddings:complete", { count: embeddings.length }, this.id);
@@ -694,20 +692,20 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
   // Metrics helpers
 
   private updateEmbeddingTime(time: number): void {
-    const prev = this.metrics.avgEmbeddingTime;
-    const count = this.metrics.embeddingsGenerated;
-    this.metrics.avgEmbeddingTime = (prev * (count - 1) + time) / count;
+    const prev = this.semanticMetrics.avgEmbeddingTime;
+    const count = this.semanticMetrics.embeddingsGenerated;
+    this.semanticMetrics.avgEmbeddingTime = (prev * (count - 1) + time) / count;
   }
 
   private updateSearchTime(time: number): void {
-    const prev = this.metrics.avgSearchTime;
-    const count = this.metrics.searchesPerformed;
-    this.metrics.avgSearchTime = (prev * (count - 1) + time) / count;
+    const prev = this.semanticMetrics.avgSearchTime;
+    const count = this.semanticMetrics.searchesPerformed;
+    this.semanticMetrics.avgSearchTime = (prev * (count - 1) + time) / count;
   }
 
   private updateCacheHitRate(hit: boolean): void {
     const cacheStats = this.cache.getStats();
-    this.metrics.cacheHitRate = cacheStats.hitRate;
+    this.semanticMetrics.cacheHitRate = cacheStats.hitRate;
   }
 
   /**
