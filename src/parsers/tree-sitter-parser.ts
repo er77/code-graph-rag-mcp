@@ -28,6 +28,9 @@ import { CSharpAnalyzer } from "./csharp-analyzer.js";
 import { RustAnalyzer } from "./rust-analyzer.js";
 import { CAnalyzer } from "./c-analyzer.js";
 import { CppAnalyzer } from "./cpp-analyzer.js";
+import { GoAnalyzer } from "./go-analyzer.js";
+import { JavaAnalyzer } from "./java-analyzer.js";
+import { VbaAnalyzer } from "./vba-analyzer.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -46,6 +49,8 @@ const LANGUAGE_WASM_PATHS: Record<SupportedLanguage, string> = {
   cpp: "tree-sitter-cpp.wasm",
   csharp: "tree-sitter-c-sharp.wasm",
   rust: "tree-sitter-rust.wasm",
+  go: "tree-sitter-go.wasm",
+  java: "tree-sitter-java.wasm",
 };
 
 // =============================================================================
@@ -146,6 +151,9 @@ export class TreeSitterParser {
   private rustAnalyzer = new RustAnalyzer();
   private cAnalyzer = new CAnalyzer();
   private cppAnalyzer = new CppAnalyzer();
+  private goAnalyzer = new GoAnalyzer();
+  private javaAnalyzer = new JavaAnalyzer();
+  private vbaAnalyzer = new VbaAnalyzer();
 
   constructor() {
     // TASK-001: Initialize LRU cache with size-based eviction
@@ -231,6 +239,33 @@ export class TreeSitterParser {
       };
     }
 
+    // Special handling for VBA (no tree-sitter parser available)
+    if (language === "vba") {
+      const vbaAnalysis = await this.vbaAnalyzer.analyze(content, filePath);
+
+      // Cache the result
+      this.cache.set(cacheKey, {
+        tree: null as any, // No tree for VBA
+        entities: vbaAnalysis.entities,
+        relationships: vbaAnalysis.relationships || [],
+      });
+
+      const parseTimeMs = Date.now() - startTime;
+      console.log(
+        `[TreeSitterParser] VBA analysis: ${vbaAnalysis.entities.length} entities, ${vbaAnalysis.relationships.length} relationships`,
+      );
+
+      return {
+        filePath,
+        language,
+        entities: vbaAnalysis.entities,
+        contentHash,
+        timestamp: Date.now(),
+        parseTimeMs,
+        fromCache: false,
+      };
+    }
+
     // Set language for parser
     const lang = this.languages.get(language);
     if (!lang) {
@@ -297,6 +332,26 @@ export class TreeSitterParser {
       // Log C++ analysis metrics
       console.log(
         `[TreeSitterParser] C++ analysis: ${entities.length} entities, ${relationships.length} relationships`,
+      );
+    } else if (language === "go") {
+      // Use Go analyzer for comprehensive analysis
+      const goAnalysis = await this.goAnalyzer.analyze(tree.rootNode, filePath);
+      entities = goAnalysis.entities;
+      relationships = goAnalysis.relationships;
+
+      // Log Go analysis metrics
+      console.log(
+        `[TreeSitterParser] Go analysis: ${entities.length} entities, ${relationships.length} relationships`,
+      );
+    } else if (language === "java") {
+      // Use Java analyzer for comprehensive analysis
+      const javaAnalysis = await this.javaAnalyzer.analyze(tree.rootNode, filePath);
+      entities = javaAnalysis.entities;
+      relationships = javaAnalysis.relationships;
+
+      // Log Java analysis metrics
+      console.log(
+        `[TreeSitterParser] Java analysis: ${entities.length} entities, ${relationships.length} relationships`,
       );
     } else {
       // Use standard extraction for JavaScript/TypeScript and other languages

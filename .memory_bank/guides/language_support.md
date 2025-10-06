@@ -3,7 +3,7 @@
 ## Overview
 The code-graph-rag-mcp system provides comprehensive parsing and analysis for multiple programming languages through tree-sitter parsers and language-specific analyzers.
 
-## Supported Languages (8 Total)
+## Supported Languages (10 Total)
 
 ### Core Languages
 1. **JavaScript** - Full support via tree-sitter
@@ -17,6 +17,11 @@ The code-graph-rag-mcp system provides comprehensive parsing and analysis for mu
 ### Phase 2 Languages (TASK-20251005191500)
 6. **C** - Full support with c-analyzer.ts and circuit breakers
 7. **C++** - Advanced support with cpp-analyzer.ts, templates, and circuit breakers
+
+### Phase 3 Languages (TASK-20250105-VBA-JAVA-GO-PHASE2)
+8. **Go** - Full support with go-analyzer.ts, goroutines, channels, and interfaces
+9. **Java** - Comprehensive support with java-analyzer.ts, generics, annotations, and records
+10. **VBA** - Regex-based support with vba-analyzer.ts (fallback parser)
 
 ## C# Language Features
 
@@ -298,6 +303,43 @@ console.log(`Found ${result.relationships.length} relationships`);
 console.log(`Identified ${result.patterns.length} patterns`);
 ```
 
+### Analyzing Go Code
+```typescript
+import { GoAnalyzer } from "./go-analyzer";
+
+const analyzer = new GoAnalyzer();
+const result = await analyzer.analyze(treeNode, "main.go");
+
+console.log(`Found ${result.entities.length} entities`);
+console.log(`Found ${result.relationships.length} relationships`);
+// Includes goroutines, channels, and interface satisfaction
+```
+
+### Analyzing Java Code
+```typescript
+import { JavaAnalyzer } from "./java-analyzer";
+
+const analyzer = new JavaAnalyzer();
+const result = await analyzer.analyze(treeNode, "MyClass.java");
+
+console.log(`Found ${result.entities.length} entities`);
+console.log(`Found ${result.relationships.length} relationships`);
+// Includes generics, annotations, records (Java 14+)
+```
+
+### Analyzing VBA Code
+```typescript
+import { VbaAnalyzer } from "./vba-analyzer";
+
+const analyzer = new VbaAnalyzer();
+// Note: VBA analyzer works directly on content, not tree-sitter nodes
+const result = await analyzer.analyze(content, "Module1.bas");
+
+console.log(`Found ${result.entities.length} entities`);
+console.log(`Found ${result.relationships.length} relationships`);
+// Regex-based parsing with ~80% accuracy
+```
+
 ## Future Enhancements
 
 ### Planned C# Enhancements
@@ -311,6 +353,24 @@ console.log(`Identified ${result.patterns.length} patterns`);
 - Cargo.toml dependency analysis
 - Trait coherence checking
 - Ownership flow analysis
+
+### Planned Go Enhancements
+- go.mod dependency analysis
+- Context propagation tracking
+- Interface satisfaction validation
+- Goroutine/channel flow analysis
+
+### Planned Java Enhancements
+- Full generics with wildcards
+- Spring framework annotation processing
+- Maven/Gradle dependency analysis
+- Lambda expression flow tracking
+
+### Planned VBA Enhancements
+- COM object analysis
+- Excel/Word/Access specific APIs
+- Tree-sitter parser development
+- Improved event handler detection
 
 ## Contributing
 
@@ -326,6 +386,12 @@ To add support for a new language:
 
 - [Tree-sitter C# Grammar](https://github.com/tree-sitter/tree-sitter-c-sharp)
 - [Tree-sitter Rust Grammar](https://github.com/tree-sitter/tree-sitter-rust)
+- [Tree-sitter Go Grammar](https://github.com/tree-sitter/tree-sitter-go)
+- [Tree-sitter Java Grammar](https://github.com/tree-sitter/tree-sitter-java)
 - [C# Language Specification](https://docs.microsoft.com/en-us/dotnet/csharp/language-reference/)
 - [Rust Language Reference](https://doc.rust-lang.org/reference/)
+- [Go Language Specification](https://go.dev/ref/spec)
+- [Java Language Specification](https://docs.oracle.com/javase/specs/)
+- [VBA Language Reference](https://docs.microsoft.com/en-us/office/vba/api/overview/)
 - ADR-002: C# and Rust Language Support Implementation
+- ADR-003: Go, Java, and VBA Language Support Implementation

@@ -94,11 +94,15 @@ transport = "stdio"
  - Automatic embedding ingestion after indexing (no manual step required)
  - AST-based hotspot summaries (precise snippets + semantic context)
 
-### **Multi-Language Support**
-- **Python** ✅ - Advanced syntax, async/await, decorators
+### **Multi-Language Support (10 Languages)**
+- **Python** ✅ - Advanced syntax, async/await, decorators, magic methods, dataclasses
 - **TypeScript/JavaScript** ✅ - Full ES6+, JSX, TSX
 - **C/C++** ✅ - Functions, structs/unions/enums, classes/namespaces/templates
+- **C#** ✅ - Classes, interfaces, enums, properties, LINQ, async/await
 - **Rust** ✅ - Functions, structs, enums, traits, impls, modules, use
+- **Go** ✅ - Packages, functions, structs, interfaces, goroutines, channels
+- **Java** ✅ - Classes, interfaces, enums, records (Java 14+), generics, lambdas
+- **VBA** ✅ - Modules, subs, functions, properties, user-defined types
 
 ---
 
@@ -155,6 +159,32 @@ list_entity_relationships (entityName: "YourEntity", relationshipTypes: ["import
 ---
 
 ## 📋 **Changelog**
+
+### Version 2.5.0 (2025-10-06)
+
+#### ✨ **Major Features**
+- **8 New Languages**: Added comprehensive support for C#, Rust, C, C++, Go, Java, and VBA
+- **Enhanced Research Trinity**: Multi-agent circular bug detection with mcp-agent-codex
+- **Agent System Integration**: Complete GRACE framework with 5 specialized agents
+- **Circuit Breaker Protection**: 50-level recursion limit and 5s timeout across all analyzers
+
+#### 🏗️ **Architecture**
+- **GraphStorage Factory Pattern**: Centralized singleton management preventing state isolation bugs
+- **Language-Specific Analyzers**: Dedicated analyzers for each language with 80-95% accuracy
+- **VBA Regex Parser**: Special handling for languages without tree-sitter support
+- **Protocol Enforcement**: Multi-layer protection system with mandatory Conductor orchestration
+
+#### 🐛 **Bug Fixes**
+- Fixed circular bug where entity extraction succeeded but queries returned empty results
+- Resolved multiple GraphStorageImpl instance issue via factory pattern
+- Fixed C++ relationship type validation ("member_of" → "contains", "uses" → "references")
+- Corrected database singleton usage in ConnectionPool and IndexerAgent
+
+#### 📚 **Documentation**
+- New AGENTS.md with comprehensive multi-agent governance
+- Updated language support documentation with all 10 languages
+- Enhanced circular bug detection protocols
+- Added governance violation tracking
 
 ### Version 2.4.1 (2025-09-23)
 

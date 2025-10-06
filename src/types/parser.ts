@@ -30,6 +30,9 @@ export const SUPPORTED_LANGUAGES = [
   "cpp",
   "csharp",
   "rust",
+  "go",
+  "java",
+  "vba",
 ] as const;
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 
@@ -41,6 +44,9 @@ export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
  * Represents a parsed entity from the source code
  */
 export interface ParsedEntity {
+  /** Unique identifier for the entity */
+  id: string;
+
   /** Entity name (function name, class name, etc.) */
   name: string;
 
@@ -68,7 +74,12 @@ export interface ParsedEntity {
     | "protocol"
     | "abstract_method"
     | "class_method"
-    | "static_method";
+    | "static_method"
+    | "module"
+    | "typedef";
+
+  /** File path containing this entity */
+  filePath: string;
 
   /** Source location */
   location: {
@@ -151,6 +162,9 @@ export interface ParsedEntity {
     targetFile?: string;
     metadata?: Record<string, any>;
   }>;
+
+  /** Generic metadata for language-specific properties */
+  metadata?: Record<string, any>;
 }
 
 /**
@@ -386,10 +400,10 @@ export interface EntityRelationship {
   to: string;
 
   /** Relationship type */
-  type: "inherits" | "implements" | "overrides" | "calls" | "imports" | "decorates" | "contains" | "references";
+  type: "inherits" | "implements" | "overrides" | "calls" | "imports" | "decorates" | "contains" | "references" | "embeds" | "member_of";
 
   /** Source file path */
-  sourceFile: string;
+  sourceFile?: string;
 
   /** Target file path (for cross-file relationships) */
   targetFile?: string;

@@ -430,7 +430,7 @@ export class CppAnalyzer {
     relationships.push({
       from: fullName,
       to: className,
-      type: "member_of"
+      type: "contains"
     });
   }
 
@@ -478,7 +478,7 @@ export class CppAnalyzer {
     relationships.push({
       from: fullName,
       to: className,
-      type: "member_of"
+      type: "contains"
     });
   }
 
@@ -521,7 +521,7 @@ export class CppAnalyzer {
       relationships.push({
         from: fullName,
         to: namespace,
-        type: "member_of"
+        type: "contains"
       });
     }
   }
@@ -633,7 +633,7 @@ export class CppAnalyzer {
         relationships.push({
           from: namespace,
           to: targetName,
-          type: "uses"
+          type: "references"
         });
       }
     }
@@ -688,7 +688,7 @@ export class CppAnalyzer {
             relationships.push({
               from: valueName,
               to: fullName,
-              type: "member_of"
+              type: "contains"
             });
           }
         }

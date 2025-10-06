@@ -74,3 +74,58 @@
 - Halt implementation if circular bugs detected
 
 ---
+
+## TASK-20250105-VBA-JAVA-GO
+**Status**: COMPLETED
+**Assigned To**: Research Trinity → dev-agent
+**Description**: Add VBA, Java, and Go Language Support to Code Graph RAG MCP
+**Started**: 2025-01-05
+**Method**: Method 5 - Phased Implementation with Circuit Breakers and Research Trinity
+**Complexity**: 7/10
+
+### Implementation Phases:
+
+#### Phase 0: Research Trinity Analysis (CURRENT)
+**Assigned To**: Research Trinity (Dora, mcp-agent-codex, mcp-agent-gemini)
+- Research tree-sitter support for VBA, Java, Go
+- Analyze successful implementations in other projects
+- Identify potential challenges and solutions
+- Design parser strategies for each language
+- Create comprehensive implementation blueprint
+
+#### Phase 1: System Verification
+- Verify existing 7 languages working correctly
+- Establish performance baseline metrics
+- Check GraphStorage stability
+- Prepare rollback checkpoints
+
+#### Phase 2: Go Language Support
+- Install tree-sitter-go parser
+- Create src/parsers/go-analyzer.ts
+- Extract entities (packages, functions, structs, interfaces, channels)
+- Extract relationships (imports, embedding, interface satisfaction)
+- Circuit breaker: >90% accuracy required
+
+#### Phase 3: Java Language Support
+- Install tree-sitter-java parser
+- Create src/parsers/java-analyzer.ts
+- Extract entities (classes, interfaces, methods, generics)
+- Extract relationships (inheritance, implementation, imports)
+- Circuit breaker: >85% accuracy required
+
+#### Phase 4: VBA Language Support
+- Evaluate tree-sitter-vba availability
+- Implement fallback parser if needed (regex/custom)
+- Create src/parsers/vba-analyzer.ts
+- Extract entities (modules, subs, functions, properties)
+- Extract relationships (calls, COM references)
+- Circuit breaker: >75% accuracy required
+
+### Success Criteria:
+- All three languages parsing successfully
+- Entity extraction accuracy meets thresholds
+- No regression in existing 7 languages
+- Comprehensive test coverage
+- Complete documentation in Memory Bank
+
+---
