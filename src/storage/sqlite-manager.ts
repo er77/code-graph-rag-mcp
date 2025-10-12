@@ -13,8 +13,8 @@
  */
 
 import { existsSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
@@ -57,11 +57,7 @@ export interface DatabaseInfo {
 // 4. SQLITE MANAGER IMPLEMENTATION
 // =============================================================================
 
-function wrapWithTiming<F extends (...a: any[]) => any>(
-  fn: F,
-  ctx: any,
-  record: (ms: number) => void
-): F {
+function wrapWithTiming<F extends (...a: any[]) => any>(fn: F, ctx: any, record: (ms: number) => void): F {
   return ((...a: any[]) => {
     const start = Date.now();
     const res = (fn as any).apply(ctx, a);
@@ -94,6 +90,9 @@ export class SQLiteManager {
       console.warn("[SQLiteManager] Database already initialized");
       return;
     }
+
+    // Log database path for debugging
+    console.log(`[SQLiteManager] Configured database path: ${this.config.path}`);
 
     // Ensure directory exists
     if (!this.config.memory && !this.config.readonly) {
@@ -171,18 +170,17 @@ export class SQLiteManager {
   /**
    * Prepare a statement with timing
    */
-  prepare<
-  BindParams extends unknown[] | Record<string, unknown> = unknown[],
-  Result = unknown
->(sql: string): Database.Statement<BindParams, Result> {
-  const db = this.getConnection();
-  const statement = db.prepare<BindParams, Result>(sql);
+  prepare<BindParams extends unknown[] | Record<string, unknown> = unknown[], Result = unknown>(
+    sql: string,
+  ): Database.Statement<BindParams, Result> {
+    const db = this.getConnection();
+    const statement = db.prepare<BindParams, Result>(sql);
 
-  statement.run = wrapWithTiming(statement.run, statement, (ms) => this.recordQueryTime(ms)) as typeof statement.run;
-  statement.get = wrapWithTiming(statement.get, statement, (ms) => this.recordQueryTime(ms)) as typeof statement.get;
-  statement.all = wrapWithTiming(statement.all, statement, (ms) => this.recordQueryTime(ms)) as typeof statement.all;
-  return statement;
-}
+    statement.run = wrapWithTiming(statement.run, statement, (ms) => this.recordQueryTime(ms)) as typeof statement.run;
+    statement.get = wrapWithTiming(statement.get, statement, (ms) => this.recordQueryTime(ms)) as typeof statement.get;
+    statement.all = wrapWithTiming(statement.all, statement, (ms) => this.recordQueryTime(ms)) as typeof statement.all;
+    return statement;
+  }
   /**
    * Execute a transaction
    */

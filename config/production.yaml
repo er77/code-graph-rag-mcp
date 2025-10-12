@@ -16,6 +16,10 @@ mcp:
     fallbackToMemory: true          # Always have fallback for reliability
     # apiKey configured via environment variable MCP_EMBEDDING_API_KEY
     
+    # OpenAI specific configuration
+    openai:
+      maxBatchSize: 256
+    
   server:
     host: "0.0.0.0"     # Accept connections from any interface
     port: 8080          # Standard HTTP port for containers
@@ -24,6 +28,8 @@ mcp:
   agents:
     maxConcurrent: 10   # Higher concurrency for production
     defaultTimeout: 30000  # 30 seconds for complex operations
+    useParser: true     # Enable ParserAgent for AST parsing (MCP_USE_PARSER)
+    devIndexBatch: 100  # Batch size for file processing (MCP_DEV_INDEX_BATCH)
 
 # Database Configuration (Production Optimized)
 database:
@@ -67,6 +73,15 @@ parser:
     enabled: true
     cacheSize: 5000           # Larger cache for production workloads
     cacheTTL: 1800000         # 30 minutes cache TTL
+
+# Indexer Configuration
+indexer:
+  maxConcurrency: 2       # Database write operations
+  memoryLimit: 512        # MB for graph operations
+  priority: 7
+  batchSize: 1000
+  cacheSize: 52428800     # 50MB cache (in bytes)
+  cacheTTL: 300000        # 5 minutes (in ms)
 
 # Performance Configuration (Production)
 performance:

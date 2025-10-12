@@ -14,9 +14,16 @@ import { createHash } from "node:crypto";
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import { promises as fs } from "node:fs";
-import { LRUCache } from "lru-cache";
 import { extname } from "node:path";
-import type { CacheEntry, FileChange, ParseResult, ParserOptions, ParserStats, SupportedLanguage } from "../types/parser.js";
+import { LRUCache } from "lru-cache";
+import type {
+  CacheEntry,
+  FileChange,
+  ParseResult,
+  ParserOptions,
+  ParserStats,
+  SupportedLanguage,
+} from "../types/parser.js";
 import { TreeSitterParser } from "./tree-sitter-parser.js";
 
 // =============================================================================
@@ -153,11 +160,16 @@ export class IncrementalParser {
 
       this.stats.cacheMisses++;
 
-      // Parse the file
-      let result = await timeout(
-        this.parser.parse(filePath, content, contentHash),
-        options.timeoutMs || DEFAULT_TIMEOUT_MS,
-      );
+      let result: ParseResult;
+      try {
+        result = await timeout(
+          this.parser.parse(filePath, content, contentHash),
+          options.timeoutMs || DEFAULT_TIMEOUT_MS,
+        );
+      } catch (parseError) {
+        console.error(`[IncrementalParser] Parser.parse failed for ${filePath}:`, parseError);
+        throw parseError;
+      }
 
       // Fallback: if the parser returned no entities and no errors (common in tests with mock parser),
       // do a lightweight regex-based extraction to satisfy entity expectations.
@@ -431,7 +443,11 @@ export class IncrementalParser {
    * Get parser statistics
    */
   getStats(): ParserStats {
-    return { ...this.stats };
+    const parserStats = this.parser.getStats();
+    return {
+      ...this.stats,
+      ...parserStats,
+    };
   }
 
   /**

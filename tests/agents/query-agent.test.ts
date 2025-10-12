@@ -19,17 +19,19 @@
  *  - 2025-01-14: Created by Dev-Agent - TASK-002: Initial test suite
  */
 
-import Database from "better-sqlite3";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import { afterEach, beforeEach, describe, expect, it, jest } from "@jest/globals";
+import Database from "better-sqlite3";
+
 const vi = jest;
-import { SQLiteManager } from "../../src/storage/sqlite-manager.js";
+
+import { QueryAgent } from "../../src/agents/query-agent.js";
 import { QueryCache } from "../../src/query/query-cache.js";
+import { SQLiteManager } from "../../src/storage/sqlite-manager.js";
 import { AgentStatus, type AgentTask } from "../../src/types/agent.js";
 import type { Entity, Relationship } from "../../src/types/storage.js";
-import { QueryAgent } from "../../src/agents/query-agent.js";
 
 // =============================================================================
 // 2. TEST SETUP AND FIXTURES
@@ -236,10 +238,10 @@ describe("QueryAgent", () => {
     it("should get entity relationships", async () => {
       const relationships = await queryAgent.getRelationships("e1");
       expect(relationships).toHaveLength(2); // e1->e2 and e5->e1
-    
+
       const outgoing = relationships.filter((r) => r.fromId === "e1");
       expect(outgoing).toHaveLength(1);
-      
+
       const firstOutgoing = outgoing[0];
       if (firstOutgoing) {
         expect(firstOutgoing.toId).toBe("e2");
@@ -266,11 +268,11 @@ describe("QueryAgent", () => {
     it("should find path between entities", async () => {
       const path = await queryAgent.findPath("e1", "e4");
       expect(path).toBeDefined();
-      
+
       if (path) {
         expect(path.nodes.length).toBeGreaterThan(0);
         expect(path.nodes[0]?.id).toBe("e1");
-        
+
         const lastNode = path.nodes[path.nodes.length - 1];
         if (lastNode) {
           expect(lastNode.id).toBe("e4");
@@ -316,7 +318,7 @@ describe("QueryAgent", () => {
     it("should analyze hotspots", async () => {
       const hotspots = await queryAgent.analyzeHotspots();
       expect(Array.isArray(hotspots)).toBe(true);
-    
+
       if (hotspots.length > 0) {
         const hotspot = hotspots[0];
         if (hotspot) {
@@ -392,9 +394,9 @@ describe("QueryAgent", () => {
 
     it("should achieve >70% cache hit rate after warmup", async () => {
       await (queryAgent as any).cache.clear();
-      
+
       const uniqueIds = ["e1", "e2", "e3"];
-      
+
       // cache misses
       for (const id of uniqueIds) {
         await queryAgent.getEntity(id);
@@ -562,11 +564,11 @@ describe("QueryAgent Benchmarks", () => {
     const startTime = performance.now();
     const entities = await (queryAgent as any).listEntities({ type: "function" as any } as any);
     const duration = performance.now() - startTime;
-  
+
     expect(entities.length).toBeGreaterThanOrEqual(100);
     expect(duration).toBeLessThan(500);
   });
-  
+
   it("should handle deep graph traversal", async () => {
     const startTime = performance.now();
     const duration = performance.now() - startTime;

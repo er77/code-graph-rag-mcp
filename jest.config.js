@@ -2,14 +2,16 @@
 export default {
   preset: "ts-jest/presets/default-esm",
   testEnvironment: "node",
+  clearMocks: true,
+  resetMocks: true,
+  restoreMocks: true,
+  resetModules: true,
   extensionsToTreatAsEsm: [".ts"],
   moduleNameMapper: {
     "^\\.{1,2}/semantic/(.*)\\.js$": "<rootDir>/src/semantic/$1.ts",
     "^(\\.{1,2}/.*)\\.js$": "$1",
     "^nanoid$": "<rootDir>/src/__mocks__/nanoid.cjs",
-    "^web-tree-sitter$": "<rootDir>/src/__mocks__/web-tree-sitter.cjs",
-    "^p-limit$": "<rootDir>/src/__mocks__/p-limit.cjs"
-    ,
+    "^p-limit$": "<rootDir>/src/__mocks__/p-limit.cjs",
     ".*/connection-pool\\.js$": "<rootDir>/src/__mocks__/connection-pool.cjs",
   },
   transform: {
@@ -28,7 +30,9 @@ export default {
   verbose: true,
   setupFilesAfterEnv: ["<rootDir>/jest.setup.js"],
   maxWorkers: 1,
+  testTimeout: 30000,
   detectOpenHandles: false,
   testTimeout: 10000,
   forceExit: true,
+  silent: false,
 };

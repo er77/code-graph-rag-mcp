@@ -4,23 +4,22 @@
  * and discovering relationships that are delegated by the Conductor
  */
 
-import { BaseAgent } from "./base.js";
-import { AgentTask, AgentType, AgentMessage } from "../types/agent.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
+import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
+import { BaseAgent } from "./base.js";
 
 export class DoraAgent extends BaseAgent {
   constructor(_agentId?: string) {
-    super(AgentType.DORA, { // Use DORA type for research/exploration agent
+    super(AgentType.DORA, {
+      // Use DORA type for research/exploration agent
       maxConcurrency: 2,
       memoryLimit: 128, // MB
       cpuAffinity: undefined,
-      priority: 6
+      priority: 6,
     });
-
   }
 
   protected async onInitialize(): Promise<void> {
-
     // Subscribe to research task events
     knowledgeBus.subscribe(this.id, "task:research", async (entry: KnowledgeEntry) => {
       const data = entry.data as { targetAgent?: string; taskId?: string; priority?: number; [k: string]: unknown };
@@ -41,12 +40,14 @@ export class DoraAgent extends BaseAgent {
 
   protected canProcessTask(task: AgentTask): boolean {
     // DoraAgent can handle research, exploration, documentation, and pattern discovery tasks
-    return task.type === "research" ||
-           task.type === "exploration" ||
-           task.type === "documentation" ||
-           task.type === "pattern-discovery" ||
-           task.type === "query" ||
-           task.type === "dora";
+    return (
+      task.type === "research" ||
+      task.type === "exploration" ||
+      task.type === "documentation" ||
+      task.type === "pattern-discovery" ||
+      task.type === "query" ||
+      task.type === "dora"
+    );
   }
 
   protected async handleMessage(message: AgentMessage): Promise<void> {
@@ -82,7 +83,7 @@ export class DoraAgent extends BaseAgent {
 
   private async handleResearchTask(task: AgentTask): Promise<unknown> {
     const payload = task.payload as any;
-    console.log(`[DoraAgent ${this.id}] Researching: ${payload.description || 'best practices'}`);
+    console.log(`[DoraAgent ${this.id}] Researching: ${payload.description || "best practices"}`);
 
     // Simulate research process
     const researchResult = {
@@ -105,18 +106,14 @@ export class DoraAgent extends BaseAgent {
     };
 
     // Publish research completed event (topic, data, source)
-    knowledgeBus.publish(
-      "research:completed",
-      researchResult,
-      this.id
-    );
+    knowledgeBus.publish("research:completed", researchResult, this.id);
 
     return researchResult;
   }
 
   private async handleExplorationTask(task: AgentTask): Promise<unknown> {
     const payload = task.payload as any;
-    console.log(`[DoraAgent ${this.id}] Exploring codebase for: ${payload.target || 'patterns'}`);
+    console.log(`[DoraAgent ${this.id}] Exploring codebase for: ${payload.target || "patterns"}`);
 
     return {
       status: "completed",
@@ -140,7 +137,7 @@ export class DoraAgent extends BaseAgent {
 
   private async handleDocumentationTask(task: AgentTask): Promise<unknown> {
     const payload = task.payload as any;
-    console.log(`[DoraAgent ${this.id}] Documenting: ${payload.target || 'implementation'}`);
+    console.log(`[DoraAgent ${this.id}] Documenting: ${payload.target || "implementation"}`);
 
     return {
       status: "completed",
@@ -168,7 +165,7 @@ export class DoraAgent extends BaseAgent {
 
   private async handlePatternDiscoveryTask(task: AgentTask): Promise<unknown> {
     const payload = task.payload as any;
-    console.log(`[DoraAgent ${this.id}] Discovering patterns in: ${payload.scope || 'codebase'}`);
+    console.log(`[DoraAgent ${this.id}] Discovering patterns in: ${payload.scope || "codebase"}`);
 
     return {
       status: "completed",

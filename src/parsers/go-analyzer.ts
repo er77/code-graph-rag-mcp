@@ -22,11 +22,7 @@
  * pattern from C++ analyzer with Go-specific adaptations.
  */
 
-import type {
-  ParsedEntity,
-  TreeSitterNode,
-  EntityRelationship,
-} from "../types/parser.js";
+import type { EntityRelationship, ParsedEntity, TreeSitterNode } from "../types/parser.js";
 
 // Circuit breaker constants
 const MAX_RECURSION_DEPTH = 50;
@@ -45,6 +41,21 @@ export class GoAnalyzer {
   private parseStartTime = 0;
   private currentPackage = "";
 
+  
+  private isExported(name?: string): boolean {
+    return !!name && /^[A-Z]/.test(name);
+  }
+
+  
+  private collectIdentifiersFromNameField(nameField: TreeSitterNode | null): string[] {
+    if (!nameField) return [];
+    if (nameField.type === "identifier") return [nameField.text];
+    if (nameField.type === "identifier_list") {
+      return nameField.namedChildren.filter((c) => c.type === "identifier").map((c) => c.text);
+    }
+    return [];
+  }
+
   /**
    * Helper: Convert tree-sitter position to ParsedEntity location
    */
@@ -53,13 +64,13 @@ export class GoAnalyzer {
       start: {
         line: node.startPosition.row + 1,
         column: node.startPosition.column,
-        index: node.startIndex
+        index: node.startIndex,
       },
       end: {
         line: node.endPosition.row + 1,
         column: node.endPosition.column,
-        index: node.endIndex
-      }
+        index: node.endIndex,
+      },
     };
   }
 
@@ -68,7 +79,7 @@ export class GoAnalyzer {
    */
   async analyze(
     rootNode: TreeSitterNode,
-    filePath: string
+    filePath: string,
   ): Promise<{ entities: ParsedEntity[]; relationships: EntityRelationship[] }> {
     this.resetState();
 
@@ -123,7 +134,7 @@ export class GoAnalyzer {
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
-    parentContext?: string
+    parentContext?: string,
   ): void {
     this.recursionDepth++;
     this.checkCircuitBreakers();
@@ -140,7 +151,7 @@ export class GoAnalyzer {
           }
           break;
 
-        case "package_clause":
+        case "package_clause": {
           // Extract package declaration
           const packageName = this.getPackageName(node);
           if (packageName) {
@@ -152,11 +163,12 @@ export class GoAnalyzer {
               filePath,
               location: this.getNodeLocation(node),
               metadata: {
-                isPackage: true
-              }
+                isPackage: true,
+              },
             });
           }
           break;
+        }
 
         case "import_declaration":
           // Handle imports
@@ -206,26 +218,106 @@ export class GoAnalyzer {
    * Extract package name from package clause
    */
   private getPackageName(node: TreeSitterNode): string | null {
+    
     const identifierNode = node.childForFieldName("name");
-    return identifierNode?.text || null;
+    if (identifierNode && typeof identifierNode.text === "string" && identifierNode.text.length) {
+      return identifierNode.text;
+    }
+
+    
+    const candNamed = node.namedChildren.find((c) => c.type === "identifier");
+    if (candNamed && typeof candNamed.text === "string" && candNamed.text.length) {
+      return candNamed.text;
+    }
+
+    
+    const candAny = node.children.find((c) => c.type === "identifier");
+    if (candAny && typeof candAny.text === "string" && candAny.text.length) {
+      return candAny.text;
+    }
+
+    
+    const m = /\bpackage\s+([A-Za-z_]\w*)/.exec(node.text);
+    if (m && m[1] !== undefined) {
+      return m[1];
+    }
+    return null;
+  }
+
+  /**
+   * Find all descendants of a given type (safe across implementations)
+   */
+  private findDescendantsByType(node: TreeSitterNode, type: string): TreeSitterNode[] {
+    if (typeof (node as any).descendantsOfType === "function") {
+      try {
+        return node.descendantsOfType(type) || [];
+      } catch {}
+    }
+    const results: TreeSitterNode[] = [];
+    const stack: TreeSitterNode[] = [node];
+    while (stack.length) {
+      const n = stack.pop()!;
+      if (n.type === type) results.push(n);
+      for (let i = 0; i < n.namedChildCount; i++) {
+        const ch = n.namedChild(i);
+        if (ch) stack.push(ch);
+      }
+    }
+    return results;
+  }
+
+  /**
+   * Extract string literal content from node (strip quotes and backticks)
+   */
+  private getStringLiteralFromNode(node: TreeSitterNode): string | null {
+    const pathField = node.childForFieldName("path");
+    const txt =
+      pathField?.text ??
+      node.namedChildren.find((c) => c.type === "interpreted_string_literal" || c.type === "raw_string_literal")?.text;
+
+    if (!txt) return null;
+    // remove leading/trailing quotes/backticks
+    return txt.replace(/^[`'"]|[`'"]$/g, "");
   }
 
   /**
    * Extract imports and create relationships
    */
   private extractImports(node: TreeSitterNode, filePath: string, relationships: EntityRelationship[]): void {
-    const importSpecList = node.childForFieldName("path");
+    const packageId = `${filePath}:package:${this.currentPackage || ""}`;
 
-    if (importSpecList) {
-      const importPath = importSpecList.text?.replace(/['"]/g, '');
-      if (importPath) {
+    // Собираем import_spec на любом уровне (в т.ч. внутри import (...))
+    const importSpecs = this.findDescendantsByType(node, "import_spec");
+
+    const seen = new Set<string>();
+
+    if (importSpecs.length > 0) {
+      for (const spec of importSpecs) {
+        const importPath = this.getStringLiteralFromNode(spec);
+        if (!importPath || seen.has(importPath)) continue;
+        seen.add(importPath);
+
+        const aliasNode = spec.childForFieldName("alias") || spec.childForFieldName("name");
         relationships.push({
-          from: `${filePath}:package:${this.currentPackage}`,
+          from: packageId,
           to: importPath,
           type: "imports",
           metadata: {
-            importType: "package"
-          }
+            importType: "package",
+            alias: aliasNode?.text,
+          },
+        });
+      }
+    } else {
+      // Фоллбек: одиночный импорт без import_spec
+      const importPath = this.getStringLiteralFromNode(node);
+      if (importPath && !seen.has(importPath)) {
+        seen.add(importPath);
+        relationships.push({
+          from: packageId,
+          to: importPath,
+          type: "imports",
+          metadata: { importType: "package" },
         });
       }
     }
@@ -234,33 +326,41 @@ export class GoAnalyzer {
   /**
    * Extract function declaration
    */
-  private extractFunction(node: TreeSitterNode, filePath: string, entities: ParsedEntity[], relationships: EntityRelationship[]): void {
+  private extractFunction(
+    node: TreeSitterNode,
+    filePath: string,
+    entities: ParsedEntity[],
+    relationships: EntityRelationship[],
+  ): void {
     const nameNode = node.childForFieldName("name");
     const functionName = nameNode?.text;
 
     if (functionName) {
+      const entityId = `${filePath}:function:${functionName}`;
       const entity: ParsedEntity = {
-        id: `${filePath}:function:${functionName}`,
+        id: entityId,
         name: functionName,
         type: "function",
         filePath,
         location: this.getNodeLocation(node),
         metadata: {
-          isPublic: functionName[0] === functionName[0].toUpperCase(), // Capital = exported in Go
-          package: this.currentPackage
-        }
+          isPublic: this.isExported(functionName), // Capital = exported in Go
+          package: this.currentPackage,
+        },
       };
 
       // Extract parameters
       const parameters = node.childForFieldName("parameters");
       if (parameters) {
-        entity.metadata.parameters = this.extractParameters(parameters);
+        const meta = entity.metadata ?? (entity.metadata = {});
+        meta.parameters = this.extractParameters(parameters);
       }
 
       // Extract return type
       const result = node.childForFieldName("result");
       if (result) {
-        entity.metadata.returnType = result.text;
+        const meta = entity.metadata ?? (entity.metadata = {});
+        meta.returnType = result.text;
       }
 
       entities.push(entity);
@@ -268,7 +368,7 @@ export class GoAnalyzer {
       // Extract function calls within body
       const body = node.childForFieldName("body");
       if (body) {
-        this.extractFunctionCalls(body, entity.id, filePath, relationships);
+        this.extractFunctionCalls(body, entityId, filePath, relationships);
       }
     }
   }
@@ -276,7 +376,12 @@ export class GoAnalyzer {
   /**
    * Extract method declaration (receiver function)
    */
-  private extractMethod(node: TreeSitterNode, filePath: string, entities: ParsedEntity[], relationships: EntityRelationship[]): void {
+  private extractMethod(
+    node: TreeSitterNode,
+    filePath: string,
+    entities: ParsedEntity[],
+    relationships: EntityRelationship[],
+  ): void {
     const nameNode = node.childForFieldName("name");
     const methodName = nameNode?.text;
     const receiver = node.childForFieldName("receiver");
@@ -285,29 +390,32 @@ export class GoAnalyzer {
       // Extract receiver type
       const receiverType = this.extractReceiverType(receiver);
 
+      const methodId = `${filePath}:method:${receiverType}:${methodName}`;
       const entity: ParsedEntity = {
-        id: `${filePath}:method:${receiverType}:${methodName}`,
+        id: methodId,
         name: methodName,
         type: "method",
         filePath,
         location: this.getNodeLocation(node),
         metadata: {
-          isPublic: methodName[0] === methodName[0].toUpperCase(),
+          isPublic: this.isExported(methodName),
           receiver: receiverType,
-          package: this.currentPackage
-        }
+          package: this.currentPackage,
+        },
       };
 
       // Extract parameters
       const parameters = node.childForFieldName("parameters");
       if (parameters) {
-        entity.metadata.parameters = this.extractParameters(parameters);
+        const meta = entity.metadata ?? (entity.metadata = {});
+        meta.parameters = this.extractParameters(parameters);
       }
 
       // Extract return type
       const result = node.childForFieldName("result");
       if (result) {
-        entity.metadata.returnType = result.text;
+        const meta = entity.metadata ?? (entity.metadata = {});
+        meta.returnType = result.text;
       }
 
       entities.push(entity);
@@ -315,19 +423,19 @@ export class GoAnalyzer {
       // Create relationship to receiver type
       if (receiverType) {
         relationships.push({
-          from: entity.id,
+          from: methodId,
           to: `${filePath}:type:${receiverType}`,
           type: "member_of",
           metadata: {
-            memberType: "method"
-          }
+            memberType: "method",
+          },
         });
       }
 
       // Extract function calls within body
       const body = node.childForFieldName("body");
       if (body) {
-        this.extractFunctionCalls(body, entity.id, filePath, relationships);
+        this.extractFunctionCalls(body, methodId, filePath, relationships);
       }
     }
   }
@@ -355,8 +463,13 @@ export class GoAnalyzer {
   /**
    * Extract type declarations (structs, interfaces, type aliases)
    */
-  private extractTypeDeclaration(node: TreeSitterNode, filePath: string, entities: ParsedEntity[], relationships: EntityRelationship[]): void {
-    const typeSpecs = node.namedChildren.filter(c => c.type === "type_spec");
+  private extractTypeDeclaration(
+    node: TreeSitterNode,
+    filePath: string,
+    entities: ParsedEntity[],
+    relationships: EntityRelationship[],
+  ): void {
+    const typeSpecs = node.namedChildren.filter((c) => c.type === "type_spec");
 
     for (const typeSpec of typeSpecs) {
       const nameNode = typeSpec.childForFieldName("name");
@@ -366,34 +479,35 @@ export class GoAnalyzer {
       if (typeName && typeNode) {
         const entityType = this.getEntityTypeFromGoType(typeNode.type);
 
+        const typeId = `${filePath}:type:${typeName}`;
         const entity: ParsedEntity = {
-          id: `${filePath}:type:${typeName}`,
+          id: typeId,
           name: typeName,
           type: entityType,
           filePath,
           location: this.getNodeLocation(typeSpec),
           metadata: {
-            isPublic: typeName[0] === typeName[0].toUpperCase(),
+            isPublic: this.isExported(typeName),
             package: this.currentPackage,
-            goType: typeNode.type
-          }
+            goType: typeNode.type,
+          },
         };
 
         entities.push(entity);
 
         // Extract struct fields
         if (typeNode.type === "struct_type") {
-          this.extractStructFields(typeNode, entity.id, filePath, entities, relationships);
+          this.extractStructFields(typeNode, typeId, filePath, entities, relationships);
         }
 
         // Extract interface methods
         if (typeNode.type === "interface_type") {
-          this.extractInterfaceMethods(typeNode, entity.id, filePath, entities, relationships);
+          this.extractInterfaceMethods(typeNode, typeId, filePath, entities, relationships);
         }
 
         // Handle type embedding
         if (typeNode.type === "struct_type") {
-          this.extractEmbeddedTypes(typeNode, entity.id, filePath, relationships);
+          this.extractEmbeddedTypes(typeNode, typeId, filePath, relationships);
         }
       }
     }
@@ -416,11 +530,17 @@ export class GoAnalyzer {
   /**
    * Extract struct fields
    */
-  private extractStructFields(structNode: TreeSitterNode, structId: string, filePath: string, entities: ParsedEntity[], relationships: EntityRelationship[]): void {
-    const fieldList = structNode.namedChildren.filter(c => c.type === "field_declaration_list");
+  private extractStructFields(
+    structNode: TreeSitterNode,
+    structId: string,
+    filePath: string,
+    entities: ParsedEntity[],
+    relationships: EntityRelationship[],
+  ): void {
+    const fieldList = structNode.namedChildren.filter((c) => c.type === "field_declaration_list");
 
     for (const list of fieldList) {
-      const fields = list.namedChildren.filter(c => c.type === "field_declaration");
+      const fields = list.namedChildren.filter((c) => c.type === "field_declaration");
 
       for (const field of fields) {
         const nameNode = field.childForFieldName("name");
@@ -428,29 +548,30 @@ export class GoAnalyzer {
         const typeNode = field.childForFieldName("type");
 
         if (fieldName) {
+          const fieldId = `${structId}:field:${fieldName}`;
           const fieldEntity: ParsedEntity = {
-            id: `${structId}:field:${fieldName}`,
+            id: fieldId,
             name: fieldName,
             type: "property",
             filePath,
             location: this.getNodeLocation(field),
             metadata: {
-              isPublic: fieldName[0] === fieldName[0].toUpperCase(),
+              isPublic: this.isExported(fieldName),
               fieldType: typeNode?.text || "unknown",
-              parent: structId
-            }
+              parent: structId,
+            },
           };
 
           entities.push(fieldEntity);
 
           // Create relationship
           relationships.push({
-            from: fieldEntity.id,
+            from: fieldId,
             to: structId,
             type: "member_of",
             metadata: {
-              memberType: "field"
-            }
+              memberType: "field",
+            },
           });
         }
       }
@@ -460,48 +581,57 @@ export class GoAnalyzer {
   /**
    * Extract interface methods
    */
-  private extractInterfaceMethods(interfaceNode: TreeSitterNode, interfaceId: string, filePath: string, entities: ParsedEntity[], relationships: EntityRelationship[]): void {
-    const methodSpecs = interfaceNode.namedChildren.filter(c => c.type === "method_spec");
+  private extractInterfaceMethods(
+    interfaceNode: TreeSitterNode,
+    interfaceId: string,
+    filePath: string,
+    entities: ParsedEntity[],
+    relationships: EntityRelationship[],
+  ): void {
+    const methodSpecs = interfaceNode.namedChildren.filter((c) => c.type === "method_spec");
 
     for (const methodSpec of methodSpecs) {
       const nameNode = methodSpec.childForFieldName("name");
       const methodName = nameNode?.text;
 
       if (methodName) {
+        const methodId = `${interfaceId}:method:${methodName}`;
         const methodEntity: ParsedEntity = {
-          id: `${interfaceId}:method:${methodName}`,
+          id: methodId,
           name: methodName,
           type: "method",
           filePath,
           location: this.getNodeLocation(methodSpec),
           metadata: {
             isAbstract: true, // Interface methods are abstract
-            parent: interfaceId
-          }
+            parent: interfaceId,
+          },
         };
 
         // Extract parameters
         const parameters = methodSpec.childForFieldName("parameters");
         if (parameters) {
-          methodEntity.metadata.parameters = this.extractParameters(parameters);
+          const meta = methodEntity.metadata ?? (methodEntity.metadata = {});
+          meta.parameters = this.extractParameters(parameters);
         }
 
         // Extract return type
         const result = methodSpec.childForFieldName("result");
         if (result) {
-          methodEntity.metadata.returnType = result.text;
+          const meta = methodEntity.metadata ?? (methodEntity.metadata = {});
+          meta.returnType = result.text;
         }
 
         entities.push(methodEntity);
 
         // Create relationship
         relationships.push({
-          from: methodEntity.id,
+          from: methodId,
           to: interfaceId,
           type: "member_of",
           metadata: {
-            memberType: "method"
-          }
+            memberType: "method",
+          },
         });
       }
     }
@@ -510,11 +640,16 @@ export class GoAnalyzer {
   /**
    * Extract embedded types (struct embedding/composition)
    */
-  private extractEmbeddedTypes(structNode: TreeSitterNode, structId: string, filePath: string, relationships: EntityRelationship[]): void {
-    const fieldList = structNode.namedChildren.filter(c => c.type === "field_declaration_list");
+  private extractEmbeddedTypes(
+    structNode: TreeSitterNode,
+    structId: string,
+    filePath: string,
+    relationships: EntityRelationship[],
+  ): void {
+    const fieldList = structNode.namedChildren.filter((c) => c.type === "field_declaration_list");
 
     for (const list of fieldList) {
-      const fields = list.namedChildren.filter(c => c.type === "field_declaration");
+      const fields = list.namedChildren.filter((c) => c.type === "field_declaration");
 
       for (const field of fields) {
         // Check if it's an embedded field (no name, just type)
@@ -530,8 +665,8 @@ export class GoAnalyzer {
               to: `${filePath}:type:${embeddedType}`,
               type: "embeds",
               metadata: {
-                embeddingType: "struct"
-              }
+                embeddingType: "struct",
+              },
             });
           }
         }
@@ -543,27 +678,27 @@ export class GoAnalyzer {
    * Extract constants
    */
   private extractConstant(node: TreeSitterNode, filePath: string, entities: ParsedEntity[]): void {
-    const constSpecs = node.namedChildren.filter(c => c.type === "const_spec");
+    const constSpecs = node.namedChildren.filter((c) => c.type === "const_spec");
 
     for (const constSpec of constSpecs) {
-      const nameNode = constSpec.childForFieldName("name");
-      const constName = nameNode?.text;
-
-      if (constName) {
+      const nameField = constSpec.childForFieldName("name");
+      const names = this.collectIdentifiersFromNameField(nameField);
+      if (names.length) {
         const valueNode = constSpec.childForFieldName("value");
-
-        entities.push({
-          id: `${filePath}:const:${constName}`,
-          name: constName,
-          type: "constant",
-          filePath,
-          location: this.getNodeLocation(constSpec),
-          metadata: {
-            isPublic: constName[0] === constName[0].toUpperCase(),
-            value: valueNode?.text,
-            package: this.currentPackage
-          }
-        });
+        for (const constName of names) {
+          entities.push({
+            id: `${filePath}:const:${constName}`,
+            name: constName,
+            type: "constant",
+            filePath,
+            location: this.getNodeLocation(constSpec),
+            metadata: {
+              isPublic: this.isExported(constName),
+              value: valueNode?.text,
+              package: this.currentPackage,
+            },
+          });
+        }
       }
     }
   }
@@ -572,29 +707,58 @@ export class GoAnalyzer {
    * Extract variables
    */
   private extractVariable(node: TreeSitterNode, filePath: string, entities: ParsedEntity[]): void {
-    const varSpecs = node.namedChildren.filter(c => c.type === "var_spec");
+    
+    const varSpecs = this.findDescendantsByType(node, "var_spec");
 
     for (const varSpec of varSpecs) {
-      const nameNode = varSpec.childForFieldName("name");
-      const varName = nameNode?.text;
+      
+      const nameField = varSpec.childForFieldName("name");
+      let names = this.collectIdentifiersFromNameField(nameField);
 
-      if (varName) {
+      
+      if (!names.length) {
+        const list = varSpec.namedChildren.find((c) => c.type === "identifier_list");
+        if (list) {
+          names = list.namedChildren.filter((c) => c.type === "identifier").map((c) => c.text);
+        }
+      }
+
+      
+      if (!names.length) {
+        names = varSpec.namedChildren.filter((c) => c.type === "identifier").map((c) => c.text);
+      }
+
+      
+      if (!names.length) {
+        const typeNode = varSpec.childForFieldName("type");
+        const typeIdSet = new Set<string>();
+        if (typeNode) {
+          for (const t of this.findDescendantsByType(typeNode, "identifier")) {
+            typeIdSet.add(t.text);
+          }
+        }
+        const allIds = this.findDescendantsByType(varSpec, "identifier");
+        names = allIds.map((n) => n.text).filter((txt) => !typeIdSet.has(txt));
+      }
+
+      if (names.length) {
         const typeNode = varSpec.childForFieldName("type");
         const valueNode = varSpec.childForFieldName("value");
-
-        entities.push({
-          id: `${filePath}:var:${varName}`,
-          name: varName,
-          type: "variable",
-          filePath,
-          location: this.getNodeLocation(varSpec),
-          metadata: {
-            isPublic: varName[0] === varName[0].toUpperCase(),
-            variableType: typeNode?.text,
-            initialValue: valueNode?.text,
-            package: this.currentPackage
-          }
-        });
+        for (const varName of names) {
+          entities.push({
+            id: `${filePath}:var:${varName}`,
+            name: varName,
+            type: "variable",
+            filePath,
+            location: this.getNodeLocation(varSpec),
+            metadata: {
+              isPublic: this.isExported(varName),
+              variableType: typeNode?.text,
+              initialValue: valueNode?.text,
+              package: this.currentPackage,
+            },
+          });
+        }
       }
     }
   }
@@ -604,7 +768,7 @@ export class GoAnalyzer {
    */
   private extractParameters(parametersNode: TreeSitterNode): string[] {
     const params: string[] = [];
-    const paramDecls = parametersNode.namedChildren.filter(c => c.type === "parameter_declaration");
+    const paramDecls = parametersNode.namedChildren.filter((c) => c.type === "parameter_declaration");
 
     for (const paramDecl of paramDecls) {
       const nameNode = paramDecl.childForFieldName("name");
@@ -624,7 +788,12 @@ export class GoAnalyzer {
   /**
    * Extract function calls to create relationships
    */
-  private extractFunctionCalls(node: TreeSitterNode, callerId: string, filePath: string, relationships: EntityRelationship[]): void {
+  private extractFunctionCalls(
+    node: TreeSitterNode,
+    callerId: string,
+    filePath: string,
+    relationships: EntityRelationship[],
+  ): void {
     this.recursionDepth++;
     this.checkCircuitBreakers();
 
@@ -639,8 +808,8 @@ export class GoAnalyzer {
               to: `${filePath}:function:${functionName}`,
               type: "calls",
               metadata: {
-                callType: "function"
-              }
+                callType: "function",
+              },
             });
           }
         }

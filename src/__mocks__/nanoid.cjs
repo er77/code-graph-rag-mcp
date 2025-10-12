@@ -1,8 +1,8 @@
 // Mock implementation of nanoid for testing (CommonJS)
 
 function nanoid(size = 21) {
-  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-';
-  let result = '';
+  const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-";
+  let result = "";
   for (let i = 0; i < size; i++) {
     result += chars[Math.floor(Math.random() * chars.length)];
   }
@@ -10,8 +10,8 @@ function nanoid(size = 21) {
 }
 
 function customAlphabet(alphabet, defaultSize = 21) {
-  return function (size = defaultSize) {
-    let result = '';
+  return (size = defaultSize) => {
+    let result = "";
     for (let i = 0; i < size; i++) {
       result += alphabet[Math.floor(Math.random() * alphabet.length)];
     }
@@ -33,5 +33,3 @@ module.exports = {
   urlAlphabet,
   nanoidAsync,
 };
-
-

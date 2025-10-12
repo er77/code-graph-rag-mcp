@@ -24,6 +24,8 @@ mcp:
   agents:
     maxConcurrent: 10      # Allow sufficient agents for parallel operations
     defaultTimeout: 5000   # Quick timeout for development
+    useParser: true        # Enable ParserAgent for AST parsing (MCP_USE_PARSER)
+    devIndexBatch: 100     # Batch size for file processing (MCP_DEV_INDEX_BATCH)
 
 # Database Configuration (Development)
 database:
@@ -65,6 +67,23 @@ parser:
     enabled: true
     cacheSize: 500         # Small cache for development
     cacheTTL: 120000       # 2 minutes cache TTL
+    
+  agent:
+    maxConcurrency: 2     # Lower concurrency for development
+    memoryLimit: 256      # MB - smaller limit for development
+    priority: 8           # High priority for parsing
+    batchSize: 5          # Smaller batch size for development
+    cacheSize: 52428800   # 50MB cache (in bytes)
+    workerPoolSize: 1     # Single worker for easier debugging
+
+# Indexer Configuration (Development)
+indexer:
+  maxConcurrency: 1       # Single database operation for development
+  memoryLimit: 256        # MB - smaller limit for development
+  priority: 7
+  batchSize: 500
+  cacheSize: 25165824     # 25MB cache (in bytes)
+  cacheTTL: 180000        # 3 minutes (in ms)
 
 # Performance Configuration (Development)
 performance:

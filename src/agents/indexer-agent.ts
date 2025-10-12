@@ -4,20 +4,24 @@
  * Core indexer agent responsible for storing and querying the code graph.
  * Subscribes to parse events and maintains the graph database.
  *
- * Architecture References:
+
+        storageEntities.push(entity);
+        validParsed.push(parsed); * Architecture References:
  * - Base Agent: src/agents/base.ts
  * - Agent Types: src/types/agent.ts
  * - Storage Types: src/types/storage.ts
  * - Knowledge Bus: src/core/knowledge-bus.ts
  */
 
+import { createHash } from "node:crypto";
 import { nanoid } from "nanoid";
+import { getConfig } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { BatchOperations } from "../storage/batch-operations.js";
 import { getCacheManager, QueryCacheManager } from "../storage/cache-manager.js";
-import { GraphStorageImpl } from "../storage/graph-storage.js";
+import type { GraphStorageImpl } from "../storage/graph-storage.js";
 import { getGraphStorage } from "../storage/graph-storage-factory.js";
-import { getSQLiteManager, type SQLiteManager } from "../storage/sqlite-manager.js";
+import type { SQLiteManager } from "../storage/sqlite-manager.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
 import type { EntityRelationship, ParsedEntity, ParseResult } from "../types/parser.js";
 import type {
@@ -30,22 +34,36 @@ import type {
   Relationship,
 } from "../types/storage.js";
 import { EntityType, parsedEntityToEntity, RelationType } from "../types/storage.js";
-// =============================================================================
-// 1. IMPORTS AND DEPENDENCIES
-// =============================================================================
 import { BaseAgent } from "./base.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
 // =============================================================================
-const INDEXER_CONFIG = {
-  maxConcurrency: 2, // Database write operations
-  memoryLimit: 512, // MB for graph operations
-  priority: 7,
-  batchSize: 1000,
-  cacheSize: 50 * 1024 * 1024, // 50MB cache
-  cacheTTL: 5 * 60 * 1000, // 5 minutes
-};
+function getIndexerConfig() {
+  const config = getConfig();
+  return {
+    maxConcurrency: config.indexer?.maxConcurrency ?? 2,
+    memoryLimit: config.indexer?.memoryLimit ?? 512,
+    priority: config.indexer?.priority ?? 7,
+    batchSize: config.indexer?.batchSize ?? 1000,
+    cacheSize: config.indexer?.cacheSize ?? 50 * 1024 * 1024,
+    cacheTTL: config.indexer?.cacheTTL ?? 5 * 60 * 1000,
+  };
+}
+
+// =============================================================================
+// 3. STABLE ID HELPERS
+// =============================================================================
+const ID_LENGTH = 12;
+function stableEntityId(base: Omit<Entity, "id" | "createdAt" | "updatedAt">): string {
+  const s = base.location?.start?.index ?? -1;
+  const eIdx = base.location?.end?.index ?? -1;
+  const key = `${base.filePath}|${base.type}|${base.name}|${s}-${eIdx}`;
+  return createHash("sha256").update(key).digest("base64url").slice(0, ID_LENGTH);
+}
+function stableRelationshipId(fromId: string, toId: string, type: RelationType | string): string {
+  return createHash("sha256").update(`${fromId}|${toId}|${type}`).digest("base64url").slice(0, ID_LENGTH);
+}
 
 // =============================================================================
 // 3. INDEXER TASK TYPES
@@ -91,9 +109,10 @@ export class IndexerAgent extends BaseAgent {
     lastIndexTime: 0,
   };
 
-  constructor() {
-    super(AgentType.INDEXER, INDEXER_CONFIG);
-    console.log(`[IndexerAgent] Created with ID: ${this.id}`);
+  constructor(sqliteManager: SQLiteManager) {
+    super(AgentType.INDEXER, getIndexerConfig());
+    this.sqliteManager = sqliteManager;
+    console.log(`[IndexerAgent] Created with ID: ${this.id} and provided SQLiteManager`);
   }
 
   /**
@@ -102,22 +121,28 @@ export class IndexerAgent extends BaseAgent {
   protected async onInitialize(): Promise<void> {
     console.log(`[${this.id}] Initializing Indexer Agent...`);
 
-    // Initialize SQLite manager
-    this.sqliteManager = getSQLiteManager();
-    this.sqliteManager.initialize();
+    // Ensure SQLite manager is initialized
+    if (!this.sqliteManager) {
+      throw new Error(`[${this.id}] SQLiteManager is required but not provided`);
+    }
+
+    if (!this.sqliteManager.isOpen()) {
+      this.sqliteManager.initialize();
+    }
 
     // CRITICAL FIX: Use singleton GraphStorage instance
     // This ensures IndexerAgent and MCP tools use the same storage instance
-    this.graphStorage = await getGraphStorage();
+    this.graphStorage = await getGraphStorage(this.sqliteManager);
     // Ensure graph storage is fully initialized (re-prepare statements after SQLite reset)
     if (typeof (this.graphStorage as any).initialize === "function") {
       await (this.graphStorage as any).initialize();
     }
 
-    this.batchOps = new BatchOperations(this.sqliteManager.getConnection(), INDEXER_CONFIG.batchSize);
+    const config = getIndexerConfig();
+    this.batchOps = new BatchOperations(this.sqliteManager.getConnection(), config.batchSize);
     this.cacheManager = getCacheManager({
-      maxSize: INDEXER_CONFIG.cacheSize,
-      defaultTTL: INDEXER_CONFIG.cacheTTL,
+      maxSize: config.cacheSize,
+      defaultTTL: config.cacheTTL,
     });
 
     // Subscribe to parse complete events
@@ -154,10 +179,11 @@ export class IndexerAgent extends BaseAgent {
     console.log(`[${this.id}] Received parse result for ${parseResult.filePath}`);
 
     // Create indexing task
+    const config = getIndexerConfig();
     const task: IndexerTask = {
       id: nanoid(12),
       type: "index:entities",
-      priority: 5,
+      priority: config.priority,
       payload: {
         entities: parseResult.entities,
         filePath: parseResult.filePath,
@@ -177,18 +203,19 @@ export class IndexerAgent extends BaseAgent {
     const results = entry.data as ParseResult[];
     console.log(`[${this.id}] Received batch parse results for ${results.length} files`);
 
+    const config = getIndexerConfig();
     for (const result of results) {
       const task: IndexerTask = {
         id: nanoid(12),
         type: "index:entities",
-        priority: 5,
-      payload: {
-        entities: result.entities,
-        filePath: result.filePath,
-        relationships: result.relationships,
-      },
-      createdAt: Date.now(),
-    };
+        priority: config.priority,
+        payload: {
+          entities: result.entities,
+          filePath: result.filePath,
+          relationships: result.relationships,
+        },
+        createdAt: Date.now(),
+      };
 
       await this.process(task);
     }
@@ -213,7 +240,7 @@ export class IndexerAgent extends BaseAgent {
         return await this.indexEntities(
           indexerTask.payload.entities!,
           indexerTask.payload.filePath!,
-          indexerTask.payload.relationships
+          indexerTask.payload.relationships,
         );
 
       case "index:incremental":
@@ -259,15 +286,22 @@ export class IndexerAgent extends BaseAgent {
           throw new Error("Invalid entity");
         }
 
-        const entity = {
-          ...parsedEntityToEntity(parsed, filePath, fileHash),
-          id: nanoid(12),
+        const isImport = parsed?.type === "import" && parsed?.importData?.source;
+        const hasName = typeof (parsed as any).name === "string" && (parsed as any).name.trim().length > 0;
+
+        const normalizedParsed =
+          !hasName && isImport ? { ...(parsed as any), name: `import:${parsed.importData!.source}` } : parsed;
+
+        const base = parsedEntityToEntity(normalizedParsed, filePath, fileHash);
+        const entity: Entity = {
+          ...base,
+          id: stableEntityId(base),
           createdAt: Date.now(),
           updatedAt: Date.now(),
-        } as Entity;
+        };
 
         storageEntities.push(entity);
-        validParsed.push(parsed);
+        validParsed.push(normalizedParsed as ParsedEntity);
       } catch (e) {
         preErrors.push({ item: parsed, error: (e as Error).message });
       }
@@ -283,22 +317,34 @@ export class IndexerAgent extends BaseAgent {
 
     // Use provided relationships if available
     if (providedRelationships && providedRelationships.length > 0) {
-      // Convert provided relationships to storage format using validated entities
-      const entityMap = new Map<string, string>();
-      storageEntities.forEach((e) => entityMap.set(e.name, e.id));
+      const byName = new Map<string, Entity[]>();
+      for (const e of storageEntities) {
+        const arr = byName.get(e.name) || [];
+        arr.push(e);
+        byName.set(e.name, arr);
+      }
 
+      function resolveByNameAndLine(name: string, line?: number): string | undefined {
+        const candidates = byName.get(name);
+        if (!candidates || candidates.length === 0) return undefined;
+
+        if (line == null) return candidates[0]!.id;
+
+        let best: Entity | undefined;
+        let bestDelta = Infinity;
+
+        for (const c of candidates) {
+          const d = Math.abs((c.location?.start?.line ?? 0) - line);
+          if (d < bestDelta) {
+            best = c;
+            bestDelta = d;
+          }
+        }
+        return best?.id;
+      }
       for (const rel of providedRelationships) {
-        let fromId = entityMap.get(rel.from);
-        let toId = entityMap.get(rel.to);
-
-        if (!fromId) {
-          const found = storageEntities.find((e) => e.name === rel.from);
-          if (found) fromId = found.id;
-        }
-        if (!toId) {
-          const found = storageEntities.find((e) => e.name === rel.to);
-          if (found) toId = found.id;
-        }
+        const fromId = resolveByNameAndLine(rel.from, rel.metadata?.line);
+        let toId = resolveByNameAndLine(rel.to, rel.metadata?.line);
 
         if (!toId) {
           const src = rel.targetFile || "unknown";
@@ -307,7 +353,7 @@ export class IndexerAgent extends BaseAgent {
 
         if (fromId && toId) {
           relationships.push({
-            id: nanoid(12),
+            id: stableRelationshipId(fromId, toId, rel.type as any),
             fromId,
             toId,
             type: rel.type as any,
@@ -324,31 +370,42 @@ export class IndexerAgent extends BaseAgent {
 
     // Ensure placeholder entities exist for any external relationship targets
     const externalPlaceholders: Entity[] = [];
-    const seenExternal = new Set<string>();
+    const seenExternal = new Map<string, string>(); // extKey -> placeholderId
+
     for (const rel of relationships) {
-      if (rel.toId && typeof rel.toId === 'string' && rel.toId.startsWith('external:')) {
+      if (typeof rel.toId === "string" && rel.toId.startsWith("external:")) {
+        const parts = rel.toId.split(":");
+        const source = parts[1] ?? "unknown";
+        const symbol = parts.slice(2).join(":") || "unknown";
+
+        const placeholderBase: Omit<Entity, "id" | "createdAt" | "updatedAt"> = {
+          name: symbol,
+          type: EntityType.IMPORT,
+          filePath: `external://${source}`,
+          location: {
+            start: { line: 0, column: 0, index: 0 },
+            end: { line: 0, column: 0, index: 0 },
+          },
+          metadata: { isExternal: true, source, symbol } as any,
+          hash: `external:${source}:${symbol}`,
+        };
+
+        const placeholderId = stableEntityId(placeholderBase);
+
         if (!seenExternal.has(rel.toId)) {
-          seenExternal.add(rel.toId);
-          // Format: external:<source>:<symbol>
-          const parts = rel.toId.split(':');
-          const source = parts.length >= 2 ? parts[1] : 'unknown';
-          const symbol = parts.length >= 3 ? parts.slice(2).join(':') : 'unknown';
+          seenExternal.set(rel.toId, placeholderId);
           externalPlaceholders.push({
-            id: rel.toId,
-            name: symbol,
-            type: EntityType.IMPORT,
-            filePath: `external://${source}`,
-            location: {
-              start: { line: 0, column: 0, index: 0 },
-              end: { line: 0, column: 0, index: 0 },
-            },
-            metadata: { isExternal: true, source, symbol },
-            hash: rel.toId,
+            ...placeholderBase,
+            id: placeholderId,
             createdAt: Date.now(),
             updatedAt: Date.now(),
-          } as Entity);
+          });
         }
+
+        rel.toId = placeholderId;
       }
+
+      rel.id = stableRelationshipId(rel.fromId, rel.toId, rel.type);
     }
 
     if (externalPlaceholders.length > 0) {
@@ -380,6 +437,7 @@ export class IndexerAgent extends BaseAgent {
     this.indexingStats.lastIndexTime = indexTime;
 
     // Publish indexing complete event
+    console.log(`[IndexerAgent] Publishing index:complete event`);
     knowledgeBus.publish(
       "index:complete",
       {
@@ -390,19 +448,20 @@ export class IndexerAgent extends BaseAgent {
       },
       this.id,
     );
+    console.log(`[IndexerAgent] Published index:complete event`);
 
-    // Publish parsed entities for semantic embedding ingestion (only valid ones)
-    try {
-      if (validParsed.length) {
-        knowledgeBus.publish("semantic:new_entities", validParsed, this.id);
-      }
-    } catch {}
+    if (validParsed.length) {
+      const entitiesWithPath = validParsed.map((entity) => ({
+        ...entity,
+        filePath: filePath,
+      }));
+      knowledgeBus.publish("semantic:new_entities", entitiesWithPath, this.id);
+    }
 
     console.log(
       `[${this.id}] Indexed ${entityResult.processed} entities and ${relResult.processed} relationships in ${indexTime}ms`,
     );
 
-    
     const failed = entityResult.failed + relResult.failed + preErrors.length;
     const errors = [...entityResult.errors, ...relResult.errors, ...preErrors];
 
@@ -410,20 +469,19 @@ export class IndexerAgent extends BaseAgent {
     const { timeMs: _throwAway, ...restBase } = entityResult;
 
     return {
-      processed: entityResult.processed,
-      failed: entityResult.failed,
-      errors: entityResult.errors,
-      timeMs: indexTime
+      ...restBase,
+      failed,
+      errors,
+      timeMs: indexTime,
+      entitiesIndexed: entityResult.processed,
+      relationshipsCreated: relResult.processed,
     };
   }
 
   /**
    * Build relationships from parsed entities
    */
-  private async buildRelationships(
-    parsedEntities: ParsedEntity[],
-    storageEntities: Entity[],
-  ): Promise<Relationship[]> {
+  private async buildRelationships(parsedEntities: ParsedEntity[], storageEntities: Entity[]): Promise<Relationship[]> {
     const relationships: Relationship[] = [];
     const entityMap = new Map<string, string>(); // name -> id mapping
 
@@ -628,7 +686,7 @@ export class IndexerAgent extends BaseAgent {
           id: message.id,
           type: "index:entities",
           priority: 5,
-          payload: message.payload as IndexerTask['payload'],
+          payload: message.payload as IndexerTask["payload"],
           createdAt: Date.now(),
         };
         await this.process(task);
@@ -641,7 +699,7 @@ export class IndexerAgent extends BaseAgent {
           id: message.id,
           type: "query:graph",
           priority: 8,
-          payload: message.payload as IndexerTask['payload'],
+          payload: message.payload as IndexerTask["payload"],
           createdAt: Date.now(),
         };
         const result = await this.process(queryTask);
@@ -683,8 +741,7 @@ export class IndexerAgent extends BaseAgent {
         try {
           this.sqliteManager.getConnection();
           await this.graphStorage.analyze();
-        } catch {
-        }
+        } catch {}
       } catch (e) {
         console.warn(`[${this.id}] Analyze on shutdown skipped: ${(e as Error).message}`);
       }

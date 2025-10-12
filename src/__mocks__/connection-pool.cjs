@@ -14,7 +14,7 @@ class ConnectionPool {
   async acquire() {
     // Return mock connection immediately
     return {
-      id: 'mock-conn',
+      id: "mock-conn",
       db: global.testDb || null,
       inUse: true,
       lastUsed: Date.now(),
@@ -32,5 +32,3 @@ class ConnectionPool {
 }
 
 module.exports = { ConnectionPool };
-
-

@@ -62,6 +62,12 @@ function float32ArrayToBuffer(array: Float32Array): Buffer {
 function bufferToFloat32Array(buffer: Buffer): Float32Array {
   return new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4);
 }
+
+function dedupeById(items: VectorEmbedding[]): VectorEmbedding[] {
+  const map = new Map<string, VectorEmbedding>();
+  for (const e of items) map.set(e.id, e);
+  return Array.from(map.values());
+}
 // =============================================================================
 // 5. CORE BUSINESS LOGIC
 // =============================================================================
@@ -71,6 +77,8 @@ export class VectorStore {
   private insertStmt: Database.Statement | null = null;
   private updateStmt: Database.Statement | null = null;
   private deleteStmt: Database.Statement | null = null;
+  private insertVecStmt: Database.Statement | null = null;
+  private deleteVecByIdStmt: Database.Statement | null = null;
 
   // TASK-004B: Initialization state management
   private isInitialized = false;
@@ -78,7 +86,8 @@ export class VectorStore {
   private initializationPromise: Promise<void> | null = null;
   private extensionLoadAttempts = 0;
   private readonly MAX_EXTENSION_LOAD_ATTEMPTS = 3;
-  private debugMode = process.env.VECTOR_STORE_DEBUG === 'true';
+  private debugMode = process.env.VECTOR_STORE_DEBUG === "true";
+  private sqliteVecEnabled = false;
 
   constructor(config: Partial<VectorStoreConfig> = {}) {
     this.config = {
@@ -142,7 +151,6 @@ export class VectorStore {
       // TASK-004B: Load sqlite-vec extension with improved error handling
       await this.loadSqliteVecExtension();
 
-
       // Configure for optimal performance on commodity hardware
       if (this.config.walMode) {
         this.db.pragma("journal_mode = WAL");
@@ -153,16 +161,17 @@ export class VectorStore {
 
       // Create vector table with sqlite-vec optimization
       const hasVecExtension = this.checkVecExtension();
-
+      this.sqliteVecEnabled = hasVecExtension;
+      console.log(`[VectorStore] hasVecExtension: ${hasVecExtension}`);
       if (hasVecExtension) {
         // Create optimized table using sqlite-vec virtual table
         this.db.exec(`
-          CREATE VIRTUAL TABLE IF NOT EXISTS vec_embeddings USING vec0(
+          CREATE VIRTUAL TABLE IF NOT EXISTS vec_doc_embeddings USING vec0(
             id TEXT PRIMARY KEY,
             embedding float[${this.config.dimensions}]
           );
 
-          CREATE TABLE IF NOT EXISTS embeddings (
+          CREATE TABLE IF NOT EXISTS doc_embeddings (
             id TEXT PRIMARY KEY,
             content TEXT NOT NULL,
             metadata TEXT,
@@ -172,7 +181,7 @@ export class VectorStore {
       } else {
         // Fallback table structure
         this.db.exec(`
-          CREATE TABLE IF NOT EXISTS embeddings (
+          CREATE TABLE IF NOT EXISTS doc_embeddings (
             id TEXT PRIMARY KEY,
             content TEXT NOT NULL,
             vector BLOB NOT NULL,
@@ -184,11 +193,11 @@ export class VectorStore {
 
       // Create indexes
       this.db.exec(`
-        CREATE INDEX IF NOT EXISTS idx_embeddings_created
-        ON embeddings(created_at);
+        CREATE INDEX IF NOT EXISTS idx_doc_embeddings_created
+        ON doc_embeddings(created_at);
 
-        CREATE INDEX IF NOT EXISTS idx_embeddings_content
-        ON embeddings(content);
+        CREATE INDEX IF NOT EXISTS idx_doc_embeddings_content
+        ON doc_embeddings(content);
       `);
 
       // Prepare statements for better performance
@@ -206,40 +215,43 @@ export class VectorStore {
    */
   private prepareStatements(): void {
     if (!this.db) throw new Error("Database not initialized");
-
     const hasVecExtension = this.checkVecExtension();
 
     if (hasVecExtension) {
-      // Prepared statements for sqlite-vec virtual table
       this.insertStmt = this.db.prepare(`
-        INSERT OR REPLACE INTO embeddings (id, content, metadata, created_at)
+        INSERT OR REPLACE INTO doc_embeddings (id, content, metadata, created_at)
         VALUES (?, ?, ?, ?)
       `);
 
       this.updateStmt = this.db.prepare(`
-        UPDATE embeddings
+        UPDATE doc_embeddings
         SET metadata = ?, created_at = ?
         WHERE id = ?
       `);
+
+      this.insertVecStmt = this.db.prepare(`
+        INSERT INTO vec_doc_embeddings (id, embedding)
+        VALUES (?, vec_f32(?))
+      `);
+      this.deleteVecByIdStmt = this.db.prepare(`
+        DELETE FROM vec_doc_embeddings WHERE id = ?
+      `);
     } else {
-      // Fallback prepared statements
       this.insertStmt = this.db.prepare(`
-        INSERT OR REPLACE INTO embeddings (id, content, vector, metadata, created_at)
+        INSERT OR REPLACE INTO doc_embeddings (id, content, vector, metadata, created_at)
         VALUES (?, ?, ?, ?, ?)
       `);
 
       this.updateStmt = this.db.prepare(`
-        UPDATE embeddings
+        UPDATE doc_embeddings
         SET vector = ?, metadata = ?, created_at = ?
         WHERE id = ?
       `);
+      this.insertVecStmt = null;
+      this.deleteVecByIdStmt = null;
     }
 
-    this.deleteStmt = this.db.prepare(`
-      DELETE FROM embeddings WHERE id = ?
-    `);
-
-    // Note: Search statement will be created dynamically based on extension availability
+    this.deleteStmt = this.db.prepare(`DELETE FROM doc_embeddings WHERE id = ?`);
   }
 
   /**
@@ -253,7 +265,9 @@ export class VectorStore {
     // Skip if already attempted max times
     if (this.extensionLoadAttempts >= this.MAX_EXTENSION_LOAD_ATTEMPTS) {
       if (this.debugMode) {
-        console.log(`[VectorStore] TASK-004B: Max extension load attempts reached (${this.extensionLoadAttempts}), skipping`);
+        console.log(
+          `[VectorStore] TASK-004B: Max extension load attempts reached (${this.extensionLoadAttempts}), skipping`,
+        );
       }
       return;
     }
@@ -313,7 +327,6 @@ export class VectorStore {
 
       console.warn("[VectorStore] TASK-004B: sqlite-vec extension not loaded, using fallback implementation");
       console.warn("[VectorStore] For better performance, install sqlite-vec extension");
-
     } catch (error) {
       console.error(`[VectorStore] TASK-004B: Extension loading error (attempt ${this.extensionLoadAttempts}):`, error);
       if (this.extensionLoadAttempts >= this.MAX_EXTENSION_LOAD_ATTEMPTS) {
@@ -326,34 +339,28 @@ export class VectorStore {
    * Insert a single embedding
    */
   async insert(embedding: VectorEmbedding): Promise<void> {
-    if (!this.db || !this.insertStmt) {
-      throw new Error("Vector store not initialized");
-    }
+    if (!this.db || !this.insertStmt) throw new Error("Vector store not initialized");
 
     try {
-      const hasVecExtension = this.checkVecExtension();
+      const hasVec = this.sqliteVecEnabled;
       const metadataStr = embedding.metadata ? JSON.stringify(embedding.metadata) : null;
       const timestamp = embedding.createdAt || Date.now();
 
-      if (hasVecExtension) {
-        // Use sqlite-vec virtual table
-        const insertVecStmt = this.db.prepare(`
-          INSERT OR REPLACE INTO vec_embeddings (id, embedding)
-          VALUES (?, ?)
-        `);
-
-        // Insert vector into vec_embeddings virtual table
-        insertVecStmt.run(embedding.id, Array.from(embedding.vector));
-
-        // Insert metadata into embeddings table
-        this.insertStmt.run(embedding.id, embedding.content, metadataStr, timestamp);
+      if (hasVec && this.insertVecStmt && this.deleteVecByIdStmt) {
+        const tx = this.db.transaction((e: VectorEmbedding) => {
+          this.deleteVecByIdStmt!.run(e.id);
+          const vectorJson = JSON.stringify(Array.from(e.vector));
+          this.insertVecStmt!.run(e.id, vectorJson);
+          this.insertStmt!.run(e.id, e.content, metadataStr, timestamp);
+        });
+        tx(embedding);
       } else {
-        // Fallback to BLOB storage
         const vectorBuffer = float32ArrayToBuffer(embedding.vector);
         this.insertStmt.run(embedding.id, embedding.content, vectorBuffer, metadataStr, timestamp);
       }
     } catch (error) {
-      console.error("[VectorStore] Insert failed:", error);
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[VectorStore] Insert failed:", message);
       throw error;
     }
   }
@@ -362,30 +369,34 @@ export class VectorStore {
    * Batch insert multiple embeddings
    */
   async insertBatch(embeddings: VectorEmbedding[]): Promise<void> {
-    if (!this.db || !this.insertStmt) {
-      throw new Error("Vector store not initialized");
-    }
+    if (!this.db || !this.insertStmt) throw new Error("Vector store not initialized");
+
+    const hasVec = this.sqliteVecEnabled;
+    const unique = dedupeById(embeddings);
 
     const insertMany = this.db.transaction((items: VectorEmbedding[]) => {
-      for (const embedding of items) {
-        const vectorBuffer = float32ArrayToBuffer(embedding.vector);
-        const metadataStr = embedding.metadata ? JSON.stringify(embedding.metadata) : null;
+      for (const e of items) {
+        const metadataStr = e.metadata ? JSON.stringify(e.metadata) : null;
+        const timestamp = e.createdAt || Date.now();
 
-        this.insertStmt!.run(
-          embedding.id,
-          embedding.content,
-          vectorBuffer,
-          metadataStr,
-          embedding.createdAt || Date.now(),
-        );
+        if (hasVec && this.insertVecStmt && this.deleteVecByIdStmt) {
+          this.deleteVecByIdStmt.run(e.id);
+          const vectorJson = JSON.stringify(Array.from(e.vector));
+          this.insertVecStmt.run(e.id, vectorJson);
+          this.insertStmt!.run(e.id, e.content, metadataStr, timestamp);
+        } else {
+          const vectorBuffer = float32ArrayToBuffer(e.vector);
+          this.insertStmt!.run(e.id, e.content, vectorBuffer, metadataStr, timestamp);
+        }
       }
     });
 
     try {
-      insertMany(embeddings);
-      console.log(`[VectorStore] Inserted batch of ${embeddings.length} embeddings`);
+      insertMany(unique);
+      console.log(`[VectorStore] Inserted batch of ${unique.length} embeddings`);
     } catch (error) {
-      console.error("[VectorStore] Batch insert failed:", error);
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[VectorStore] Batch insert failed:", message);
       throw error;
     }
   }
@@ -394,50 +405,44 @@ export class VectorStore {
    * Search for similar vectors using cosine similarity
    */
   async search(queryVector: Float32Array, limit = 10): Promise<SimilarityResult[]> {
-    if (!this.db) {
-      throw new Error("Vector store not initialized");
-    }
+    if (!this.db) throw new Error("Vector store not initialized");
 
     try {
       const hasVecExtension = this.checkVecExtension();
 
       if (hasVecExtension) {
-        // Use sqlite-vec virtual table for efficient KNN search
         const stmt = this.db.prepare(`
-          SELECT
-            e.id,
-            e.content,
-            e.metadata,
-            v.distance
-          FROM vec_embeddings v
-          JOIN embeddings e ON v.id = e.id
-          WHERE v.embedding MATCH ?
-          ORDER BY v.distance
-          LIMIT ?
-        `);
+        SELECT e.id, e.content, e.metadata, distance
+        FROM vec_doc_embeddings v
+        JOIN doc_embeddings e ON v.id = e.id
+        WHERE v.embedding MATCH vec_f32(?) AND k = ?
+        ORDER BY distance
+      `);
 
-        const queryArray = Array.from(queryVector);
-        const results = stmt.all(queryArray, limit) as Array<{
+        const vectorJson = JSON.stringify(Array.from(queryVector));
+        const rows = stmt.all(vectorJson, limit) as Array<{
           id: string;
           content: string;
           metadata: string | null;
           distance: number;
         }>;
 
-        return results.map((row) => ({
-          id: row.id,
-          content: row.content,
-          similarity: Math.max(0, 1 - row.distance), // Convert distance to similarity (0-1)
-          metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
-        }));
+        return rows.map((row) => {
+          const sim = 1 / (1 + row.distance);
+          return {
+            id: row.id,
+            content: row.content,
+            similarity: sim,
+            metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+          };
+        });
       } else {
-        // Fallback: Load all vectors and compute similarity in memory
         return this.fallbackSearch(queryVector, limit);
       }
     } catch (error) {
       console.error("[VectorStore] Search failed:", error);
-      // If sqlite-vec search fails, fallback to traditional search
-      console.log("[VectorStore] Falling back to traditional search method");
+
+      if (this.sqliteVecEnabled) return [];
       return this.fallbackSearch(queryVector, limit);
     }
   }
@@ -448,61 +453,32 @@ export class VectorStore {
   private async fallbackSearch(queryVector: Float32Array, limit: number): Promise<SimilarityResult[]> {
     if (!this.db) throw new Error("Database not initialized");
 
-    const hasVecExtension = this.checkVecExtension();
-    const results: Array<SimilarityResult & { score: number }> = [];
-
-    if (hasVecExtension) {
-      // With sqlite-vec: need to join with vec_embeddings table
+    let rows: VectorRow[] = [];
+    if (this.sqliteVecEnabled) {
       const stmt = this.db.prepare(`
-        SELECT e.id, e.content, e.metadata, v.embedding
-        FROM embeddings e
-        LEFT JOIN vec_embeddings v ON e.id = v.id
-      `);
-
-      const rows = stmt.all() as Array<{
-        id: string;
-        content: string;
-        metadata: string | null;
-        embedding: any;
-      }>;
-
-      for (const row of rows) {
-        if (!row.embedding) continue;
-        const vector = new Float32Array(row.embedding);
-        const similarity = this.cosineSimilarity(queryVector, vector);
-
-        results.push({
-          id: row.id,
-          content: row.content,
-          similarity,
-          score: similarity,
-          metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
-        });
-      }
+      SELECT e.id, e.content, e.metadata, v.embedding as vector
+      FROM doc_embeddings e JOIN vec_doc_embeddings v ON v.id = e.id
+    `);
+      rows = stmt.all() as any;
     } else {
-      // Fallback mode: vector stored in embeddings table
-      const stmt = this.db.prepare(`
-        SELECT id, content, vector, metadata
-        FROM embeddings
-      `);
-
-      const rows = stmt.all() as VectorRow[];
-
-      for (const row of rows) {
-        const vector = bufferToFloat32Array(row.vector);
-        const similarity = this.cosineSimilarity(queryVector, vector);
-
-        results.push({
-          id: row.id,
-          content: row.content,
-          similarity,
-          score: similarity,
-          metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
-        });
-      }
+      const stmt = this.db.prepare(`SELECT id, content, vector, metadata FROM doc_embeddings`);
+      rows = stmt.all() as any;
     }
 
-    // Sort by similarity and limit
+    const results: Array<SimilarityResult & { score: number }> = [];
+    for (const row of rows) {
+      const vec = bufferToFloat32Array(row.vector as unknown as Buffer);
+      const cos = this.cosineSimilarity(queryVector, vec); // [-1..1]
+      const similarity = (cos + 1) / 2; // -> [0..1]
+      results.push({
+        id: row.id,
+        content: row.content,
+        similarity,
+        score: similarity,
+        metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+      });
+    }
+
     results.sort((a, b) => b.score - a.score);
     return results.slice(0, limit);
   }
@@ -519,9 +495,7 @@ export class VectorStore {
       dateRange?: { start?: number; end?: number };
     } = {},
   ): Promise<SimilarityResult[]> {
-    if (!this.db) {
-      throw new Error("Vector store not initialized");
-    }
+    if (!this.db) throw new Error("Vector store not initialized");
 
     const { limit = 10, threshold = 0.0, metadataFilter, dateRange } = options;
 
@@ -529,67 +503,56 @@ export class VectorStore {
       const hasVecExtension = this.checkVecExtension();
 
       if (hasVecExtension) {
-        // Build WHERE conditions
         const conditions: string[] = [];
-        const params: any[] = [Array.from(queryVector)];
+        const condVals: any[] = [];
 
         if (dateRange?.start != null) {
           conditions.push("e.created_at >= ?");
-          params.push(dateRange.start);
+          condVals.push(dateRange.start);
         }
-
         if (dateRange?.end != null) {
           conditions.push("e.created_at <= ?");
-          params.push(dateRange.end);
+          condVals.push(dateRange.end);
         }
-
         if (metadataFilter) {
-          // Simple JSON key-value matching
           for (const [key, value] of Object.entries(metadataFilter)) {
             conditions.push(`json_extract(e.metadata, '$.${key}') = ?`);
-            params.push(value);
+            condVals.push(value);
           }
         }
 
         const whereClause = conditions.length > 0 ? `AND ${conditions.join(" AND ")}` : "";
-
-        params.push(limit);
-
         const stmt = this.db.prepare(`
-          SELECT
-            e.id,
-            e.content,
-            e.metadata,
-            v.distance
-          FROM vec_embeddings v
-          JOIN embeddings e ON v.id = e.id
-          WHERE v.embedding MATCH ?
-            ${whereClause}
-          ORDER BY v.distance
-          LIMIT ?
-        `);
+        SELECT e.id, e.content, e.metadata, distance
+        FROM vec_doc_embeddings v
+        JOIN doc_embeddings e ON v.id = e.id
+        WHERE v.embedding MATCH vec_f32(?) AND k = ?
+          ${whereClause}
+        ORDER BY distance
+      `);
 
-        const results = stmt.all(...params) as Array<{
+        const vectorJson = JSON.stringify(Array.from(queryVector));
+        const rows = stmt.all(vectorJson, limit, ...condVals) as Array<{
           id: string;
           content: string;
           metadata: string | null;
           distance: number;
         }>;
 
-        return results
+        return rows
           .map((row) => ({
             id: row.id,
             content: row.content,
             similarity: Math.max(0, 1 - row.distance),
             metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
           }))
-          .filter((result) => result.similarity >= threshold);
+          .filter((r) => r.similarity >= threshold);
       } else {
-        // Fallback with filters applied in memory
         return this.fallbackSearchWithFilters(queryVector, options);
       }
     } catch (error) {
       console.error("[VectorStore] Advanced search failed:", error);
+      if (this.sqliteVecEnabled) return [];
       return this.fallbackSearchWithFilters(queryVector, options);
     }
   }
@@ -609,74 +572,52 @@ export class VectorStore {
     if (!this.db) throw new Error("Database not initialized");
 
     const { limit = 10, threshold = 0.0, metadataFilter, dateRange } = options;
-    const hasVecExtension = this.checkVecExtension();
 
-    // Build WHERE conditions for SQL
     const conditions: string[] = [];
     const params: any[] = [];
-
     if (dateRange?.start != null) {
       conditions.push("e.created_at >= ?");
       params.push(dateRange.start);
     }
-
     if (dateRange?.end != null) {
       conditions.push("e.created_at <= ?");
       params.push(dateRange.end);
     }
+    const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-
-    let rows: any[];
-
-    if (hasVecExtension) {
-      // sqlite-vec mode: JOIN with vec_embeddings table
+    let rows: VectorRow[] = [];
+    if (this.sqliteVecEnabled) {
       const stmt = this.db.prepare(`
-        SELECT e.id, e.content, e.metadata, e.created_at, v.embedding
-        FROM embeddings e
-        LEFT JOIN vec_embeddings v ON e.id = v.id
-        ${whereClause}
-      `);
-      rows = stmt.all(...params);
+      SELECT e.id, e.content, e.metadata, e.created_at, v.embedding as vector
+      FROM doc_embeddings e JOIN vec_doc_embeddings v ON v.id = e.id
+      ${whereClause.replaceAll("e.", "e.")}
+    `);
+      rows = stmt.all(...params) as any;
     } else {
-      // Fallback mode: vector stored in embeddings table
       const stmt = this.db.prepare(`
-        SELECT id, content, vector, metadata, created_at
-        FROM embeddings e
-        ${whereClause}
-      `);
-      rows = stmt.all(...params) as VectorRow[];
+      SELECT id, content, vector, metadata, created_at
+      FROM doc_embeddings
+      ${whereClause}
+    `);
+      rows = stmt.all(...params) as any;
     }
 
     const results: Array<SimilarityResult & { score: number }> = [];
-
     for (const row of rows) {
-      // Apply metadata filter
       if (metadataFilter && row.metadata) {
-        const metadata = JSON.parse(row.metadata);
-        let matches = true;
-
-        for (const [key, value] of Object.entries(metadataFilter)) {
-          if (metadata[key] !== value) {
-            matches = false;
+        const md = JSON.parse(row.metadata);
+        let ok = true;
+        for (const [k, v] of Object.entries(metadataFilter)) {
+          if (md[k] !== v) {
+            ok = false;
             break;
           }
         }
-
-        if (!matches) continue;
+        if (!ok) continue;
       }
 
-      // Get vector based on schema type
-      let vector: Float32Array;
-      if (hasVecExtension) {
-        if (!row.embedding) continue; // Skip entries without embeddings
-        vector = new Float32Array(row.embedding);
-      } else {
-        vector = bufferToFloat32Array(row.vector);
-      }
-
-      const similarity = this.cosineSimilarity(queryVector, vector);
-
+      const vec = bufferToFloat32Array(row.vector as unknown as Buffer);
+      const similarity = this.cosineSimilarity(queryVector, vec);
       if (similarity >= threshold) {
         results.push({
           id: row.id,
@@ -688,7 +629,6 @@ export class VectorStore {
       }
     }
 
-    // Sort by similarity and limit
     results.sort((a, b) => b.score - a.score);
     return results.slice(0, limit);
   }
@@ -734,9 +674,13 @@ export class VectorStore {
       `)
         .get() as { has_vec: number };
 
-      return result.has_vec === 1;
+      const enabled = result.has_vec === 1;
+      if (enabled) {
+        this.sqliteVecEnabled = true;
+      }
+      return enabled;
     } catch {
-      return false;
+      return this.sqliteVecEnabled;
     }
   }
 
@@ -744,99 +688,92 @@ export class VectorStore {
    * Get embedding by ID
    */
   async get(id: string): Promise<VectorEmbedding | null> {
-    if (!this.db) {
-      throw new Error("Vector store not initialized");
-    }
+    if (!this.db) throw new Error("Vector store not initialized");
 
-    const hasVecExtension = this.checkVecExtension();
-
-    if (hasVecExtension) {
-      // With sqlite-vec: need to join with vec_embeddings table
-      const stmt = this.db.prepare(`
-        SELECT e.id, e.content, e.metadata, e.created_at, v.embedding
-        FROM embeddings e
-        LEFT JOIN vec_embeddings v ON e.id = v.id
+    const row = this.sqliteVecEnabled
+      ? (this.db
+          .prepare(`
+        SELECT e.id, e.content, e.metadata, e.created_at, v.embedding as vector
+        FROM doc_embeddings e JOIN vec_doc_embeddings v ON v.id = e.id
         WHERE e.id = ?
-      `);
+      `)
+          .get(id) as any)
+      : (this.db.prepare(`SELECT * FROM doc_embeddings WHERE id = ?`).get(id) as any);
 
-      const row = stmt.get(id) as any;
-      if (!row) return null;
+    if (!row) return null;
 
-      // Convert embedding from sqlite-vec format to Float32Array
-      const vector = row.embedding ? new Float32Array(row.embedding) : new Float32Array(this.config.dimensions);
-
-      return {
-        id: row.id,
-        content: row.content,
-        vector,
-        metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
-        createdAt: row.created_at,
-      };
-    } else {
-      // Fallback mode: vector stored in embeddings table
-      const stmt = this.db.prepare(`
-        SELECT * FROM embeddings WHERE id = ?
-      `);
-
-      const row = stmt.get(id) as VectorRow | undefined;
-      if (!row) return null;
-
-      return {
-        id: row.id,
-        content: row.content,
-        vector: bufferToFloat32Array(row.vector),
-        metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
-        createdAt: row.created_at,
-      };
-    }
+    const buf = row.vector as Buffer;
+    return {
+      id: row.id,
+      content: row.content,
+      vector: bufferToFloat32Array(buf),
+      metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+      createdAt: row.created_at,
+    };
   }
 
   /**
    * Update an existing embedding
    */
   async update(id: string, vector: Float32Array, metadata?: Record<string, unknown>): Promise<void> {
-    if (!this.db || !this.updateStmt) {
-      throw new Error("Vector store not initialized");
-    }
-
-    const vectorBuffer = float32ArrayToBuffer(vector);
+    if (!this.db || !this.updateStmt) throw new Error("Vector store not initialized");
     const metadataStr = metadata ? JSON.stringify(metadata) : null;
 
-    this.updateStmt.run(vectorBuffer, metadataStr, Date.now(), id);
+    if (this.sqliteVecEnabled && this.insertVecStmt && this.deleteVecByIdStmt) {
+      const tx = this.db.transaction(() => {
+        this.deleteVecByIdStmt!.run(id);
+        this.insertVecStmt!.run(id, JSON.stringify(Array.from(vector)));
+        this.updateStmt!.run(metadataStr, Date.now(), id);
+      });
+      tx();
+    } else {
+      const vectorBuffer = float32ArrayToBuffer(vector);
+      this.updateStmt.run(vectorBuffer, metadataStr, Date.now(), id);
+    }
   }
 
   /**
    * Delete an embedding
    */
   async delete(id: string): Promise<void> {
-    if (!this.db || !this.deleteStmt) {
-      throw new Error("Vector store not initialized");
-    }
+    if (!this.db || !this.deleteStmt) throw new Error("Vector store not initialized");
 
-    this.deleteStmt.run(id);
+    const tx = this.db.transaction((theId: string) => {
+      if (this.sqliteVecEnabled && this.deleteVecByIdStmt) {
+        this.deleteVecByIdStmt.run(theId);
+      }
+      this.deleteStmt!.run(theId);
+    });
+
+    tx(id);
   }
 
   /**
-   * Get total number of embeddings
+   * Get total number of doc_embeddings
    */
   async count(): Promise<number> {
     if (!this.db) {
       throw new Error("Vector store not initialized");
     }
 
-    const result = this.db.prepare("SELECT COUNT(*) as count FROM embeddings").get() as { count: number };
+    const result = this.db.prepare("SELECT COUNT(*) as count FROM doc_embeddings").get() as { count: number };
     return result.count;
   }
 
   /**
-   * Clear all embeddings
+   * Clear all doc_embeddings
    */
   async clear(): Promise<void> {
-    if (!this.db) {
-      throw new Error("Vector store not initialized");
-    }
+    if (!this.db) throw new Error("Vector store not initialized");
 
-    this.db.exec("DELETE FROM embeddings");
+    const tx = this.db.transaction(() => {
+      if (this.sqliteVecEnabled) {
+        this.db!.exec("DELETE FROM vec_doc_embeddings");
+      }
+      this.db!.exec("DELETE FROM doc_embeddings");
+    });
+
+    tx();
     console.log("[VectorStore] Cleared all embeddings");
   }
 
@@ -872,7 +809,7 @@ export class VectorStore {
         MIN(created_at) as oldest,
         MAX(created_at) as newest,
         page_count * page_size / 1024.0 / 1024.0 as size_mb
-      FROM embeddings,
+      FROM doc_embeddings,
       (SELECT page_count * page_size as total FROM pragma_page_count(), pragma_page_size())
     `)
       .get() as { oldest: number | null; newest: number | null; size_mb: number };

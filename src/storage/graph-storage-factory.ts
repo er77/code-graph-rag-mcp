@@ -7,40 +7,44 @@
  * TASK-034: Fix circular bug by ensuring single GraphStorage instance
  */
 
-import { GraphStorageImpl } from './graph-storage.js';
-import { getSQLiteManager } from './sqlite-manager.js';
-import { runMigrations } from './schema-migrations.js';
+import { GraphStorageImpl } from "./graph-storage.js";
+import { runMigrations } from "./schema-migrations.js";
+import type { SQLiteManager } from "./sqlite-manager.js";
+import { getSQLiteManager } from "./sqlite-manager.js";
 
-// Global singleton instance
 let graphStorage: GraphStorageImpl | null = null;
+let boundManager: SQLiteManager | null = null;
 
-/**
- * Get the singleton GraphStorage instance
- * Used by both IndexerAgent and MCP tools to ensure consistent database state
- */
-export async function getGraphStorage(): Promise<GraphStorageImpl> {
-  if (!graphStorage) {
-    console.log('[GraphStorageFactory] Creating NEW GraphStorage singleton instance');
-    // Use singleton SQLiteManager to ensure same database connection
-    const sqliteManager = getSQLiteManager();
-    sqliteManager.initialize();
+export async function getGraphStorage(sqliteManager?: SQLiteManager): Promise<GraphStorageImpl> {
+  const manager = sqliteManager ?? getSQLiteManager();
 
-    // Run database migrations to ensure tables exist
-    runMigrations(sqliteManager);
+  const needNewInstance = !graphStorage || boundManager !== manager;
+  if (needNewInstance) {
+    console.log("[GraphStorageFactory] Creating NEW GraphStorage singleton instance");
+    if (!manager.isOpen()) {
+      manager.initialize();
+    }
+    runMigrations(manager);
+    const storage = new GraphStorageImpl(manager);
+    graphStorage = storage;
+    boundManager = manager;
 
-    // Create single GraphStorageImpl instance
-    graphStorage = new GraphStorageImpl(sqliteManager);
-  } else {
-    console.log('[GraphStorageFactory] Returning EXISTING GraphStorage singleton instance');
+    await storage.initialize();
+    return storage;
   }
-  // Ensure storage is ready (re-prepare statements if manager was reset)
-  await graphStorage.initialize();
-  return graphStorage;
+
+  console.log("[GraphStorageFactory] Returning EXISTING GraphStorage singleton instance");
+
+  const storage = graphStorage as GraphStorageImpl;
+  await storage.initialize();
+  return storage;
 }
 
-/**
- * Reset the singleton (used for testing)
- */
+export async function initializeGraphStorage(sqliteManager: SQLiteManager): Promise<GraphStorageImpl> {
+  return getGraphStorage(sqliteManager);
+}
+
 export function resetGraphStorage(): void {
   graphStorage = null;
+  boundManager = null;
 }

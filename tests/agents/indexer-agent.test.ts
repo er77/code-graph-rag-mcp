@@ -15,14 +15,15 @@ import { existsSync, rmSync } from "node:fs";
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import { afterEach, beforeEach, describe, expect, jest, test } from "@jest/globals";
+import { IndexerAgent } from "../../src/agents/indexer-agent.js";
 import { knowledgeBus } from "../../src/core/knowledge-bus.js";
 import { resetCacheManager } from "../../src/storage/cache-manager.js";
-import { resetSQLiteManager } from "../../src/storage/sqlite-manager.js";
+import { resetGraphStorage } from "../../src/storage/graph-storage-factory.js";
+import { getSQLiteManager, resetSQLiteManager } from "../../src/storage/sqlite-manager.js";
 import { AgentStatus } from "../../src/types/agent.js";
 import type { ParsedEntity, ParseResult } from "../../src/types/parser.js";
 import type { Entity, EntityChange, GraphQuery } from "../../src/types/storage.js";
 import { EntityType, RelationType } from "../../src/types/storage.js";
-import { IndexerAgent } from "../../src/agents/indexer-agent.js";
 
 // =============================================================================
 // 2. TEST CONFIGURATION
@@ -76,11 +77,13 @@ describe("IndexerAgent", () => {
     });
 
     // Reset singletons
+    resetGraphStorage();
     resetSQLiteManager();
     resetCacheManager();
 
-    // Create agent
-    agent = new IndexerAgent();
+    // Get SQLite manager and create agent
+    const sqliteManager = getSQLiteManager();
+    agent = new IndexerAgent(sqliteManager);
   });
 
   afterEach(async () => {
@@ -97,6 +100,7 @@ describe("IndexerAgent", () => {
     });
 
     // Reset singletons
+    resetGraphStorage();
     resetSQLiteManager();
     resetCacheManager();
   });
@@ -348,14 +352,14 @@ describe("IndexerAgent", () => {
         type: "entity",
         limit: 1,
       };
-    
+
       const entities = await agent.queryGraph(query);
-    
+
       if (entities.entities.length > 0) {
         const firstEntity = entities.entities[0];
         if (firstEntity) {
           const result = await agent.querySubgraph(firstEntity.id, 2);
-    
+
           expect(result.entities).toBeDefined();
           expect(result.relationships).toBeDefined();
         }

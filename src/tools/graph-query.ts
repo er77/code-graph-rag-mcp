@@ -2,8 +2,8 @@
  * Tool for querying the graph database directly via GraphStorage API
  */
 
-import { GraphStorageImpl } from '../storage/graph-storage.js';
-import { type Entity, type Relationship } from '../types/storage.js';
+import type { GraphStorageImpl } from "../storage/graph-storage.js";
+import type { Entity, Relationship } from "../types/storage.js";
 
 function likePattern(input: string): string {
   // Minimal escaping for LIKE; wrap with % for contains semantics
@@ -14,7 +14,7 @@ function likePattern(input: string): string {
 export async function queryGraphEntities(
   storage: GraphStorageImpl,
   query?: string,
-  limit: number = 100
+  limit: number = 100,
 ): Promise<{
   entities: Entity[];
   relationships: Relationship[];
@@ -25,7 +25,7 @@ export async function queryGraphEntities(
 }> {
   // Use the storage’s executeQuery to avoid raw SQL
   const q = await storage.executeQuery({
-    type: 'entity',
+    type: "entity",
     limit,
     filters: query
       ? {

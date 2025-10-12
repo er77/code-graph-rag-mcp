@@ -24,15 +24,13 @@
  *  - 2025-09-14: Created by Dev-Agent - TASK-002: Embedding generator with all-MiniLM-L6-v2
  *  - 2025-09-17: Fixed by Dev-Agent - TASK-004B: Resolved initialization stack overflow patterns
  */
-
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
-// Access global env from our safe environment setup
-const env = (globalThis as any).env || {};
-type Pipeline = (text: string, opts?: any) => Promise<{ data: number[] } & Record<string, unknown>>;
-
 import type { EmbeddingConfig } from "../types/semantic.js";
+import type { EmbeddingProvider } from "./providers/base.js";
+import { createProvider } from "./providers/factory.js";
+import { MemoryProvider } from "./providers/memory-provider.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -43,10 +41,11 @@ const DEFAULT_CONFIG: EmbeddingConfig = {
   quantized: true,
   localPath: "./models",
   batchSize: 8,
+  provider: "memory",
 };
 
-// Embedding dimensions (matches all-MiniLM-L6-v2 model output)
-const EMBEDDING_DIMENSION = 384;
+const DEFAULT_TTL_MS = 60 * 60 * 1000;
+const MAX_CACHE_ENTRIES = 5000;
 
 // =============================================================================
 // 3. DATA MODELS AND TYPE DEFINITIONS
@@ -55,427 +54,244 @@ interface EmbeddingCache {
   text: string;
   embedding: Float32Array;
   timestamp: number;
+  providerKey: string;
 }
 
 // =============================================================================
 // 4. UTILITY FUNCTIONS AND HELPERS
 // =============================================================================
 function hashText(text: string): string {
-  // Simple hash for cache key
   let hash = 0;
   for (let i = 0; i < text.length; i++) {
     const char = text.charCodeAt(i);
     hash = (hash << 5) - hash + char;
-    hash = hash & hash; // Convert to 32-bit integer
+    hash = hash & hash;
   }
   return hash.toString(36);
 }
 
-// Numeric 32-bit hash (seed PRNG in fallback-emdding)
-function hash32(text: string): number {
-  let hash = 0;
-  for (let i = 0; i < text.length; i++) {
-    const char = text.charCodeAt(i);
-    hash = ((hash << 5) - hash + char) | 0; // 32-bit signed
-  }
-  return hash >>> 0; // unsigned
-}
-
 function normalizeText(text: string): string {
-  // Normalize text for better embedding quality
-  return text.trim().replace(/\s+/g, " ").slice(0, 512); // Limit length for model input
+  return text.trim().replace(/\s+/g, " ").slice(0, 512);
 }
 
 // =============================================================================
-// 5. CORE BUSINESS LOGIC
+// 5. CORE BUSINESS LOGIC (ORCHESTRATOR)
 // =============================================================================
 export class EmbeddingGenerator {
-  private model: Pipeline | null = null;
+  private provider: EmbeddingProvider | null = null;
+  private fallback: EmbeddingProvider | null = null;
+
   private cache: Map<string, EmbeddingCache> = new Map();
   private config: EmbeddingConfig;
   private initPromise: Promise<void> | null = null;
+  private isInitializing = false;
+
   private cacheHits = 0;
   private cacheMisses = 0;
-
-  // TASK-004B: Stack overflow prevention
-  private isInitializing = false;
-  private initializationDepth = 0;
-  private readonly MAX_INIT_DEPTH = 3;
-  private initializationAttempts = 0;
-  private readonly MAX_INIT_ATTEMPTS = 5;
-  private debugMode = process.env.EMBEDDING_DEBUG === 'true';
+  private debugMode = process.env.EMBEDDING_DEBUG === "true";
 
   constructor(config: Partial<EmbeddingConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
 
-  /**
-   * Initialize the embedding model
-   * TASK-004B: Fixed recursive initialization patterns
-   */
+  private providerKey(): string {
+    const info = this.provider?.info ?? this.fallback?.info;
+    const dim = this.provider?.getDimension() ?? this.fallback?.getDimension() ?? 384;
+    const name = info?.name ?? "memory";
+    const model = info?.model ?? "deterministic-hash";
+    return `${name}:${model}:${dim}`;
+  }
+
   async initialize(): Promise<void> {
-    // TASK-004B: Prevent stack overflow with depth tracking
-    this.initializationDepth++;
-
-    if (this.debugMode) {
-      console.log(`[EmbeddingGenerator] Initialize called - depth: ${this.initializationDepth}, attempts: ${this.initializationAttempts}`);
-    }
-
-    // Prevent infinite recursion
-    if (this.initializationDepth > this.MAX_INIT_DEPTH) {
-      this.initializationDepth--;
-      throw new Error(`[EmbeddingGenerator] TASK-004B: Initialization depth exceeded (${this.initializationDepth}). Potential recursive call detected.`);
-    }
-
-    // Prevent too many initialization attempts
-    if (this.initializationAttempts >= this.MAX_INIT_ATTEMPTS) {
-      this.initializationDepth--;
-      throw new Error(`[EmbeddingGenerator] TASK-004B: Maximum initialization attempts (${this.MAX_INIT_ATTEMPTS}) exceeded.`);
-    }
-
-    // Return existing promise if already initializing
-    if (this.isInitializing && this.initPromise) {
-      this.initializationDepth--;
-      return this.initPromise;
-    }
-
-    // Prevent multiple initializations
-    if (this.initPromise) {
-      this.initializationDepth--;
-      return this.initPromise;
-    }
-
+    if (this.initPromise) return this.initPromise;
     this.isInitializing = true;
-    this.initializationAttempts++;
-    this.initPromise = this.initializeInternal();
 
-    try {
-      await this.initPromise;
-    } finally {
-      this.isInitializing = false;
-      this.initializationDepth--;
-    }
+    this.initPromise = (async () => {
+      try {
+        const providerName = this.config.provider ?? "memory";
+        this.provider = createProvider({
+          provider: providerName,
+          modelName: this.config.modelName ?? DEFAULT_MODEL,
+          transformers: {
+            quantized: this.config.quantized,
+            localPath: this.config.localPath,
+          },
+          ollama: this.config.ollama,
+          openai: this.config.openai,
+          cloudru: this.config.cloudru,
+          memory: this.config.memory,
+        });
+
+        this.fallback = new MemoryProvider();
+
+        try {
+          await this.provider.initialize();
+          if (this.debugMode) {
+            console.log(
+              `[EmbeddingGenerator] Provider initialized: ${this.provider.info.name} (${this.provider.info.model})`,
+            );
+          }
+        } catch (e) {
+          console.warn("[EmbeddingGenerator] Provider init failed, using memory fallback:", (e as Error)?.message || e);
+          this.provider = this.fallback;
+        }
+
+        if (!this.provider) {
+          this.provider = this.fallback;
+        }
+      } finally {
+        this.isInitializing = false;
+      }
+    })();
 
     return this.initPromise;
   }
 
-  private async initializeInternal(): Promise<void> {
-    try {
-      if (this.debugMode) {
-        console.log(`[EmbeddingGenerator] TASK-004B: Starting initialization (attempt ${this.initializationAttempts})...`);
-      }
-
-      const enableTransformers = String(env.MCP_EMBEDDING_ENABLED || 'false') === 'true';
-      if (enableTransformers) {
-        try {
-          // Configure transformers.js runtime environment
-          if (env) {
-            // Allow using local models path; remote downloads optional based on provider
-            (env as any).localModelPath = this.config.localPath;
-            (env as any).useBrowserCache = false;
-            (env as any).allowRemoteModels = String(env.MCP_EMBEDDING_PROVIDER || 'memory') !== 'memory';
-          }
-
-          const mod: any = await import('@xenova/transformers');
-          const pipeFactory = mod.pipeline as (task: string, model: string, options?: any) => Promise<Pipeline>;
-          this.model = await pipeFactory('feature-extraction', this.config.modelName ?? DEFAULT_MODEL, {
-            quantized: this.config.quantized !== false,
-            progress_callback: undefined,
-          });
-
-          console.log(`[EmbeddingGenerator] Transformers backend initialized: ${this.config.modelName}`);
-
-          // Quick warm-up
-          const out = await this.model('warm up', { pooling: 'mean', normalize: true });
-          if (!out || !Array.isArray(out.data) || out.data.length === 0) {
-            console.warn('[EmbeddingGenerator] Unexpected transformer output, falling back to memory embeddings');
-            this.model = null;
-          }
-        } catch (e) {
-          console.warn('[EmbeddingGenerator] Transformers backend unavailable, using fallback. Reason:', (e as Error).message);
-          this.model = null;
-        }
-      } else {
-        this.model = null;
-      }
-
-      if (!this.model) {
-        console.log(`[EmbeddingGenerator] Fallback mode initialized (memory embeddings)`);
-        const testEmbedding = this.generateFallbackEmbedding('test');
-        if (testEmbedding.length !== EMBEDDING_DIMENSION) {
-          throw new Error(`[EmbeddingGenerator] TASK-004B: Fallback embedding wrong size: ${testEmbedding.length}`);
-        }
-        console.log(`[EmbeddingGenerator] Fallback warm-up complete - dimension: ${testEmbedding.length}`);
-      }
-
-    } catch (error) {
-      console.error("[EmbeddingGenerator] TASK-004B: Initialization failed:", error);
-      // Reset initialization state on failure
-      this.isInitializing = false;
-      this.initPromise = null;
-      throw new Error(`Failed to initialize embedding model: ${error}`);
-    }
-  }
-
   /**
    * Generate embedding for a single text
-   * TASK-004B: Added stack overflow protection
    */
   async generateEmbedding(text: string): Promise<Float32Array> {
-    // TASK-004B: Prevent recursive initialization during embedding generation
-    if (!this.model && !this.isInitializing) {
+    if (!this.provider && !this.isInitializing) {
       await this.initialize();
-    } else if (this.isInitializing) {
-      if (this.debugMode) {
-        console.log(`[EmbeddingGenerator] TASK-004B: Using fallback during initialization`);
-      }
-      // Use fallback directly to avoid recursion during initialization
-      return this.generateFallbackEmbedding(normalizeText(text));
+    } else if (this.isInitializing && this.fallback) {
+      if (this.debugMode) console.log("[EmbeddingGenerator] fallback during init");
+      return this.fallback.embed(normalizeText(text));
     }
 
-    // Normalize the text
-    const normalizedText = normalizeText(text);
-    const cacheKey = hashText(normalizedText);
+    const normalized = normalizeText(text);
+    const key = `${this.providerKey()}:${hashText(normalized)}`;
 
-    // Check cache first
-    const cached = this.cache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < 3600000) {
-      // 1 hour TTL
+    const cached = this.cache.get(key);
+    if (cached && Date.now() - cached.timestamp < DEFAULT_TTL_MS) {
       this.cacheHits++;
       return cached.embedding;
     }
-
     this.cacheMisses++;
 
+    let embedding: Float32Array;
     try {
-      let embedding: Float32Array;
-
-      if (this.model) {
-        // Use real transformers model if available
-        const output = await this.model(normalizedText, {
-          pooling: "mean",
-          normalize: true,
-        });
-        embedding = new Float32Array(output.data);
-      } else {
-        // Fallback: generate deterministic embedding based on text hash
-        embedding = this.generateFallbackEmbedding(normalizedText);
-      }
-
-      // Cache the result
-      if (this.cache.size < 5000) {
-        this.cache.set(cacheKey, {
-          text: normalizedText,
-          embedding,
-          timestamp: Date.now(),
-        });
-      } else {
-        // LRU eviction: remove oldest entry
-        this.evictOldestCacheEntry();
-        this.cache.set(cacheKey, {
-          text: normalizedText,
-          embedding,
-          timestamp: Date.now(),
-        });
-      }
-
-      return embedding;
-    } catch (error) {
-      console.error("[EmbeddingGenerator] Embedding generation failed:", error);
-      throw error;
+      embedding = await this.provider!.embed(normalized);
+    } catch (e) {
+      console.warn("[EmbeddingGenerator] embed failed, using fallback:", (e as Error)?.message || e);
+      embedding = await this.fallback!.embed(normalized);
     }
+
+    // Cache with simple LRU eviction
+    if (this.cache.size >= MAX_CACHE_ENTRIES) {
+      this.evictOldestCacheEntry();
+    }
+    this.cache.set(key, {
+      text: normalized,
+      embedding,
+      timestamp: Date.now(),
+      providerKey: this.providerKey(),
+    });
+
+    return embedding;
   }
 
   /**
    * Generate embeddings for multiple texts in batch
    */
   async generateBatch(texts: string[]): Promise<Float32Array[]> {
-    if (!this.model) {
+    if (!this.provider) {
       await this.initialize();
     }
 
     const results: Float32Array[] = [];
-    const batchSize = this.config.batchSize ?? DEFAULT_CONFIG.batchSize;
+    const batchSize = this.config.batchSize ?? 8;
 
-    // Process in batches for optimal performance
     for (let i = 0; i < texts.length; i += batchSize) {
       const batch = texts.slice(i, Math.min(i + batchSize, texts.length));
 
-      // Check cache for each item
-      const toProcess: { index: number; text: string }[] = [];
+      const toProcess: { index: number; text: string; key: string }[] = [];
       const batchResults: (Float32Array | null)[] = Array(batch.length).fill(null);
 
       for (let j = 0; j < batch.length; j++) {
-        const normalizedText = normalizeText(batch[j] ?? '');
-        const cacheKey = hashText(normalizedText);
-        const cached = this.cache.get(cacheKey);
+        const normalized = normalizeText(batch[j] ?? "");
+        const key = `${this.providerKey()}:${hashText(normalized)}`;
+        const cached = this.cache.get(key);
 
-        if (cached && Date.now() - cached.timestamp < 3600000) {
+        if (cached && Date.now() - cached.timestamp < DEFAULT_TTL_MS) {
           this.cacheHits++;
           batchResults[j] = cached.embedding;
         } else {
           this.cacheMisses++;
-          toProcess.push({ index: j, text: normalizedText });
-          batchResults[j] = null;
+          toProcess.push({ index: j, text: normalized, key });
         }
       }
 
-      // Process uncached items
+      // Process uncached
       if (toProcess.length > 0) {
-        const embeddings = await this.processBatch(toProcess.map((item) => item.text));
+        let embeddings: Float32Array[] = [];
+        try {
+          if (typeof this.provider!.embedBatch === "function") {
+            embeddings = await this.provider!.embedBatch!(toProcess.map((t) => t.text));
+          } else {
+            // sequential fallback
+            embeddings = [];
+            for (const item of toProcess) {
+              try {
+                embeddings.push(await this.provider!.embed(item.text));
+              } catch (e) {
+                console.warn("[EmbeddingGenerator] embed failed in batch, using fallback:", (e as Error)?.message || e);
+                embeddings.push(await this.fallback!.embed(item.text));
+              }
+            }
+          }
+        } catch (e) {
+          embeddings = await this.fallback!.embedBatch!(toProcess.map((t) => t.text));
+        }
 
         toProcess.forEach((item, k) => {
-          const embedding = embeddings[k] ?? new Float32Array(EMBEDDING_DIMENSION);
+          const embedding = embeddings[k] ?? new Float32Array(this.provider?.getDimension() ?? 384);
           batchResults[item.index] = embedding;
-
-          // Cache the result
-          const cacheKey = hashText(item.text);
-          if (this.cache.size < 5000) {
-            this.cache.set(cacheKey, {
-              text: item.text,
-              embedding,
-              timestamp: Date.now(),
-            });
-          } else {
-            this.evictOldestCacheEntry();
-            this.cache.set(cacheKey, {
-              text: item.text,
-              embedding,
-              timestamp: Date.now(),
-            });
-          }
+          if (this.cache.size >= MAX_CACHE_ENTRIES) this.evictOldestCacheEntry();
+          this.cache.set(item.key, {
+            text: item.text,
+            embedding,
+            timestamp: Date.now(),
+            providerKey: this.providerKey(),
+          });
         });
       }
 
-      // Add to results
-      const finalized = batchResults.filter((r): r is Float32Array => r !== null);
-      results.push(...finalized);
+      results.push(...batchResults.filter((r): r is Float32Array => r !== null));
     }
 
     return results;
   }
 
   /**
-   * Process a batch of texts
-   */
-  private async processBatch(texts: string[]): Promise<Float32Array[]> {
-    try {
-      if (this.model) {
-        // Process all texts at once for better efficiency with real model
-        const outputs = await Promise.all(
-          texts.map((text) =>
-            this.model!(text, {
-              pooling: "mean",
-              normalize: true,
-            }),
-          ),
-        );
-
-        return outputs.map((output) => new Float32Array(output.data));
-      } else {
-        // Use fallback for all texts
-        return texts.map((text) => this.generateFallbackEmbedding(text));
-      }
-    } catch (error) {
-      console.error("[EmbeddingGenerator] Batch processing failed:", error);
-      // Fallback to individual processing
-      const results: Float32Array[] = [];
-      for (const text of texts) {
-        try {
-          const embedding = await this.generateEmbedding(text);
-          results.push(embedding);
-        } catch (err) {
-          console.error(`[EmbeddingGenerator] Failed to generate embedding for text: ${text.slice(0, 50)}...`);
-          // Return zero vector as fallback
-          results.push(new Float32Array(EMBEDDING_DIMENSION));
-        }
-      }
-      return results;
-    }
-  }
-
-  /**
    * Generate embedding for code with special preprocessing
    */
   async generateCodeEmbedding(code: string, language?: string): Promise<Float32Array> {
-    // Preprocess code for better embedding quality
-    const processedCode = this.preprocessCode(code, language);
-    return this.generateEmbedding(processedCode);
+    const processed = this.preprocessCode(code, language);
+    return this.generateEmbedding(processed);
   }
 
-  /**
-   * Generate fallback embedding when transformers is not available
-   */
-  private generateFallbackEmbedding(text: string): Float32Array {
-    
-    const embedding = new Float32Array(EMBEDDING_DIMENSION);
-    let state = hash32(text) || 1;
-
-    for (let i = 0; i < EMBEDDING_DIMENSION; i++) {
-      // LCG (32-bit)
-      state = (state * 1664525 + 1013904223) >>> 0;
-      // [0, 1) -> [-0.5, 0.5]
-      embedding[i] = (state / 0xffffffff) - 0.5;
-    }
-
-    let magnitude = 0;
-    for (let i = 0; i < EMBEDDING_DIMENSION; i++) {
-      magnitude += (embedding[i] ?? 0) * (embedding[i] ?? 0);
-    }
-    magnitude = Math.sqrt(magnitude);
-    if (magnitude > 0) {
-      for (let i = 0; i < EMBEDDING_DIMENSION; i++) {
-        embedding[i] = (embedding[i] ?? 0) / magnitude;
-      }
-    }
-    return embedding;
-  }
-
-
-  /**
-   * Preprocess code for embedding
-   */
   private preprocessCode(code: string, language?: string): string {
-    // Remove comments (simple approach)
     let processed = code
-      .replace(/\/\/.*$/gm, "") // Single-line comments
-      .replace(/\/\*[\s\S]*?\*\//g, "") // Multi-line comments
-      .replace(/^\s*[\r\n]/gm, ""); // Empty lines
+      .replace(/\/\/.*$/gm, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*[\r\n]/gm, "");
 
-    // Add language context if provided
-    if (language) {
-      processed = `${language} code: ${processed}`;
-    }
-
-    // Normalize whitespace
-    processed = processed.replace(/\s+/g, " ").trim();
-
-    // Limit length
-    return processed.slice(0, 512);
+    if (language) processed = `${language} code: ${processed}`;
+    return processed.replace(/\s+/g, " ").trim().slice(0, 512);
   }
 
-  /**
-   * Evict oldest cache entry (LRU)
-   */
   private evictOldestCacheEntry(): void {
     let oldestKey: string | null = null;
     let oldestTime = Infinity;
-
     for (const [key, entry] of this.cache) {
       if (entry.timestamp < oldestTime) {
         oldestTime = entry.timestamp;
         oldestKey = key;
       }
     }
-
-    if (oldestKey) {
-      this.cache.delete(oldestKey);
-    }
+    if (oldestKey) this.cache.delete(oldestKey);
   }
 
-  /**
-   * Clear the cache
-   */
   clearCache(): void {
     this.cache.clear();
     this.cacheHits = 0;
@@ -483,15 +299,7 @@ export class EmbeddingGenerator {
     console.log("[EmbeddingGenerator] Cache cleared");
   }
 
-  /**
-   * Get cache statistics
-   */
-  getCacheStats(): {
-    size: number;
-    hits: number;
-    misses: number;
-    hitRate: number;
-  } {
+  getCacheStats(): { size: number; hits: number; misses: number; hitRate: number } {
     const total = this.cacheHits + this.cacheMisses;
     return {
       size: this.cache.size,
@@ -501,12 +309,12 @@ export class EmbeddingGenerator {
     };
   }
 
-  /**
-   * Cleanup resources
-   */
   async cleanup(): Promise<void> {
     this.clearCache();
-    this.model = null;
+    await this.provider?.close?.();
+    await this.fallback?.close?.();
+    this.provider = null;
+    this.fallback = null;
     this.initPromise = null;
     console.log("[EmbeddingGenerator] Cleaned up");
   }

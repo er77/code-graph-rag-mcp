@@ -256,7 +256,7 @@ export class CodeAnalyzer {
 
       for (const result of results) {
         if (sampleVectors.length >= maxSamples) break;
-        if (!sampleVectors.some(v => v.id === result.id)) {
+        if (!sampleVectors.some((v) => v.id === result.id)) {
           // Reconstruct vector by doing another search with this result as query
           const entity = await this.vectorStore.get(result.id);
           if (entity) {
@@ -264,7 +264,7 @@ export class CodeAnalyzer {
               id: result.id,
               vector: entity.vector,
               content: result.content,
-              metadata: result.metadata
+              metadata: result.metadata,
             });
           }
         }
@@ -283,7 +283,7 @@ export class CodeAnalyzer {
         if (match.similarity < minSimilarity) continue;
 
         // Create unique pair key (sorted to avoid duplicates)
-        const pairKey = [sample.id, match.id].sort().join('|');
+        const pairKey = [sample.id, match.id].sort().join("|");
         if (processedPairs.has(pairKey)) continue;
         processedPairs.add(pairKey);
 
@@ -319,15 +319,16 @@ export class CodeAnalyzer {
             path: (embedding?.metadata?.path as string) || "",
             content: embedding?.content || "",
             similarity: minSimilarity, // Approximate
+            type: this.determineSimilarityType(minSimilarity),
           };
-        })
+        }),
       );
 
       cloneGroups.push({
         id: groupId,
-        type: this.determineCloneType(minSimilarity),
+        cloneType: this.determineCloneType(minSimilarity),
         members: clones,
-        size: members.length,
+        avgSimilarity: minSimilarity,
       });
     }
 
@@ -484,7 +485,7 @@ export class CodeAnalyzer {
     }
   }
 
-  private determineCloneType(similarity: number): CloneGroup["type"] {
+  private determineCloneType(similarity: number): CloneGroup["cloneType"] {
     if (similarity >= CLONE_TYPE_THRESHOLDS.type1) {
       return "type1"; // Exact clones
     } else if (similarity >= CLONE_TYPE_THRESHOLDS.type2) {

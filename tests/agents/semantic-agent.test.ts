@@ -11,89 +11,139 @@
 
 import { afterEach, beforeEach, describe, expect, it, jest } from "@jest/globals";
 
-
-jest.mock("../../semantic/vector-store", () => {
-  class VectorStore {
-    constructor(_: any) {}
-    async initialize() {}
-    async close() {}
-    async count() { return 0; }
-    async insertBatch(_: any) {}
-    async update(_: string, __: Float32Array, ___: any) {}
-  }
-  return { VectorStore };
-}, { virtual: true });
-
-jest.mock("../../semantic/embedding-generator", () => {
-  class EmbeddingGenerator {
-    constructor(_: any) {}
-    async initialize() {}
-    async cleanup() {}
-    async generateEmbedding(_: string) { return new Float32Array(384); }
-    async generateBatch(texts: string[] = []) { return texts.map(() => new Float32Array(384)); }
-    async generateCodeEmbedding(_: string) { return new Float32Array(384); }
-  }
-  return { EmbeddingGenerator };
-}, { virtual: true });
-
-jest.mock("../../semantic/hybrid-search", () => {
-  class HybridSearchEngine {
-    constructor(_: any, __: any) {}
-    setQueryAgent(_: any) {}
-    async semanticSearch(query: string, _limit = 10) {
-      return {
-        query,
-        results: [],
-        totalResults: 0,
-        searchTime: 0,
-        processingTime: 0,
-      };
+jest.mock(
+  "../../semantic/vector-store",
+  () => {
+    class VectorStore {
+      constructor(_: any) {}
+      async initialize() {}
+      async close() {}
+      async count() {
+        return 0;
+      }
+      async insertBatch(_: any) {}
+      async update(_: string, __: Float32Array, ___: any) {}
     }
-  }
-  return { HybridSearchEngine };
-}, { virtual: true });
+    return { VectorStore };
+  },
+  { virtual: true },
+);
 
-jest.mock("../../semantic/semantic-cache", () => {
-  class SemanticCache {
-    private map = new Map<string, any>();
-    private hits = 0;
-    private reqs = 0;
-    constructor(_: any) {}
-    get(key: string) { this.reqs++; const v = this.map.get(key); if (v !== undefined) this.hits++; return v; }
-    set(key: string, value: any, _ttl?: number) { this.map.set(key, value); }
-    clear() { this.map.clear(); this.hits = 0; this.reqs = 0; }
-    getStats() { const hitRate = this.reqs ? this.hits / this.reqs : 0; return { hitRate }; }
-  }
-  return { SemanticCache };
-}, { virtual: true });
-
-jest.mock("../../semantic/code-analyzer", () => {
-  class CodeAnalyzer {
-    constructor(_: any, __: any, ___: any) {}
-    async generateCodeEmbedding(_: string) { return new Float32Array(384); }
-    async analyzeCodeSemantics(_: string) {
-      return {
-        entities: [],
-        concepts: [],
-        complexity: 1,
-        semanticType: "unknown",
-        summary: "",
-      };
+jest.mock(
+  "../../semantic/embedding-generator",
+  () => {
+    class EmbeddingGenerator {
+      constructor(_: any) {}
+      async initialize() {}
+      async cleanup() {}
+      async generateEmbedding(_: string) {
+        return new Float32Array(384);
+      }
+      async generateBatch(texts: string[] = []) {
+        return texts.map(() => new Float32Array(384));
+      }
+      async generateCodeEmbedding(_: string) {
+        return new Float32Array(384);
+      }
     }
-    async detectClones(_: number = 0.65) { return []; }
-    async findSimilarCode(_: string, __: number = 0.7) { return []; }
-    async crossLanguageSearch(_: string, __: string[]) { return []; }
-    async suggestRefactoring(_: string) { return []; }
-  }
-  return { CodeAnalyzer };
-}, { virtual: true });
+    return { EmbeddingGenerator };
+  },
+  { virtual: true },
+);
 
+jest.mock(
+  "../../semantic/hybrid-search",
+  () => {
+    class HybridSearchEngine {
+      constructor(_: any, __: any) {}
+      setQueryAgent(_: any) {}
+      async semanticSearch(query: string, _limit = 10) {
+        return {
+          query,
+          results: [],
+          totalResults: 0,
+          searchTime: 0,
+          processingTime: 0,
+        };
+      }
+    }
+    return { HybridSearchEngine };
+  },
+  { virtual: true },
+);
 
+jest.mock(
+  "../../semantic/semantic-cache",
+  () => {
+    class SemanticCache {
+      private map = new Map<string, any>();
+      private hits = 0;
+      private reqs = 0;
+      constructor(_: any) {}
+      get(key: string) {
+        this.reqs++;
+        const v = this.map.get(key);
+        if (v !== undefined) this.hits++;
+        return v;
+      }
+      set(key: string, value: any, _ttl?: number) {
+        this.map.set(key, value);
+      }
+      clear() {
+        this.map.clear();
+        this.hits = 0;
+        this.reqs = 0;
+      }
+      getStats() {
+        const hitRate = this.reqs ? this.hits / this.reqs : 0;
+        return { hitRate };
+      }
+    }
+    return { SemanticCache };
+  },
+  { virtual: true },
+);
+
+jest.mock(
+  "../../semantic/code-analyzer",
+  () => {
+    class CodeAnalyzer {
+      constructor(_: any, __: any, ___: any) {}
+      async generateCodeEmbedding(_: string) {
+        return new Float32Array(384);
+      }
+      async analyzeCodeSemantics(_: string) {
+        return {
+          entities: [],
+          concepts: [],
+          complexity: 1,
+          semanticType: "unknown",
+          summary: "",
+        };
+      }
+      async detectClones(_: number = 0.65) {
+        return [];
+      }
+      async findSimilarCode(_: string, __: number = 0.7) {
+        return [];
+      }
+      async crossLanguageSearch(_: string, __: string[]) {
+        return [];
+      }
+      async suggestRefactoring(_: string) {
+        return [];
+      }
+    }
+    return { CodeAnalyzer };
+  },
+  { virtual: true },
+);
+
+import { SemanticAgent } from "../../src/agents/semantic-agent";
 import { knowledgeBus } from "../../src/core/knowledge-bus";
 import type { AgentTask } from "../../src/types/agent";
 import { AgentStatus, AgentType } from "../../src/types/agent";
 import { SemanticTaskType } from "../../src/types/semantic";
-import { SemanticAgent } from "../../src/agents/semantic-agent";
 
 describe("SemanticAgent", () => {
   let agent: SemanticAgent;
@@ -119,16 +169,19 @@ describe("SemanticAgent", () => {
       expect(agent.status).toBe(AgentStatus.IDLE);
     });
 
-    it("should subscribe to knowledge bus events", () => {
+    it("should subscribe to knowledge bus events", async () => {
       const subscribeSpy = jest.spyOn(knowledgeBus, "subscribe");
       const newAgent = new SemanticAgent();
-      newAgent.initialize();
+
+      await newAgent.initialize();
 
       expect(subscribeSpy).toHaveBeenCalledWith(
         expect.stringContaining("semantic"),
         "index:complete",
         expect.any(Function),
       );
+
+      await newAgent.shutdown();
     });
   });
 

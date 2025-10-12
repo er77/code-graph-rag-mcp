@@ -68,10 +68,47 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
   }
 
   canHandle(task: AgentTask): boolean {
-    if (this.status !== AgentStatus.IDLE) return false;
-    if (this.taskQueue.length >= this.capabilities.maxConcurrency) return false;
-    if (this.memoryUsage > this.capabilities.memoryLimit * 0.9) return false;
-    return this.canProcessTask(task);
+    // Debug logging for indexer agent issues
+    if (this.type === "indexer") {
+      console.log(`[${this.id}] canHandle check:`, {
+        taskId: task.id,
+        taskType: task.type,
+        status: this.status,
+        queueLength: this.taskQueue.length,
+        maxConcurrency: this.capabilities.maxConcurrency,
+        memoryUsage: this.memoryUsage,
+        memoryLimit: this.capabilities.memoryLimit,
+        memoryUsagePercent: (this.memoryUsage / this.capabilities.memoryLimit) * 100,
+      });
+    }
+
+    if (this.status !== AgentStatus.IDLE) {
+      if (this.type === "indexer") {
+        console.log(`[${this.id}] Rejected: not idle (status: ${this.status})`);
+      }
+      return false;
+    }
+    if (this.taskQueue.length >= this.capabilities.maxConcurrency) {
+      if (this.type === "indexer") {
+        console.log(`[${this.id}] Rejected: queue full (${this.taskQueue.length}/${this.capabilities.maxConcurrency})`);
+      }
+      return false;
+    }
+    if (this.memoryUsage > this.capabilities.memoryLimit * 0.9) {
+      if (this.type === "indexer") {
+        console.log(
+          `[${this.id}] Rejected: memory limit (${this.memoryUsage}MB > ${this.capabilities.memoryLimit * 0.9}MB)`,
+        );
+      }
+      return false;
+    }
+
+    const canProcess = this.canProcessTask(task);
+    if (this.type === "indexer" && !canProcess) {
+      console.log(`[${this.id}] Rejected: canProcessTask returned false`);
+    }
+
+    return canProcess;
   }
 
   async process(task: AgentTask): Promise<unknown> {

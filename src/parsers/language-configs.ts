@@ -167,6 +167,25 @@ export const LANGUAGE_KEYWORDS: Record<
     types: ["type"],
   },
 
+  csharp: {
+    functions: [
+      "void",
+      "public",
+      "private",
+      "protected",
+      "internal",
+      "static",
+      "virtual",
+      "override",
+      "abstract",
+      "async",
+    ],
+    classes: ["class", "struct", "interface", "enum", "record"],
+    imports: ["using"],
+    exports: ["public", "internal", "protected"],
+    types: ["int", "long", "double", "float", "bool", "string", "object", "var", "dynamic"],
+  },
+
   go: {
     functions: ["func"],
     classes: ["type", "struct", "interface"],
@@ -742,39 +761,19 @@ const RUST_CONFIG: LanguageConfig = {
       "const_function_item",
       "closure_expression",
     ],
-    classes: [
-      "struct_item",
-      "enum_item",
-      "trait_item",
-      "impl_item",
-      "mod_item",
-      "union_item",
-    ],
+    classes: ["struct_item", "enum_item", "trait_item", "impl_item", "mod_item", "union_item"],
     methods: [
       "function_item", // methods inside impl blocks
       "associated_type",
       "method_signature_item",
     ],
-    imports: [
-      "use_declaration",
-      "extern_crate_declaration",
-      "use_list",
-      "use_as_clause",
-      "use_wildcard",
-    ],
+    imports: ["use_declaration", "extern_crate_declaration", "use_list", "use_as_clause", "use_wildcard"],
     exports: [
       "visibility_modifier", // pub keyword
       "pub_visibility_modifier",
       "crate_visibility_modifier",
     ],
-    variables: [
-      "let_declaration",
-      "const_item",
-      "static_item",
-      "let_expression",
-      "ref_pattern",
-      "mut_pattern",
-    ],
+    variables: ["let_declaration", "const_item", "static_item", "let_expression", "ref_pattern", "mut_pattern"],
     types: [
       "type_alias",
       "generic_type",
@@ -850,6 +849,288 @@ const RUST_CONFIG: LanguageConfig = {
 };
 
 /**
+ * C# language configuration
+ */
+const CSHARP_CONFIG: LanguageConfig = {
+  language: "csharp",
+  extensions: ["cs"],
+  keywords: LANGUAGE_KEYWORDS.csharp,
+  nodeTypes: {
+    functions: ["method_declaration", "constructor_declaration", "destructor_declaration", "local_function_statement"],
+    classes: [
+      "class_declaration",
+      "struct_declaration",
+      "interface_declaration",
+      "enum_declaration",
+      "record_declaration",
+    ],
+    methods: ["method_declaration", "property_declaration", "indexer_declaration", "event_declaration"],
+    imports: ["using_directive", "namespace_declaration"],
+    exports: ["public", "internal", "protected"],
+    variables: ["field_declaration", "local_declaration_statement", "variable_declarator"],
+    types: ["type_declaration", "generic_name", "nullable_type", "array_type"],
+    interfaces: ["interface_declaration"],
+  },
+  extractors: {
+    extractName: (nodeType: string) => {
+      switch (nodeType) {
+        case "method_declaration":
+        case "constructor_declaration":
+        case "destructor_declaration":
+        case "local_function_statement":
+          return ["identifier"];
+        case "class_declaration":
+        case "struct_declaration":
+        case "interface_declaration":
+        case "enum_declaration":
+        case "record_declaration":
+          return ["identifier"];
+        case "property_declaration":
+        case "field_declaration":
+          return ["identifier"];
+        case "using_directive":
+          return ["identifier", "qualified_name"];
+        default:
+          return ["identifier"];
+      }
+    },
+    extractModifiers: (nodeType: string) => {
+      switch (nodeType) {
+        case "method_declaration":
+        case "constructor_declaration":
+          return [
+            "public",
+            "private",
+            "protected",
+            "internal",
+            "static",
+            "virtual",
+            "override",
+            "abstract",
+            "sealed",
+            "async",
+          ];
+        case "class_declaration":
+        case "struct_declaration":
+          return ["public", "private", "protected", "internal", "static", "abstract", "sealed", "partial"];
+        case "field_declaration":
+          return ["public", "private", "protected", "internal", "static", "readonly", "const", "volatile"];
+        default:
+          return ["public", "private", "protected", "internal", "static"];
+      }
+    },
+    extractParameters: true,
+    extractReturnType: true,
+    extractReferences: true,
+  },
+};
+
+/**
+ * Go language configuration
+ */
+const GO_CONFIG: LanguageConfig = {
+  language: "go",
+  extensions: ["go", "mod"],
+  keywords: LANGUAGE_KEYWORDS.go,
+  nodeTypes: {
+    functions: ["function_declaration", "method_declaration", "func_literal"],
+    classes: ["type_declaration", "type_spec", "struct_type", "interface_type"],
+    methods: ["method_declaration"],
+    imports: ["import_spec", "import_declaration"],
+    exports: [], // Go uses capitalization for exports
+    variables: ["short_var_declaration", "var_spec", "assignment_statement", "expression_statement"],
+    types: ["type_declaration", "type_spec", "array_type", "slice_type", "map_type", "channel_type"],
+    interfaces: ["interface_type"],
+  },
+  extractors: {
+    extractName: (nodeType: string) => {
+      switch (nodeType) {
+        case "function_declaration":
+        case "method_declaration":
+          return ["identifier"];
+        case "type_declaration":
+        case "type_spec":
+          return ["identifier"];
+        case "struct_type":
+          return ["type_identifier", "identifier"];
+        case "interface_type":
+          return ["type_identifier", "identifier"];
+        case "import_spec":
+          return ["import_path", "identifier"];
+        case "short_var_declaration":
+        case "var_spec":
+          return ["identifier", "expression_list"];
+        default:
+          return ["identifier"];
+      }
+    },
+    extractModifiers: (nodeType: string) => {
+      switch (nodeType) {
+        case "function_declaration":
+        case "method_declaration":
+          return ["func"];
+        case "type_declaration":
+        case "type_spec":
+          return ["type"];
+        default:
+          return [];
+      }
+    },
+    extractParameters: true,
+    extractReturnType: true,
+    extractReferences: true,
+  },
+};
+
+/**
+ * Java language configuration
+ */
+const JAVA_CONFIG: LanguageConfig = {
+  language: "java",
+  extensions: ["java"],
+  keywords: LANGUAGE_KEYWORDS.java,
+  nodeTypes: {
+    functions: ["method_declaration", "constructor_declaration"],
+    classes: [
+      "class_declaration",
+      "interface_declaration",
+      "enum_declaration",
+      "record_declaration",
+      "annotation_type_declaration",
+    ],
+    methods: ["method_declaration", "constructor_declaration"],
+    imports: ["import_declaration"],
+    exports: ["public", "protected"],
+    variables: ["field_declaration", "local_variable_declaration", "variable_declarator"],
+    types: ["type_identifier", "generic_type", "array_type"],
+    interfaces: ["interface_declaration"],
+  },
+  extractors: {
+    extractName: (nodeType: string) => {
+      switch (nodeType) {
+        case "method_declaration":
+        case "constructor_declaration":
+          return ["identifier"];
+        case "class_declaration":
+        case "interface_declaration":
+        case "enum_declaration":
+        case "record_declaration":
+        case "annotation_type_declaration":
+          return ["identifier"];
+        case "field_declaration":
+        case "local_variable_declaration":
+          return ["identifier", "variable_declarator"];
+        case "import_declaration":
+          return ["scoped_identifier", "identifier"];
+        default:
+          return ["identifier"];
+      }
+    },
+    extractModifiers: (nodeType: string) => {
+      switch (nodeType) {
+        case "method_declaration":
+        case "constructor_declaration":
+          return [
+            "public",
+            "private",
+            "protected",
+            "static",
+            "final",
+            "abstract",
+            "synchronized",
+            "native",
+            "strictfp",
+          ];
+        case "class_declaration":
+        case "interface_declaration":
+        case "enum_declaration":
+        case "record_declaration":
+          return ["public", "private", "protected", "static", "final", "abstract", "strictfp"];
+        case "field_declaration":
+          return ["public", "private", "protected", "static", "final", "transient", "volatile"];
+        default:
+          return ["public", "private", "protected", "static", "final"];
+      }
+    },
+    extractParameters: true,
+    extractReturnType: true,
+    extractReferences: true,
+  },
+};
+
+/**
+ * VBA language configuration
+ */
+const VBA_CONFIG: LanguageConfig = {
+  language: "vba",
+  extensions: ["vba", "bas", "cls", "frm"],
+  keywords: LANGUAGE_KEYWORDS.vba,
+  nodeTypes: {
+    functions: [
+      "sub_statement",
+      "function_statement",
+      "property_get_statement",
+      "property_let_statement",
+      "property_set_statement",
+    ],
+    classes: ["class_module", "type_statement", "enum_statement"],
+    methods: [
+      "sub_statement",
+      "function_statement",
+      "property_get_statement",
+      "property_let_statement",
+      "property_set_statement",
+    ],
+    imports: [], // VBA doesn't have traditional imports
+    exports: ["public", "global"],
+    variables: ["dim_statement", "const_statement", "static_statement", "variable_declaration"],
+    types: ["type_statement", "enum_statement"],
+    interfaces: [], // VBA has limited interface support
+  },
+  extractors: {
+    extractName: (nodeType: string) => {
+      switch (nodeType) {
+        case "sub_statement":
+        case "function_statement":
+        case "property_get_statement":
+        case "property_let_statement":
+        case "property_set_statement":
+          return ["identifier"];
+        case "class_module":
+        case "type_statement":
+        case "enum_statement":
+          return ["identifier"];
+        case "dim_statement":
+        case "const_statement":
+        case "static_statement":
+          return ["identifier", "variable_declaration"];
+        default:
+          return ["identifier"];
+      }
+    },
+    extractModifiers: (nodeType: string) => {
+      switch (nodeType) {
+        case "sub_statement":
+        case "function_statement":
+        case "property_get_statement":
+        case "property_let_statement":
+        case "property_set_statement":
+          return ["public", "private", "friend", "static"];
+        case "dim_statement":
+        case "const_statement":
+        case "static_statement":
+          return ["public", "private", "friend", "static", "const"];
+        default:
+          return ["public", "private", "friend", "static"];
+      }
+    },
+    extractParameters: true,
+    extractReturnType: true,
+    extractReferences: true,
+  },
+};
+
+/**
  * Language configuration registry
  */
 export const LANGUAGE_CONFIGS: Record<SupportedLanguage, LanguageConfig> = {
@@ -861,6 +1142,10 @@ export const LANGUAGE_CONFIGS: Record<SupportedLanguage, LanguageConfig> = {
   c: C_CONFIG,
   cpp: CPP_CONFIG,
   rust: RUST_CONFIG,
+  csharp: CSHARP_CONFIG,
+  go: GO_CONFIG,
+  java: JAVA_CONFIG,
+  vba: VBA_CONFIG,
 };
 
 /**

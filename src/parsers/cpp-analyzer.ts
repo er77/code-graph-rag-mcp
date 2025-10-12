@@ -22,11 +22,7 @@
  * and comprehensive circuit breakers for safety.
  */
 
-import type {
-  ParsedEntity,
-  TreeSitterNode,
-  EntityRelationship,
-} from "../types/parser.js";
+import type { EntityRelationship, ParsedEntity, TreeSitterNode } from "../types/parser.js";
 
 // Circuit breaker constants
 const MAX_RECURSION_DEPTH = 50;
@@ -52,7 +48,7 @@ export class CppAnalyzer {
     nestedClasses: 0,
     inheritanceDepth: 0,
     operatorCount: 0,
-    total: 0
+    total: 0,
   };
 
   // Memoization cache for template patterns
@@ -66,13 +62,13 @@ export class CppAnalyzer {
       start: {
         line: node.startPosition.row + 1,
         column: node.startPosition.column,
-        index: node.startIndex
+        index: node.startIndex,
       },
       end: {
         line: node.endPosition.row + 1,
         column: node.endPosition.column,
-        index: node.endIndex
-      }
+        index: node.endIndex,
+      },
     };
   }
 
@@ -81,7 +77,7 @@ export class CppAnalyzer {
    */
   async analyze(
     rootNode: TreeSitterNode,
-    filePath: string
+    filePath: string,
   ): Promise<{ entities: ParsedEntity[]; relationships: EntityRelationship[] }> {
     this.resetState();
 
@@ -94,7 +90,6 @@ export class CppAnalyzer {
 
       // Phase 2: Build semantic graph with lazy evaluation
       this.buildSemanticGraph(entities, relationships);
-
     } catch (error) {
       if (error instanceof CircuitBreakerError) {
         console.warn(`[CppAnalyzer] Circuit breaker triggered for ${filePath}: ${error.message}`);
@@ -119,7 +114,7 @@ export class CppAnalyzer {
       nestedClasses: 0,
       inheritanceDepth: 0,
       operatorCount: 0,
-      total: 0
+      total: 0,
     };
     this.templateCache.clear();
   }
@@ -147,7 +142,9 @@ export class CppAnalyzer {
       this.complexityScore.operatorCount * 2;
 
     if (this.complexityScore.total > MAX_COMPLEXITY_SCORE) {
-      throw new CircuitBreakerError(`Complexity score ${this.complexityScore.total} exceeds limit ${MAX_COMPLEXITY_SCORE}`);
+      throw new CircuitBreakerError(
+        `Complexity score ${this.complexityScore.total} exceeds limit ${MAX_COMPLEXITY_SCORE}`,
+      );
     }
 
     // Template depth check
@@ -164,7 +161,7 @@ export class CppAnalyzer {
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
-    namespace: string = ""
+    namespace: string = "",
   ): void {
     this.recursionDepth++;
     this.checkCircuitBreakers();
@@ -179,7 +176,7 @@ export class CppAnalyzer {
           break;
 
         case "namespace_definition":
-          this.extractNamespace(node, filePath, entities, relationships);
+          this.extractNamespace(node, filePath, entities, relationships, namespace);
           break;
 
         case "class_specifier":
@@ -232,26 +229,28 @@ export class CppAnalyzer {
     node: TreeSitterNode,
     filePath: string,
     entities: ParsedEntity[],
-    relationships: EntityRelationship[]
+    relationships: EntityRelationship[],
+    parentNamespace: string = "",
   ): void {
     const nameNode = node.childForFieldName("name");
     const bodyNode = node.childForFieldName("body");
 
     if (nameNode && bodyNode) {
       const namespaceName = nameNode.text;
+      const fullName = parentNamespace ? `${parentNamespace}::${namespaceName}` : namespaceName;
 
       const entity: ParsedEntity = {
-        name: namespaceName,
-        type: "class", // Using 'class' since 'namespace' isn't in the type union
+        name: fullName,
+        type: "module",
         location: this.getNodeLocation(node),
-        modifiers: ["namespace"]
+        modifiers: ["namespace"],
       };
 
       entities.push(entity);
 
       // Process namespace contents
       for (const child of bodyNode.children) {
-        this.extractEntities(child, filePath, entities, relationships, namespaceName);
+        this.extractEntities(child, filePath, entities, relationships, fullName);
       }
     }
   }
@@ -264,7 +263,7 @@ export class CppAnalyzer {
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
-    namespace: string
+    namespace: string,
   ): void {
     const nameNode = node.childForFieldName("name");
     const bodyNode = node.childForFieldName("body");
@@ -289,7 +288,7 @@ export class CppAnalyzer {
       name: fullName,
       type: "class",
       location: this.getNodeLocation(node),
-      modifiers: modifiers.length > 0 ? modifiers : undefined
+      modifiers, 
     };
 
     entities.push(entity);
@@ -314,23 +313,20 @@ export class CppAnalyzer {
     className: string,
     filePath: string,
     entities: ParsedEntity[],
-    relationships: EntityRelationship[]
+    relationships: EntityRelationship[],
   ): void {
     let currentAccessSpecifier = "private"; // Default for class, "public" for struct
 
     for (const child of bodyNode.children) {
       switch (child.type) {
-        case "access_specifier":
+        case "access_specifier": {
           // Update current access level
           const specifierNode = child.firstChild;
           if (specifierNode) {
             currentAccessSpecifier = specifierNode.text.replace(":", "");
           }
           break;
-
-        case "function_definition":
-          this.extractMethod(child, className, filePath, entities, relationships, currentAccessSpecifier);
-          break;
+        }
 
         case "field_declaration":
           this.extractField(child, className, filePath, entities, relationships, currentAccessSpecifier);
@@ -354,10 +350,18 @@ export class CppAnalyzer {
           this.templateDepth--;
           break;
 
+        case "function_definition":
+          this.extractMethod(child, className, filePath, entities, relationships, currentAccessSpecifier);
+          break;
+
+        case "function_declaration":
+          this.extractMethod(child, className, filePath, entities, relationships, currentAccessSpecifier);
+          break;
+
         case "declaration":
           // Process nested declarations
           for (const decl of child.children) {
-            if (decl.type === "function_definition") {
+            if (decl.type === "function_definition" || decl.type === "function_declaration") {
               this.extractMethod(decl, className, filePath, entities, relationships, currentAccessSpecifier);
             } else if (decl.type === "field_declaration") {
               this.extractField(decl, className, filePath, entities, relationships, currentAccessSpecifier);
@@ -374,17 +378,16 @@ export class CppAnalyzer {
   private extractMethod(
     node: TreeSitterNode,
     className: string,
-    filePath: string,
+    _filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
-    accessSpecifier: string = "public"
+    accessSpecifier: string = "public",
   ): void {
     const declaratorNode = node.childForFieldName("declarator");
     if (!declaratorNode) return;
-
-    const functionName = this.extractFunctionName(declaratorNode);
+    let functionName = this.extractFunctionName(declaratorNode);
     if (!functionName) return;
-
+    functionName = this.canonicalizeOperatorName(functionName, node);
     const fullName = `${className}::${functionName}`;
 
     // Check for operator overloading
@@ -421,16 +424,15 @@ export class CppAnalyzer {
       name: fullName,
       type: entityType,
       location: this.getNodeLocation(node),
-      modifiers: modifiers.length > 0 ? modifiers : undefined
+      modifiers,
     };
-
     entities.push(entity);
 
     // Create relationship to parent class
     relationships.push({
       from: fullName,
       to: className,
-      type: "contains"
+      type: "contains",
     });
   }
 
@@ -440,10 +442,10 @@ export class CppAnalyzer {
   private extractField(
     node: TreeSitterNode,
     className: string,
-    filePath: string,
+    _filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
-    accessSpecifier: string
+    accessSpecifier: string,
   ): void {
     const declaratorNode = node.childForFieldName("declarator");
     if (!declaratorNode) return;
@@ -469,7 +471,7 @@ export class CppAnalyzer {
       name: fullName,
       type: "property", // Using 'property' for fields
       location: this.getNodeLocation(node),
-      modifiers: modifiers.length > 0 ? modifiers : undefined
+      modifiers,
     };
 
     entities.push(entity);
@@ -478,7 +480,7 @@ export class CppAnalyzer {
     relationships.push({
       from: fullName,
       to: className,
-      type: "contains"
+      type: "contains",
     });
   }
 
@@ -487,17 +489,19 @@ export class CppAnalyzer {
    */
   private extractFunction(
     node: TreeSitterNode,
-    filePath: string,
+    _filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
     namespace: string,
-    isTemplate: boolean = false
+    isTemplate: boolean = false,
   ): void {
     const declaratorNode = node.childForFieldName("declarator");
     if (!declaratorNode) return;
 
-    const functionName = this.extractFunctionName(declaratorNode);
+    let functionName = this.extractFunctionName(declaratorNode);
     if (!functionName) return;
+
+    functionName = this.canonicalizeOperatorName(functionName, node);
 
     const fullName = namespace ? `${namespace}::${functionName}` : functionName;
 
@@ -511,7 +515,7 @@ export class CppAnalyzer {
       name: fullName,
       type: "function",
       location: this.getNodeLocation(node),
-      modifiers: modifiers.length > 0 ? modifiers : undefined
+      modifiers,
     };
 
     entities.push(entity);
@@ -521,7 +525,7 @@ export class CppAnalyzer {
       relationships.push({
         from: fullName,
         to: namespace,
-        type: "contains"
+        type: "contains",
       });
     }
   }
@@ -531,16 +535,14 @@ export class CppAnalyzer {
    */
   private extractTemplate(
     node: TreeSitterNode,
-    filePath: string,
+    _filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
-    namespace: string
+    namespace: string,
   ): void {
-    // Increase template depth for circuit breaker
     this.templateDepth++;
     this.complexityScore.templateDepth++;
 
-    // Check if we should skip complex templates
     if (this.templateDepth > MAX_TEMPLATE_DEPTH) {
       console.warn(`[CppAnalyzer] Skipping deeply nested template at depth ${this.templateDepth}`);
       this.templateDepth--;
@@ -549,9 +551,8 @@ export class CppAnalyzer {
 
     const parametersNode = node.childForFieldName("parameters");
     const declarationNode = node.children.find(
-      child => child.type === "class_specifier" ||
-               child.type === "struct_specifier" ||
-               child.type === "function_definition"
+      (child) =>
+        child.type === "class_specifier" || child.type === "struct_specifier" || child.type === "function_definition",
     );
 
     if (!declarationNode) {
@@ -559,54 +560,70 @@ export class CppAnalyzer {
       return;
     }
 
-    // Extract template parameters (simple support only)
     const templateParams = this.extractTemplateParameters(parametersNode);
 
-    // Skip variadic templates and complex SFINAE patterns
     if (this.isComplexTemplate(templateParams, node.text)) {
       console.warn(`[CppAnalyzer] Skipping complex template pattern`);
       this.templateDepth--;
       return;
     }
 
-    // Generate cache key for memoization
-    const cacheKey = `${namespace}::${declarationNode.type}::${templateParams}`;
+    // Build declaration name for cache key (avoid collisions like two different functions with same template params)
+    let declName = "";
+    if (declarationNode.type === "function_definition") {
+      const d = declarationNode.childForFieldName("declarator");
+      declName = this.extractFunctionName(d) || "";
+    } else if (declarationNode.type === "class_specifier" || declarationNode.type === "struct_specifier") {
+      const n = declarationNode.childForFieldName("name");
+      declName = n?.text || "";
+    }
 
-    // Check memoization cache
+    // Generate cache key for memoization with declaration name
+    const cacheKey = `${namespace}::${declarationNode.type}::${declName}::${templateParams}`;
+
     if (this.templateCache.has(cacheKey)) {
-      entities.push(this.templateCache.get(cacheKey)!);
+      const cached = this.templateCache.get(cacheKey);
+      if (cached) entities.push(cached);
       this.templateDepth--;
       return;
     }
 
-    // Process the template declaration
     if (declarationNode.type === "class_specifier" || declarationNode.type === "struct_specifier") {
-      this.extractClass(declarationNode, filePath, entities, relationships, namespace);
-      // Mark the last entity as a template
-      if (entities.length > 0) {
-        const lastEntity = entities[entities.length - 1];
-        if (!lastEntity.modifiers) lastEntity.modifiers = [];
-        lastEntity.modifiers.push("template");
-        if (templateParams) {
-          lastEntity.modifiers.push(`template<${templateParams}>`);
-        }
-        this.templateCache.set(cacheKey, lastEntity);
-      }
+      this.extractClass(declarationNode, _filePath, entities, relationships, namespace);
+      const classNameNode = declarationNode.childForFieldName("name");
+      const declNameSafe = classNameNode?.text || declName;
+      const targetName = namespace ? `${namespace}::${declNameSafe}` : declNameSafe;
+      this.markEntityAsTemplate(entities, targetName, templateParams, cacheKey);
     } else if (declarationNode.type === "function_definition") {
-      this.extractFunction(declarationNode, filePath, entities, relationships, namespace, true);
-      // Mark the last entity as a template
-      if (entities.length > 0) {
-        const lastEntity = entities[entities.length - 1];
-        if (!lastEntity.modifiers) lastEntity.modifiers = [];
-        lastEntity.modifiers.push("template");
-        if (templateParams) {
-          lastEntity.modifiers.push(`template<${templateParams}>`);
-        }
-        this.templateCache.set(cacheKey, lastEntity);
-      }
+      this.extractFunction(declarationNode, _filePath, entities, relationships, namespace, true);
+      const targetName = namespace ? `${namespace}::${declName}` : declName;
+      this.markEntityAsTemplate(entities, targetName, templateParams, cacheKey);
     }
 
     this.templateDepth--;
+  }
+
+  /**
+   * Safely mark the last entity as a template and put into cache
+   */
+  
+  private markEntityAsTemplate(
+    entities: ParsedEntity[],
+    targetName: string,
+    templateParams: string,
+    cacheKey: string,
+  ): void {
+    const ent = [...entities].reverse().find((e) => e.name === targetName);
+    if (!ent) return;
+    ent.modifiers = ent.modifiers || [];
+    if (!ent.modifiers.includes("template")) {
+      ent.modifiers.push("template");
+    }
+    if (templateParams) {
+      const flag = `template<${templateParams}>`;
+      if (!ent.modifiers.includes(flag)) ent.modifiers.push(flag);
+    }
+    this.templateCache.set(cacheKey, ent);
   }
 
   /**
@@ -614,15 +631,14 @@ export class CppAnalyzer {
    */
   private extractUsing(
     node: TreeSitterNode,
-    filePath: string,
-    entities: ParsedEntity[],
+    _filePath: string,
+    _entities: ParsedEntity[],
     relationships: EntityRelationship[],
-    namespace: string
+    namespace: string,
   ): void {
     // Extract the name being used
-    const nameNode = node.children.find(child =>
-      child.type === "qualified_identifier" ||
-      child.type === "identifier"
+    const nameNode = node.children.find(
+      (child) => child.type === "qualified_identifier" || child.type === "identifier",
     );
 
     if (nameNode) {
@@ -633,7 +649,7 @@ export class CppAnalyzer {
         relationships.push({
           from: namespace,
           to: targetName,
-          type: "references"
+          type: "references",
         });
       }
     }
@@ -644,10 +660,10 @@ export class CppAnalyzer {
    */
   private extractEnum(
     node: TreeSitterNode,
-    filePath: string,
+    _filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
-    namespace: string
+    namespace: string,
   ): void {
     const nameNode = node.childForFieldName("name");
     if (!nameNode) return;
@@ -665,7 +681,7 @@ export class CppAnalyzer {
       name: fullName,
       type: "enum", // This is a valid type in ParsedEntity
       location: this.getNodeLocation(node),
-      modifiers: modifiers.length > 0 ? modifiers : undefined
+      modifiers,
     };
 
     entities.push(entity);
@@ -682,13 +698,13 @@ export class CppAnalyzer {
               name: valueName,
               type: "constant", // Using 'constant' for enum values
               location: this.getNodeLocation(child),
-              modifiers: ["enum_value"]
+              modifiers: ["enum_value"],
             });
 
             relationships.push({
               from: valueName,
               to: fullName,
-              type: "contains"
+              type: "contains",
             });
           }
         }
@@ -703,7 +719,7 @@ export class CppAnalyzer {
     baseListNode: TreeSitterNode,
     derivedClass: string,
     relationships: EntityRelationship[],
-    filePath: string
+    _filePath: string,
   ): void {
     let inheritanceDepth = 0;
 
@@ -712,10 +728,7 @@ export class CppAnalyzer {
         inheritanceDepth++;
 
         // Track inheritance depth for complexity
-        this.complexityScore.inheritanceDepth = Math.max(
-          this.complexityScore.inheritanceDepth,
-          inheritanceDepth
-        );
+        this.complexityScore.inheritanceDepth = Math.max(this.complexityScore.inheritanceDepth, inheritanceDepth);
 
         // Check for virtual inheritance
         const isVirtual = child.text.includes("virtual");
@@ -727,8 +740,7 @@ export class CppAnalyzer {
 
         // Find the base class name
         const baseNameNode = child.children.find(
-          node => node.type === "type_identifier" ||
-                  node.type === "qualified_identifier"
+          (node) => node.type === "type_identifier" || node.type === "qualified_identifier",
         );
 
         if (baseNameNode) {
@@ -737,7 +749,11 @@ export class CppAnalyzer {
           relationships.push({
             from: derivedClass,
             to: baseClassName,
-            type: "inherits"
+            type: "inherits",
+            metadata: {
+              access: accessSpecifier,
+              isVirtual: isVirtual,
+            },
           });
         }
       }
@@ -751,25 +767,27 @@ export class CppAnalyzer {
     node: TreeSitterNode,
     className: string,
     relationships: EntityRelationship[],
-    filePath: string
+    _filePath: string,
   ): void {
-    // Find the friend declaration target
     const friendTarget = node.children.find(
-      child => child.type === "type_identifier" ||
-               child.type === "qualified_identifier" ||
-               child.type === "function_definition"
+      (child) =>
+        child.type === "type_identifier" ||
+        child.type === "qualified_identifier" ||
+        child.type === "function_definition",
     );
 
     if (friendTarget) {
-      const friendName = friendTarget.type === "function_definition"
-        ? this.extractFunctionName(friendTarget.childForFieldName("declarator"))
-        : friendTarget.text;
+      const friendName =
+        friendTarget.type === "function_definition"
+          ? this.extractFunctionName(friendTarget.childForFieldName("declarator"))
+          : friendTarget.text;
 
       if (friendName) {
         relationships.push({
           from: className,
           to: friendName,
-          type: "friend_of"
+          type: "references",
+          metadata: { relation: "friend" },
         });
       }
     }
@@ -778,19 +796,13 @@ export class CppAnalyzer {
   /**
    * Build semantic graph with lazy evaluation (Phase 2)
    */
-  private buildSemanticGraph(
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[]
-  ): void {
+  private buildSemanticGraph(_entities: ParsedEntity[], relationships: EntityRelationship[]): void {
     // This is where we would build a richer semantic graph
     // For now, we're keeping the syntactic information
     // Future enhancement: Add type resolution, symbol tables, etc.
 
-    // Validate relationships
-    const entityNames = new Set(entities.map(e => e.name));
-
     // Remove invalid relationships
-    const validRelationships = relationships.filter(rel => {
+    const validRelationships = relationships.filter((rel) => {
       // Keep relationships even if target doesn't exist (might be external)
       return rel.from && rel.to;
     });
@@ -813,14 +825,39 @@ export class CppAnalyzer {
         return nameNode.text;
       } else if (nameNode?.type === "qualified_identifier") {
         return nameNode.text.split("::").pop() || null;
+      } else if (nameNode?.type === "operator_function_id") {
+        return nameNode.text; // e.g. "operator[]", "operator()"
+      } else if (nameNode?.type === "operator_cast") {
+        return nameNode.text; // e.g. "operator int"
       } else if (nameNode?.type === "operator_name") {
         return nameNode.text;
       } else if (nameNode?.type === "destructor_name") {
         return nameNode.text;
       } else if (nameNode) {
         return this.extractFunctionName(nameNode);
+      } else {
+        
+        
+        const cand = declaratorNode.children.find(
+          (c) =>
+            c.type === "identifier" ||
+            c.type === "qualified_identifier" ||
+            c.type === "operator_function_id" ||
+            c.type === "operator_cast" ||
+            c.type === "operator_name" ||
+            c.type === "destructor_name",
+        );
+        if (cand) {
+          return cand.type === "qualified_identifier" ? cand.text.split("::").pop() || null : cand.text;
+        }
       }
     } else if (declaratorNode.type === "identifier") {
+      return declaratorNode.text;
+    } else if (declaratorNode.type === "field_identifier") {
+      return declaratorNode.text;
+    } else if (declaratorNode.type === "operator_function_id") {
+      return declaratorNode.text;
+    } else if (declaratorNode.type === "operator_cast") {
       return declaratorNode.text;
     } else if (declaratorNode.type === "qualified_identifier") {
       return declaratorNode.text.split("::").pop() || null;
@@ -828,14 +865,58 @@ export class CppAnalyzer {
       return declaratorNode.text;
     } else if (declaratorNode.type === "destructor_name") {
       return declaratorNode.text;
-    } else if (declaratorNode.type === "reference_declarator" ||
-               declaratorNode.type === "pointer_declarator") {
-      // Handle reference and pointer declarators
-      const innerDeclarator = declaratorNode.childForFieldName("declarator");
-      return this.extractFunctionName(innerDeclarator);
+    } else if (
+      declaratorNode.type === "reference_declarator" ||
+      declaratorNode.type === "pointer_declarator" ||
+      declaratorNode.type === "parenthesized_declarator" ||
+      declaratorNode.type === "array_declarator"
+    ) {
+      
+      const inner =
+        declaratorNode.childForFieldName("declarator") ||
+        declaratorNode.children.find(
+          (c) =>
+            c.type === "function_declarator" ||
+            c.type === "identifier" ||
+            c.type === "field_identifier" ||
+            c.type === "qualified_identifier" ||
+            c.type === "operator_function_id" ||
+            c.type === "operator_cast" ||
+            c.type === "operator_name" ||
+            c.type === "destructor_name",
+        ) ||
+        null;
+
+      return this.extractFunctionName(inner);
     }
 
     return null;
+  }
+
+  /**
+   * Produce a canonical operator name:
+   * - remove spaces: "operator []" => "operator[]"
+   * - reconstruct bracket/call operators if parser split tokens:
+   *    e.g. "operator[" or plain "operator" -> use context to detect [] or ()
+   * - normalize symbols: "operator  +" => "operator+"
+   */
+  private canonicalizeOperatorName(name: string, contextNode: TreeSitterNode): string {
+    if (!name.startsWith("operator")) return name;
+    // First pass: strip all spaces
+    const n = name.replace(/\s+/g, "");
+    if (n === "operator" || n === "operator[" || n === "operator(") {
+      const text = contextNode.text || "";
+      // Try to reconstruct from full function definition text
+      if (/operator\s*\[\s*\]/.test(text)) {
+        return "operator[]";
+      }
+      if (/operator\s*\(\s*\)/.test(text)) {
+        return "operator()";
+      }
+      const mSym = /operator\s*([^\s(]+)/.exec(text);
+      if (mSym && mSym[1]) return `operator${mSym[1].replace(/\s+/g, "")}`;
+    }
+    return n;
   }
 
   /**
@@ -846,11 +927,12 @@ export class CppAnalyzer {
 
     if (declaratorNode.type === "identifier") {
       return declaratorNode.text;
+    } else if (declaratorNode.type === "field_identifier") {
+      return declaratorNode.text;
     } else if (declaratorNode.type === "array_declarator") {
       const nameNode = declaratorNode.childForFieldName("declarator");
       return this.extractFieldName(nameNode);
-    } else if (declaratorNode.type === "pointer_declarator" ||
-               declaratorNode.type === "reference_declarator") {
+    } else if (declaratorNode.type === "pointer_declarator" || declaratorNode.type === "reference_declarator") {
       const innerDeclarator = declaratorNode.childForFieldName("declarator");
       return this.extractFieldName(innerDeclarator);
     }
@@ -877,7 +959,7 @@ export class CppAnalyzer {
       isVirtual: text.includes("virtual"),
       isOverride: text.includes("override"),
       isFinal: text.includes("final"),
-      isNoexcept: text.includes("noexcept")
+      isNoexcept: text.includes("noexcept"),
     };
   }
 
@@ -907,21 +989,25 @@ export class CppAnalyzer {
    */
   private extractTemplateParameters(parametersNode: TreeSitterNode | null): string {
     if (!parametersNode) return "";
-
-    const params: string[] = [];
-    for (const child of parametersNode.children) {
-      if (child.type === "template_parameter" ||
-          child.type === "type_template_parameter" ||
-          child.type === "template_template_parameter") {
-        // Extract parameter name
-        const nameNode = child.childForFieldName("name");
-        if (nameNode) {
-          params.push(nameNode.text);
+    
+    // - type_parameter_declaration
+    // - parameter_declaration
+    // - type_parameter_pack
+    
+    const names = new Set<string>();
+    const stack: TreeSitterNode[] = [...parametersNode.children];
+    while (stack.length) {
+      const n = stack.pop()!;
+      if (n.type === "type_identifier" || n.type === "identifier") {
+        const t = n.text.trim();
+        if (t && /^[A-Za-z_]\w*$/.test(t)) {
+          names.add(t);
         }
       }
+      
+      for (const c of n.children) stack.push(c);
     }
-
-    return params.join(", ");
+    return Array.from(names).join(", ");
   }
 
   /**
@@ -941,7 +1027,7 @@ export class CppAnalyzer {
       "conditional",
       "decay",
       "remove_reference",
-      "typename std::enable_if"
+      "typename std::enable_if",
     ];
 
     for (const pattern of sfainaePatterns) {

@@ -9,7 +9,7 @@
  * - Circuit breaker validation
  */
 
-import { describe, it, expect, beforeEach } from "@jest/globals";
+import { beforeEach, describe, expect, it } from "@jest/globals";
 import { CppAnalyzer } from "../../src/parsers/cpp-analyzer";
 import { TreeSitterParser } from "../../src/parsers/tree-sitter-parser";
 
@@ -41,24 +41,24 @@ protected:
       const result = await parser.parse("test.cpp", code, "hash1");
       expect(result.entities).toBeDefined();
 
-      const classEntity = result.entities.find(e => e.name === "MyClass");
+      const classEntity = result.entities.find((e) => e.name === "MyClass");
       expect(classEntity).toBeDefined();
       expect(classEntity?.type).toBe("class");
 
-      const constructor = result.entities.find(e => e.name === "MyClass::MyClass");
+      const constructor = result.entities.find((e) => e.name === "MyClass::MyClass");
       expect(constructor).toBeDefined();
       expect(constructor?.type).toBe("method"); // No specific constructor type
 
-      const destructor = result.entities.find(e => e.name === "MyClass::~MyClass");
+      const destructor = result.entities.find((e) => e.name === "MyClass::~MyClass");
       expect(destructor).toBeDefined();
       expect(destructor?.type).toBe("method"); // No specific destructor type
 
-      const publicMethod = result.entities.find(e => e.name === "MyClass::publicMethod");
+      const publicMethod = result.entities.find((e) => e.name === "MyClass::publicMethod");
       expect(publicMethod).toBeDefined();
       expect(publicMethod?.modifiers).not.toContain("private");
       expect(publicMethod?.modifiers).not.toContain("protected");
 
-      const privateField = result.entities.find(e => e.name === "MyClass::privateField");
+      const privateField = result.entities.find((e) => e.name === "MyClass::privateField");
       expect(privateField).toBeDefined();
       expect(privateField?.modifiers).toContain("private");
     });
@@ -83,17 +83,17 @@ public:
 
       const result = await parser.parse("test.cpp", code, "hash2");
 
-      const baseClass = result.entities.find(e => e.name === "Base");
+      const baseClass = result.entities.find((e) => e.name === "Base");
       expect(baseClass).toBeDefined();
       expect(baseClass?.modifiers).toContain("abstract");
 
-      const derivedClass = result.entities.find(e => e.name === "Derived");
+      const derivedClass = result.entities.find((e) => e.name === "Derived");
       expect(derivedClass).toBeDefined();
 
-      const overrideMethod = result.entities.find(e => e.name === "Derived::virtualMethod");
+      const overrideMethod = result.entities.find((e) => e.name === "Derived::virtualMethod");
       expect(overrideMethod?.modifiers).toContain("override");
 
-      const finalMethod = result.entities.find(e => e.name === "MultiDerived::virtualMethod");
+      const finalMethod = result.entities.find((e) => e.name === "MultiDerived::virtualMethod");
       expect(finalMethod?.modifiers).toContain("final");
     });
 
@@ -106,7 +106,7 @@ public:
       `;
 
       const result = await parser.parse("test.cpp", code, "hash3");
-      const finalClass = result.entities.find(e => e.name === "FinalClass");
+      const finalClass = result.entities.find((e) => e.name === "FinalClass");
       expect(finalClass?.modifiers).toContain("final");
     });
   });
@@ -130,18 +130,18 @@ namespace MyNamespace {
 
       const result = await parser.parse("test.cpp", code, "hash4");
 
-      const namespace = result.entities.find(e => e.name === "MyNamespace");
+      const namespace = result.entities.find((e) => e.name === "MyNamespace");
       expect(namespace).toBeDefined();
-      expect(namespace?.type).toBe("class"); // Namespaces are stored as classes with modifier
+      expect(namespace?.type).toBe("module"); // Namespaces are represented as modules
       expect(namespace?.modifiers).toContain("namespace");
 
-      const nestedClass = result.entities.find(e => e.name === "MyNamespace::NestedClass");
+      const nestedClass = result.entities.find((e) => e.name === "MyNamespace::NestedClass");
       expect(nestedClass).toBeDefined();
 
-      const standaloneFunc = result.entities.find(e => e.name === "MyNamespace::standaloneFunction");
+      const standaloneFunc = result.entities.find((e) => e.name === "MyNamespace::standaloneFunction");
       expect(standaloneFunc).toBeDefined();
 
-      const innerNamespace = result.entities.find(e => e.name === "MyNamespace::InnerNamespace");
+      const innerNamespace = result.entities.find((e) => e.name === "MyNamespace::InnerNamespace");
       expect(innerNamespace).toBeDefined();
     });
   });
@@ -163,15 +163,13 @@ public:
 
       const result = await parser.parse("test.cpp", code, "hash5");
 
-      const plusOperator = result.entities.find(e => e.name === "Vector::operator+");
+      const plusOperator = result.entities.find((e) => e.name === "Vector::operator+");
       expect(plusOperator).toBeDefined();
       expect(plusOperator?.modifiers).toContain("operator");
       expect(plusOperator?.modifiers).toContain("const");
-
-      const bracketOperator = result.entities.find(e => e.name === "Vector::operator[]");
+      const bracketOperator = result.entities.find((e) => e.name === "Vector::operator[]");
       expect(bracketOperator).toBeDefined();
-
-      const callOperator = result.entities.find(e => e.name === "Vector::operator()");
+      const callOperator = result.entities.find((e) => e.name === "Vector::operator()");
       expect(callOperator).toBeDefined();
     });
   });
@@ -191,10 +189,10 @@ private:
 
       const result = await parser.parse("test.cpp", code, "hash6");
 
-      const templateClass = result.entities.find(e => e.name === "Container");
+      const templateClass = result.entities.find((e) => e.name === "Container");
       expect(templateClass).toBeDefined();
       expect(templateClass?.modifiers).toContain("template");
-      expect(templateClass?.modifiers?.some(m => m.includes("T"))).toBe(true);
+      expect(templateClass?.modifiers?.some((m) => m.includes("T"))).toBe(true);
     });
 
     it("should extract simple template functions", async () => {
@@ -210,14 +208,14 @@ void swap(T& a, U& b) {}
 
       const result = await parser.parse("test.cpp", code, "hash7");
 
-      const maxFunc = result.entities.find(e => e.name === "max");
+      const maxFunc = result.entities.find((e) => e.name === "max");
       expect(maxFunc).toBeDefined();
       expect(maxFunc?.modifiers).toContain("template");
 
-      const swapFunc = result.entities.find(e => e.name === "swap");
+      const swapFunc = result.entities.find((e) => e.name === "swap");
       expect(swapFunc).toBeDefined();
-      expect(swapFunc?.modifiers?.some(m => m.includes("T"))).toBe(true);
-      expect(swapFunc?.modifiers?.some(m => m.includes("U"))).toBe(true);
+      expect(swapFunc?.modifiers?.some((m) => m.includes("T"))).toBe(true);
+      expect(swapFunc?.modifiers?.some((m) => m.includes("U"))).toBe(true);
     });
 
     it("should skip complex template metaprogramming", async () => {
@@ -239,14 +237,14 @@ class SimpleClass {};
       const result = await parser.parse("test.cpp", code, "hash8");
 
       // Complex templates should be skipped
-      const enableIfFunc = result.entities.find(e => e.name === "is_odd");
+      const enableIfFunc = result.entities.find((e) => e.name === "is_odd");
       expect(enableIfFunc).toBeUndefined();
 
-      const variadicFunc = result.entities.find(e => e.name === "print");
+      const variadicFunc = result.entities.find((e) => e.name === "print");
       expect(variadicFunc).toBeUndefined();
 
       // Simple template should still be extracted
-      const simpleClass = result.entities.find(e => e.name === "SimpleClass");
+      const simpleClass = result.entities.find((e) => e.name === "SimpleClass");
       expect(simpleClass).toBeDefined();
     });
   });
@@ -269,20 +267,20 @@ public:
 
       const result = await parser.parse("test.cpp", code, "hash9");
 
-      const constMethod = result.entities.find(e => e.name === "TestClass::constMethod");
+      const constMethod = result.entities.find((e) => e.name === "TestClass::constMethod");
       expect(constMethod?.modifiers).toContain("const");
 
-      const staticMethod = result.entities.find(e => e.name === "TestClass::staticMethod");
+      const staticMethod = result.entities.find((e) => e.name === "TestClass::staticMethod");
       expect(staticMethod?.modifiers).toContain("static");
 
-      const noexceptMethod = result.entities.find(e => e.name === "TestClass::noexceptMethod");
+      const noexceptMethod = result.entities.find((e) => e.name === "TestClass::noexceptMethod");
       expect(noexceptMethod?.modifiers).toContain("noexcept");
 
-      const complexMethod = result.entities.find(e => e.name === "TestClass::complexMethod");
+      const complexMethod = result.entities.find((e) => e.name === "TestClass::complexMethod");
       expect(complexMethod?.modifiers).toContain("const");
       expect(complexMethod?.modifiers).toContain("noexcept");
 
-      const virtualMethod = result.entities.find(e => e.name === "TestClass::virtualMethod");
+      const virtualMethod = result.entities.find((e) => e.name === "TestClass::virtualMethod");
       expect(virtualMethod?.modifiers).toContain("virtual");
     });
   });
@@ -305,16 +303,16 @@ enum class Status : int {
 
       const result = await parser.parse("test.cpp", code, "hash10");
 
-      const colorEnum = result.entities.find(e => e.name === "Color");
+      const colorEnum = result.entities.find((e) => e.name === "Color");
       expect(colorEnum).toBeDefined();
       expect(colorEnum?.type).toBe("enum");
 
-      const redValue = result.entities.find(e => e.name === "Color::RED");
+      const redValue = result.entities.find((e) => e.name === "Color::RED");
       expect(redValue).toBeDefined();
       expect(redValue?.type).toBe("constant"); // enum values are constants
       expect(redValue?.modifiers).toContain("enum_value");
 
-      const statusEnum = result.entities.find(e => e.name === "Status");
+      const statusEnum = result.entities.find((e) => e.name === "Status");
       expect(statusEnum).toBeDefined();
       expect(statusEnum?.modifiers).toContain("scoped");
     });
@@ -375,7 +373,7 @@ class ComplexTemplate {
       const result = await parser.parse("test.cpp", code, "hash13");
       expect(result).toBeDefined();
       // Complex template should be skipped
-      const complexTemplate = result.entities.find(e => e.name === "ComplexTemplate");
+      const complexTemplate = result.entities.find((e) => e.name === "ComplexTemplate");
       expect(complexTemplate).toBeUndefined();
     });
   });
@@ -404,7 +402,7 @@ public:
       // in the test based on how relationships are returned
       expect(result.entities).toBeDefined();
 
-      const classA = result.entities.find(e => e.name === "A");
+      const classA = result.entities.find((e) => e.name === "A");
       expect(classA).toBeDefined();
     });
   });

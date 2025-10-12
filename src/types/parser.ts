@@ -93,11 +93,16 @@ export interface ParsedEntity {
   /** Unique identifier for the entity */
   id?: string; // Optional for backward compatibility
 
+  /** Optional alias (some parsers might use path) */
+  path?: string;
+  /** Optional signature for functions/methods */
+  signature?: string;
   /** Entity name (function name, class name, etc.) */
   name: string;
 
-  /** Type of the entity - enhanced for TASK-003B Python features */
+  
   type:
+    | "event"
     | "function"
     | "class"
     | "method"
@@ -122,7 +127,15 @@ export interface ParsedEntity {
     | "class_method"
     | "static_method"
     | "module"
-    | "typedef";
+    | "typedef"
+    | "struct"
+    | "trait"
+    | "macro"
+    | "enum_variant"
+    | "field"
+    | "impl_block"
+    | "union"
+    | "crate";
 
   /** File path containing this entity */
   filePath?: string; // Optional for backward compatibility
@@ -132,6 +145,9 @@ export interface ParsedEntity {
     start: { line: number; column: number; index: number };
     end: { line: number; column: number; index: number };
   };
+
+  /** Detected language (optional) */
+  language?: string;
 
   /** Child entities (e.g., methods in a class) */
   children?: ParsedEntity[];
@@ -466,7 +482,17 @@ export interface EntityRelationship {
   to: string;
 
   /** Relationship type */
-  type: "inherits" | "implements" | "overrides" | "calls" | "imports" | "decorates" | "contains" | "references" | "embeds" | "member_of";
+  type:
+    | "inherits"
+    | "implements"
+    | "overrides"
+    | "calls"
+    | "imports"
+    | "decorates"
+    | "contains"
+    | "references"
+    | "embeds"
+    | "member_of";
 
   /** Source file path */
   sourceFile?: string;
@@ -480,6 +506,7 @@ export interface EntityRelationship {
     confidence?: number;
     isDirectRelation?: boolean;
     mroPosition?: number; // For inheritance MRO
+    [key: string]: any;
   };
 }
 
@@ -505,7 +532,7 @@ export interface PatternAnalysis {
 
   /** Design patterns detected */
   designPatterns: Array<{
-    pattern: "singleton" | "observer" | "factory" | "builder" | "strategy" | "decorator";
+    pattern: "singleton" | "observer" | "factory" | "builder" | "strategy" | "decorator" | "iterator";
     entities: string[];
     confidence: number;
     description: string;
@@ -523,6 +550,16 @@ export interface PatternAnalysis {
     cycle: string[]; // List of files/modules in the cycle
     type: "import" | "inheritance" | "reference";
     severity: "warning" | "error";
+  }>;
+
+  
+  otherPatterns?: Array<{
+    kind: string;
+    entities?: string[];
+    confidence?: number;
+    description?: string;
+    locations?: Array<{ line: number; column: number }>;
+    metadata?: Record<string, any>;
   }>;
 }
 
@@ -683,15 +720,17 @@ export interface ImportDependency {
   /** Usage locations */
   usageLocations: Array<{ line: number; column: number; context: string }>;
 
-  type?: "import" | "from_import";
-
   module?: string;
-  
+
   imported?: string;
-  
+
   alias?: string;
-  
+
   isLocal?: boolean;
+
+  metadata?: Record<string, any>;
+
+  type?: "import" | "from_import" | "use" | "extern_crate";
 }
 
 /**
@@ -731,7 +770,6 @@ export interface PythonParserMetrics {
     crossReferences?: number;
     mroCalculations?: number;
   };
-
 
   /** Layer 4 metrics */
   patternRecognition: {

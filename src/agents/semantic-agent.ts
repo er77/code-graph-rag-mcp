@@ -26,16 +26,18 @@
  *  - 2025-09-17: Enhanced by Dev-Agent - TASK-004B: Added circuit breaker and reliability patterns
  */
 
+import { createHash } from "node:crypto";
+import { getConfig } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { CodeAnalyzer } from "../semantic/code-analyzer.js";
 import { EmbeddingGenerator } from "../semantic/embedding-generator.js";
 import { HybridSearchEngine } from "../semantic/hybrid-search.js";
 import { SemanticCache } from "../semantic/semantic-cache.js";
 import { VectorStore } from "../semantic/vector-store.js";
+import { getGraphStorage } from "../storage/graph-storage-factory.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
 import type { ParsedEntity } from "../types/parser.js";
 import {
-  SemanticTaskType,
   type CloneGroup,
   type CrossLangResult,
   type RefactoringSuggestion,
@@ -43,6 +45,7 @@ import {
   type SemanticMetrics,
   type SemanticOperations,
   type SemanticResult,
+  SemanticTaskType,
   type SimilarCode,
   type VectorEmbedding,
 } from "../types/semantic.js";
@@ -50,7 +53,6 @@ import {
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import { BaseAgent } from "./base.js";
-import { getGraphStorage } from "../storage/graph-storage-factory.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -58,17 +60,17 @@ import { getGraphStorage } from "../storage/graph-storage-factory.js";
 
 // TASK-004B: Circuit breaker states
 enum CircuitBreakerState {
-  CLOSED = 'CLOSED',       // Normal operation
-  OPEN = 'OPEN',          // Failures detected, blocking requests
-  HALF_OPEN = 'HALF_OPEN' // Testing if service has recovered
+  CLOSED = "CLOSED", // Normal operation
+  OPEN = "OPEN", // Failures detected, blocking requests
+  HALF_OPEN = "HALF_OPEN", // Testing if service has recovered
 }
 
 // TASK-004B: Circuit breaker configuration
 interface CircuitBreakerConfig {
-  failureThreshold: number;    // Number of failures before opening
-  recoveryTimeout: number;     // Time before trying HALF_OPEN (ms)
-  successThreshold: number;    // Successes needed to close from HALF_OPEN
-  monitorWindow: number;       // Time window for failure counting (ms)
+  failureThreshold: number; // Number of failures before opening
+  recoveryTimeout: number; // Time before trying HALF_OPEN (ms)
+  successThreshold: number; // Successes needed to close from HALF_OPEN
+  monitorWindow: number; // Time window for failure counting (ms)
 }
 
 const AGENT_CONFIG = {
@@ -82,10 +84,10 @@ const AGENT_CONFIG = {
 
 // TASK-004B: Circuit breaker configuration
 const CIRCUIT_BREAKER_CONFIG: CircuitBreakerConfig = {
-  failureThreshold: 5,        // Open after 5 failures
-  recoveryTimeout: 30000,     // Try recovery after 30 seconds
-  successThreshold: 3,        // Close after 3 consecutive successes
-  monitorWindow: 60000,       // 1 minute failure window
+  failureThreshold: 5, // Open after 5 failures
+  recoveryTimeout: 30000, // Try recovery after 30 seconds
+  successThreshold: 3, // Close after 3 consecutive successes
+  monitorWindow: 60000, // 1 minute failure window
 };
 
 // =============================================================================
@@ -105,18 +107,37 @@ interface SemanticTaskPayload {
 // 5. CORE BUSINESS LOGIC
 // =============================================================================
 export class SemanticAgent extends BaseAgent implements SemanticOperations {
-  private vectorStore: VectorStore;
-  private embeddingGen: EmbeddingGenerator;
-  private hybridSearch: HybridSearchEngine;
+  private vectorStore!: VectorStore;
+  private embeddingGen!: EmbeddingGenerator;
+  private hybridSearch!: HybridSearchEngine;
   private cache: SemanticCache;
-  private codeAnalyzer: CodeAnalyzer;
+  private codeAnalyzer!: CodeAnalyzer;
+  private embeddingDim = 384;
 
   // TASK-004B: Circuit breaker implementation
   private circuitBreakerState = CircuitBreakerState.CLOSED;
   private lastFailureTime = 0;
   private successCount = 0;
   private failureWindow: number[] = [];
-  private debugMode = process.env.SEMANTIC_AGENT_DEBUG === 'true';
+  private debugMode = process.env.SEMANTIC_AGENT_DEBUG === "true";
+
+  /**
+   * Get embedding dimensions by generating a test embedding
+   */
+  private async getEmbeddingDimensions(): Promise<number> {
+    try {
+      console.log(`[${this.id}] Detecting embedding dimensions...`);
+      const testEmbedding = await this.embeddingGen.generateEmbedding("dimension detection test");
+      const dimensions = testEmbedding.length;
+      this.embeddingDim = dimensions;
+      console.log(`[${this.id}] Detected ${dimensions} dimensions from embedding provider`);
+      return dimensions;
+    } catch (error) {
+      console.warn(`[${this.id}] Failed to detect dimensions, using fallback:`, error);
+      this.embeddingDim = 384;
+      return 384;
+    }
+  }
 
   private semanticMetrics: SemanticMetrics = {
     embeddingsGenerated: 0,
@@ -134,20 +155,74 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
       priority: AGENT_CONFIG.priority,
     });
 
-    // Initialize components
-    this.vectorStore = new VectorStore({
-      dbPath: AGENT_CONFIG.vectorDbPath,
-    });
-
-    this.embeddingGen = new EmbeddingGenerator({
-      batchSize: AGENT_CONFIG.batchSize,
-      localPath: AGENT_CONFIG.modelPath,
-    });
-
+    // Initialize basic components first
     this.cache = new SemanticCache({
       maxSize: 5000,
       ttl: 3600000, // 1 hour
     });
+  }
+
+  private async setupComponents(): Promise<void> {
+    const config = getConfig();
+    console.log(
+      `[${this.id}] Initializing embedding generator with provider: ${config.mcp?.embedding?.provider || "memory"}`,
+    );
+    console.log(`[${this.id}] Embedding model: ${config.mcp?.embedding?.model || "Xenova/all-MiniLM-L6-v2"}`);
+    console.log(`[${this.id}] Database path from config: ${config.database?.path || "undefined"}`);
+    this.embeddingGen = new EmbeddingGenerator({
+      provider: config.mcp?.embedding?.provider || "memory",
+      modelName: config.mcp?.embedding?.model || "Xenova/all-MiniLM-L6-v2",
+      quantized: true,
+      localPath: AGENT_CONFIG.modelPath,
+      batchSize: AGENT_CONFIG.batchSize,
+      ollama: config.mcp?.embedding?.ollama
+        ? {
+            baseUrl: config.mcp.embedding.ollama.baseUrl,
+            timeoutMs: config.mcp.embedding.ollama.timeoutMs || config.mcp.embedding.ollama.timeout,
+            concurrency: config.mcp.embedding.ollama.concurrency,
+            headers: config.mcp.embedding.ollama.headers,
+            autoPull: config.mcp.embedding.ollama.autoPull,
+            warmupText: config.mcp.embedding.ollama.warmupText,
+            checkServer: config.mcp.embedding.ollama.checkServer,
+            pullTimeoutMs: config.mcp.embedding.ollama.pullTimeoutMs,
+          }
+        : undefined,
+      openai: config.mcp?.embedding?.openai
+        ? {
+            baseUrl: config.mcp.embedding.openai.baseUrl,
+            apiKey: config.mcp.embedding.openai.apiKey,
+            timeoutMs: config.mcp.embedding.openai.timeoutMs || config.mcp.embedding.openai.timeout,
+            concurrency: config.mcp.embedding.openai.concurrency,
+            maxBatchSize: config.mcp.embedding.openai.maxBatchSize,
+          }
+        : undefined,
+      cloudru: config.mcp?.embedding?.cloudru
+        ? {
+            baseUrl: config.mcp.embedding.cloudru.baseUrl || "https://foundation-models.api.cloud.ru",
+            apiKey: config.mcp.embedding.cloudru.apiKey || process.env.MCP_EMBEDDING_API_KEY || "",
+            timeoutMs: config.mcp.embedding.cloudru.timeoutMs || config.mcp.embedding.cloudru.timeout || 15000,
+            concurrency: config.mcp.embedding.cloudru.concurrency || 4,
+            maxBatchSize: config.mcp.embedding.cloudru.maxBatchSize,
+          }
+        : undefined,
+      memory: config.mcp?.embedding?.memory,
+    });
+
+    // Get dimensions dynamically from actual embedding
+    const dimensions = await this.getEmbeddingDimensions();
+    console.log(`[${this.id}] Using ${dimensions} dimensions for vector store`);
+
+    // Initialize components
+    const dbPath = config.database?.path || "./vectors.db";
+    console.log(`[${this.id}] Initializing VectorStore with dbPath: ${dbPath}`);
+    this.vectorStore = new VectorStore({
+      dbPath: dbPath,
+      dimensions: dimensions,
+    });
+
+    // Wait for vector store to be fully initialized
+    await this.vectorStore.initialize();
+    console.log(`[${this.id}] Vector store initialized successfully`);
 
     this.hybridSearch = new HybridSearchEngine(this.vectorStore, this.embeddingGen);
 
@@ -156,16 +231,22 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
   }
 
   /**
+   * Async initialization method
+   */
+  async initialize(): Promise<void> {
+    await this.setupComponents();
+    this.subscribeToKnowledgeBus();
+    await super.initialize();
+  }
+
+  /**
    * Initialize the semantic agent
    */
   protected async onInitialize(): Promise<void> {
     console.log(`[${this.id}] Initializing semantic components...`);
 
-    this.subscribeToKnowledgeBus();
-    // Initialize all components
-    await this.vectorStore.initialize();
     await this.embeddingGen.initialize();
-    
+
     // Update initial metrics
     this.semanticMetrics.vectorsStored = await this.vectorStore.count();
 
@@ -237,7 +318,9 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
     const recentFailures = this.failureWindow.length;
 
     if (this.debugMode) {
-      console.log(`[${this.id}] TASK-004B: Circuit breaker failure recorded. Recent failures: ${recentFailures}/${CIRCUIT_BREAKER_CONFIG.failureThreshold}`);
+      console.log(
+        `[${this.id}] TASK-004B: Circuit breaker failure recorded. Recent failures: ${recentFailures}/${CIRCUIT_BREAKER_CONFIG.failureThreshold}`,
+      );
     }
 
     if (recentFailures >= CIRCUIT_BREAKER_CONFIG.failureThreshold) {
@@ -252,7 +335,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
   private cleanupFailureWindow(): void {
     const now = Date.now();
     this.failureWindow = this.failureWindow.filter(
-      failureTime => now - failureTime <= CIRCUIT_BREAKER_CONFIG.monitorWindow
+      (failureTime) => now - failureTime <= CIRCUIT_BREAKER_CONFIG.monitorWindow,
     );
   }
 
@@ -262,7 +345,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
   private async executeWithCircuitBreaker<T>(
     operation: () => Promise<T>,
     fallback: () => T,
-    operationName: string
+    operationName: string,
   ): Promise<T> {
     if (!this.canExecute()) {
       if (this.debugMode) {
@@ -417,11 +500,13 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
         console.warn(`[${this.id}] TASK-004B: Semantic search fallback for query: ${query}`);
         return {
           results: [],
-          query,
+          totalResults: 0,
+          searchTime: 0,
           processingTime: 0,
+          query,
         } as SemanticResult;
       },
-      "semanticSearch"
+      "semanticSearch",
     );
   }
 
@@ -438,17 +523,13 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
   }
 
   async generateCodeEmbedding(code: string): Promise<Float32Array> {
-    // TASK-004B: Execute with circuit breaker protection
     return this.executeWithCircuitBreaker(
-      async () => {
-        return this.codeAnalyzer.generateCodeEmbedding(code);
-      },
+      async () => this.codeAnalyzer.generateCodeEmbedding(code),
       () => {
-        // Fallback: return zero vector
         console.warn(`[${this.id}] TASK-004B: Embedding generation fallback for code snippet`);
-        return new Float32Array(384); // Return zero vector with correct dimensions
+        return new Float32Array(this.embeddingDim);
       },
-      "generateCodeEmbedding"
+      "generateCodeEmbedding",
     );
   }
 
@@ -464,7 +545,10 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
    * Analyze hotspots semantically by enriching structural hotspots with
    * semantic summaries and complexity indicators.
    */
-  async analyzeHotspots(hotspots: any[], metric: string): Promise<{
+  async analyzeHotspots(
+    hotspots: any[],
+    metric: string,
+  ): Promise<{
     metric: string;
     items: Array<{
       entityId?: string;
@@ -480,7 +564,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
       };
     }>;
   }> {
-    const fs = await import('node:fs/promises');
+    const fs = await import("node:fs/promises");
     const storage = await getGraphStorage();
     const items: Array<{
       entityId?: string;
@@ -495,7 +579,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
     for (const h of hotspots ?? []) {
       const entity = (h.entity || h) as any;
       const filePath = entity.filePath || entity.path;
-      let code = '';
+      let code = "";
       let snippetInfo: { startLine?: number; endLine?: number; length?: number } | undefined;
       try {
         if (filePath) {
@@ -503,11 +587,17 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
           if (entity.id) {
             try {
               const stored = await storage.getEntity(entity.id);
-              if (stored && stored.location && typeof stored.location.start?.index === 'number' && typeof stored.location.end?.index === 'number') {
-                const full = await fs.readFile(filePath, 'utf8');
+              if (
+                stored &&
+                stored.location &&
+                typeof stored.location.start?.index === "number" &&
+                typeof stored.location.end?.index === "number"
+              ) {
+                const full = await fs.readFile(filePath, "utf8");
                 const startIdx = Math.max(0, stored.location.start.index);
                 const endIdx = Math.min(full.length, stored.location.end.index);
-                if (endIdx > startIdx && endIdx - startIdx < 10000) { // cap snippet size ~10k chars
+                if (endIdx > startIdx && endIdx - startIdx < 10000) {
+                  // cap snippet size ~10k chars
                   code = full.slice(startIdx, endIdx);
                   snippetInfo = {
                     startLine: stored.location.start.line,
@@ -517,26 +607,31 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
                 } else {
                   code = full;
                 }
-              } else if (stored && stored.location && typeof stored.location.start?.line === 'number' && typeof stored.location.end?.line === 'number') {
-                const full = await fs.readFile(filePath, 'utf8');
+              } else if (
+                stored &&
+                stored.location &&
+                typeof stored.location.start?.line === "number" &&
+                typeof stored.location.end?.line === "number"
+              ) {
+                const full = await fs.readFile(filePath, "utf8");
                 const lines = full.split(/\r?\n/);
                 const s = Math.max(0, (stored.location.start.line || 1) - 1);
-                const e = Math.min(lines.length, (stored.location.end.line || s + 1));
-                const slice = lines.slice(s, e).join('\n');
+                const e = Math.min(lines.length, stored.location.end.line || s + 1);
+                const slice = lines.slice(s, e).join("\n");
                 // Cap snippet length
                 code = slice.length > 10000 ? slice.slice(0, 10000) : slice;
                 snippetInfo = { startLine: s + 1, endLine: e, length: code.length };
               } else {
                 // Fallback to full file if no location indices
-                code = await fs.readFile(filePath, 'utf8');
+                code = await fs.readFile(filePath, "utf8");
               }
             } catch {
               // On any storage read error, fallback to full file
-              code = await fs.readFile(filePath, 'utf8');
+              code = await fs.readFile(filePath, "utf8");
             }
           } else {
             // No entity id; fallback to reading file (could be enhanced with simple name-based heuristics)
-            code = await fs.readFile(filePath, 'utf8');
+            code = await fs.readFile(filePath, "utf8");
           }
         }
       } catch {
@@ -550,7 +645,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
           await this.embeddingGen.generateCodeEmbedding(code);
           semantic = await this.codeAnalyzer.analyzeCodeSemantics(code);
         } catch (e) {
-          if (this.debugMode) console.warn('[SemanticAgent] analyzeHotspots semantic failed:', (e as Error).message);
+          if (this.debugMode) console.warn("[SemanticAgent] analyzeHotspots semantic failed:", (e as Error).message);
         }
       }
 
@@ -578,8 +673,8 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
   // Knowledge Bus integration
 
   private subscribeToKnowledgeBus(): void {
-    // Subscribe to indexing completion events
     knowledgeBus.subscribe(this.id, "index:complete", this.handleIndexComplete.bind(this));
+    knowledgeBus.subscribe(this.id, "index:completed", this.handleIndexComplete.bind(this));
 
     // Subscribe to entity updates
     knowledgeBus.subscribe(this.id, /^entity:.*/, this.handleEntityUpdate.bind(this));
@@ -600,8 +695,18 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
   }
 
   private async handleIndexComplete(entry: KnowledgeEntry): Promise<void> {
-    const entities = entry.data as ParsedEntity[];
-    await this.handleNewEntities(entities);
+    const payload = entry.data as { entities?: ParsedEntity[] } | ParsedEntity[] | undefined;
+    const entities = Array.isArray(payload)
+      ? payload
+      : Array.isArray((payload as any)?.entities)
+        ? (payload as any).entities
+        : null;
+
+    if (entities && entities.length > 0) {
+      await this.handleNewEntities(entities);
+    } else if (this.debugMode) {
+      console.log(`[${this.id}] index:complete received without entity payload`, payload);
+    }
   }
 
   private async handleEntityUpdate(entry: KnowledgeEntry): Promise<void> {
@@ -612,9 +717,11 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
     const text = `${e.name} ${e.type} ${e.signature ?? ""}`;
     const embedding = await this.embeddingGen.generateEmbedding(text);
 
-    // Update vector store
+    // Update vector store with correct path
+    const storage = await getGraphStorage();
+    const filePath = e.filePath ?? e.path ?? (await storage.getEntity(e.id))?.filePath ?? "";
     await this.vectorStore.update(e.id, embedding, {
-      path: e.path ?? e.filePath ?? "",
+      path: filePath,
       type: e.type,
       name: e.name,
     });
@@ -623,44 +730,95 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
   }
 
   private async handleNewEntities(entities: ParsedEntity[]): Promise<void> {
-    console.log(`[${this.id}] Processing ${entities.length} new entities for embedding`);
+    console.log(`[${this.id}] Processing ${entities?.length || 0} new entities for embedding`);
+    console.log(`[${this.id}] Entities type: ${typeof entities}, isArray: ${Array.isArray(entities)}`);
 
-    // Prepare texts for embedding
-    const texts = entities.map((ent) => {
-      const x: any = ent as any;
-      return `${x.name} ${x.type} ${x.signature ?? ""}`;
-    });
+    if (!Array.isArray(entities)) {
+      console.error(`[${this.id}] ERROR: entities is not an array!`, entities);
+      return;
+    }
 
-    // Generate embeddings in batch
+    const fs = await import("node:fs/promises");
+
+    const texts = await Promise.all(
+      entities.map(async (ent) => {
+        const e: any = ent;
+        let code = "";
+        try {
+          if (e.filePath) {
+            const full = await fs.readFile(e.filePath, "utf8");
+            if (typeof e.location?.start?.index === "number" && typeof e.location?.end?.index === "number") {
+              const s = Math.max(0, e.location.start.index);
+              const t = Math.min(full.length, e.location.end.index);
+              if (t > s && t - s < 10000) code = full.slice(s, t);
+            } else if (typeof e.location?.start?.line === "number" && typeof e.location?.end?.line === "number") {
+              const lines = full.split(/\r?\n/);
+              const sLine = Math.max(0, e.location.start.line - 1);
+              const eLine = Math.min(lines.length, e.location.end.line);
+              const slice = lines.slice(sLine, eLine).join("\n");
+              code = slice.length > 10000 ? slice.slice(0, 10000) : slice;
+            }
+          }
+        } catch {}
+
+        const header = `${e.name ?? ""} ${e.type ?? ""} ${e.signature ?? ""}`.trim();
+        return `${header}\n${code}`.trim();
+      }),
+    );
+
     const embeddings = await this.embeddingGen.generateBatch(texts);
 
-    // Create vector embeddings
+    const storage = await getGraphStorage();
+    const modelName = (this as any).embeddingGen?.modelName || "default";
+
+    const entityDataMap = new Map();
+    for (const entity of entities) {
+      const x: any = entity as any;
+      if (x.id && !x.filePath && !x.path) {
+        const entityData = await storage.getEntity(x.id);
+        entityDataMap.set(x.id, entityData);
+      }
+    }
+
     const vectorEmbeddings: VectorEmbedding[] = entities.map((entity, i) => {
       const x: any = entity as any;
+
+      const stableId = x.id
+        ? `ent:${x.id}`
+        : `doc:${createHash("sha256")
+            .update(
+              `${x.filePath ?? ""}|${x.type}|${x.name}|${x.location?.start?.index ?? -1}-${x.location?.end?.index ?? -1}|${modelName}`,
+            )
+            .digest("base64url")
+            .slice(0, 24)}`;
+
+      const storedEntity = entityDataMap.get(x.id);
+      const filePath = x.filePath ?? x.path ?? storedEntity?.filePath ?? "";
+
+      const language = x.language ?? storedEntity?.language ?? undefined;
+
       return {
-        id: x.id ?? `parsed:${x.name ?? "unknown"}:${i}:${Date.now()}`,
+        id: stableId,
         content: texts[i] ?? "",
-        vector: embeddings[i] ?? new Float32Array(384),
+        vector: embeddings[i] ?? new Float32Array(this.embeddingDim),
         metadata: {
-          path: x.path ?? x.filePath ?? "",
+          path: filePath,
           type: x.type,
           name: x.name,
-          language: x.language,
+          language,
+          entityId: x.id ?? undefined,
+          start: x.location?.start?.index ?? undefined,
+          end: x.location?.end?.index ?? undefined,
+          model: modelName,
         },
         createdAt: Date.now(),
       };
     });
 
-    // Store in vector database
     await this.vectorStore.insertBatch(vectorEmbeddings);
-
-    // Update metrics
     this.semanticMetrics.embeddingsGenerated += embeddings.length;
     this.semanticMetrics.vectorsStored = await this.vectorStore.count();
-
-    // Publish completion event
     knowledgeBus.publish("semantic:embeddings:complete", { count: embeddings.length }, this.id);
-
     console.log(`[${this.id}] Stored ${embeddings.length} new embeddings`);
   }
 

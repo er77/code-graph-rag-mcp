@@ -7,9 +7,5 @@
     "noUnusedParameters": false,
     "skipLibCheck": true
   },
-  "include": [
-    "src/**/__tests__/**/*.ts",
-    "src/**/*.test.ts",
-    "src/**/*.spec.ts"
-  ]
+  "include": ["src/**/__tests__/**/*.ts", "src/**/*.test.ts", "src/**/*.spec.ts"]
 }

@@ -30,40 +30,11 @@ import type {
 } from "../types/parser.js";
 
 // =============================================================================
-// 2. CONSTANTS AND CONFIGURATION
-// =============================================================================
-
-// C# access modifiers
-const ACCESS_MODIFIERS = ["public", "private", "protected", "internal", "protected internal", "private protected"];
-
-// C# method modifiers
-const METHOD_MODIFIERS = ["static", "virtual", "override", "abstract", "sealed", "async", "extern", "partial"];
-
-// Common C# attributes
-const COMMON_ATTRIBUTES = [
-  "Serializable",
-  "Obsolete",
-  "DataContract",
-  "DataMember",
-  "ApiController",
-  "Route",
-  "HttpGet",
-  "HttpPost",
-  "HttpPut",
-  "HttpDelete",
-  "Authorize",
-  "AllowAnonymous",
-];
-
-// LINQ query keywords
-const LINQ_KEYWORDS = ["from", "where", "select", "group", "into", "orderby", "join", "let"];
-
-// =============================================================================
 // 3. C# ENTITY EXTRACTION (Layer 1)
 // =============================================================================
 
 export class CSharpAnalyzer {
-  private metrics = {
+  private metrics: AnalyzerMetrics = {
     entitiesExtracted: 0,
     relationshipsFound: 0,
     patternsIdentified: 0,
@@ -73,18 +44,20 @@ export class CSharpAnalyzer {
   /**
    * Main entry point for C# analysis
    */
-  public async analyze(node: TreeSitterNode, filePath: string): Promise<{
+  public async analyze(
+    node: TreeSitterNode,
+    filePath: string,
+  ): Promise<{
     entities: ParsedEntity[];
     relationships: EntityRelationship[];
     imports: ImportDependency[];
-    patterns: PatternAnalysis[];
-    metrics: typeof this.metrics;
+    patterns: PatternAnalysis;
+    metrics: AnalyzerMetrics;
   }> {
     const startTime = Date.now();
     const entities: ParsedEntity[] = [];
     const relationships: EntityRelationship[] = [];
     const imports: ImportDependency[] = [];
-    const patterns: PatternAnalysis[] = [];
 
     // Extract all entity types
     this.extractNamespaces(node, entities, filePath);
@@ -99,13 +72,19 @@ export class CSharpAnalyzer {
     this.extractUsings(node, imports, filePath);
 
     // Identify patterns (Layer 4)
-    patterns.push(...this.identifyPatterns(node, entities));
+    const patterns = this.identifyPatterns(node, entities);
 
     // Update metrics
     this.metrics.entitiesExtracted = entities.length;
     this.metrics.relationshipsFound = relationships.length;
-    this.metrics.patternsIdentified = patterns.length;
-    this.metrics.parseTime = Date.now() - startTime;
+    this.metrics.patternsIdentified =
+      patterns.designPatterns.length +
+      patterns.exceptionHandling.length +
+      patterns.contextManagers.length +
+      patterns.pythonIdioms.length +
+      patterns.circularDependencies.length +
+      (patterns.otherPatterns?.length || 0);
+    this.metrics.parseTime = Math.max(1, Date.now() - startTime);
 
     return { entities, relationships, imports, patterns, metrics: this.metrics };
   }
@@ -126,7 +105,7 @@ export class CSharpAnalyzer {
       entities.push({
         id: `${filePath}:namespace:${name}`,
         name,
-        type: "namespace",
+        type: "module",
         filePath,
         location,
         metadata: {
@@ -143,7 +122,7 @@ export class CSharpAnalyzer {
     node: TreeSitterNode,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
-    filePath: string
+    filePath: string,
   ): void {
     const classNodes = this.findNodes(node, "class_declaration");
 
@@ -170,10 +149,11 @@ export class CSharpAnalyzer {
 
           // Create inheritance relationship
           relationships.push({
-            source: `${filePath}:class:${name}`,
-            target: `${filePath}:type:${baseType}`,
+            from: `${filePath}:class:${name}`,
+            to: `${filePath}:type:${baseType}`,
             type: "inherits",
-            metadata: { filePath },
+            sourceFile: filePath,
+            metadata: {},
           });
         }
       }
@@ -217,7 +197,7 @@ export class CSharpAnalyzer {
     node: TreeSitterNode,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
-    filePath: string
+    filePath: string,
   ): void {
     const interfaceNodes = this.findNodes(node, "interface_declaration");
 
@@ -239,10 +219,11 @@ export class CSharpAnalyzer {
           baseInterfaces.push(baseInterface);
 
           relationships.push({
-            source: `${filePath}:interface:${name}`,
-            target: `${filePath}:interface:${baseInterface}`,
-            type: "extends",
-            metadata: { filePath },
+            from: `${filePath}:interface:${name}`,
+            to: `${filePath}:interface:${baseInterface}`,
+            type: "inherits",
+            sourceFile: filePath,
+            metadata: {},
           });
         }
       }
@@ -342,12 +323,13 @@ export class CSharpAnalyzer {
       entities.push({
         id: `${filePath}:delegate:${name}`,
         name,
-        type: "delegate",
+        type: "typedef",
         filePath,
         location,
         metadata: {
           returnType,
           parameters,
+          csharpKind: "delegate",
         },
       });
     }
@@ -371,12 +353,13 @@ export class CSharpAnalyzer {
       entities.push({
         id: `${filePath}:record:${name}`,
         name,
-        type: "record",
+        type: "class",
         filePath,
         location,
         metadata: {
           isRecordStruct,
           modifiers,
+          isRecord: true,
         },
       });
     }
@@ -389,7 +372,7 @@ export class CSharpAnalyzer {
     classNode: TreeSitterNode,
     className: string,
     entities: ParsedEntity[],
-    filePath: string
+    filePath: string,
   ): ParsedEntity[] {
     const methods: ParsedEntity[] = [];
     const methodNodes = this.findNodes(classNode, "method_declaration");
@@ -445,7 +428,7 @@ export class CSharpAnalyzer {
     classNode: TreeSitterNode,
     className: string,
     entities: ParsedEntity[],
-    filePath: string
+    filePath: string,
   ): ParsedEntity[] {
     const properties: ParsedEntity[] = [];
     const propertyNodes = this.findNodes(classNode, "property_declaration");
@@ -492,7 +475,7 @@ export class CSharpAnalyzer {
     classNode: TreeSitterNode,
     className: string,
     entities: ParsedEntity[],
-    filePath: string
+    filePath: string,
   ): ParsedEntity[] {
     const fields: ParsedEntity[] = [];
     const fieldNodes = this.findNodes(classNode, "field_declaration");
@@ -543,7 +526,7 @@ export class CSharpAnalyzer {
     classNode: TreeSitterNode,
     className: string,
     entities: ParsedEntity[],
-    filePath: string
+    filePath: string,
   ): ParsedEntity[] {
     const events: ParsedEntity[] = [];
     const eventNodes = this.findNodes(classNode, "event_declaration");
@@ -584,7 +567,7 @@ export class CSharpAnalyzer {
     interfaceNode: TreeSitterNode,
     interfaceName: string,
     entities: ParsedEntity[],
-    filePath: string
+    filePath: string,
   ): ParsedEntity[] {
     const methods: ParsedEntity[] = [];
     const methodNodes = this.findNodes(interfaceNode, "method_declaration");
@@ -626,7 +609,7 @@ export class CSharpAnalyzer {
     interfaceNode: TreeSitterNode,
     interfaceName: string,
     entities: ParsedEntity[],
-    filePath: string
+    filePath: string,
   ): ParsedEntity[] {
     const properties: ParsedEntity[] = [];
     const propertyNodes = this.findNodes(interfaceNode, "property_declaration");
@@ -678,14 +661,16 @@ export class CSharpAnalyzer {
       const alias = this.extractAlias(usingNode);
 
       imports.push({
-        source: filePath,
-        target: name,
-        type: isStatic ? "static_using" : "using",
-        metadata: {
-          alias,
-          isStatic,
-        },
-      });
+        sourceFile: filePath,
+        targetModule: name,
+        importType: "absolute",
+        symbols: [{ name: "*" }],
+        line: usingNode.startPosition.row + 1,
+        isUsed: false,
+        usageLocations: [],
+        type: "import",
+        metadata: { alias, isStatic },
+      } as ImportDependency);
     }
 
     // Also extract global using statements (C# 10+)
@@ -696,74 +681,83 @@ export class CSharpAnalyzer {
 
       const name = this.getNodeText(nameNode);
       imports.push({
-        source: filePath,
-        target: name,
-        type: "global_using",
-        metadata: {
-          isGlobal: true,
-        },
-      });
+        sourceFile: filePath,
+        targetModule: name,
+        importType: "absolute",
+        symbols: [{ name: "*" }],
+        line: globalUsing.startPosition.row + 1,
+        isUsed: false,
+        usageLocations: [],
+        type: "import",
+        metadata: { isGlobal: true },
+      } as ImportDependency);
     }
   }
 
   /**
    * Identify C# patterns (Layer 4)
    */
-  private identifyPatterns(node: TreeSitterNode, entities: ParsedEntity[]): PatternAnalysis[] {
-    const patterns: PatternAnalysis[] = [];
+  private identifyPatterns(node: TreeSitterNode, entities: ParsedEntity[]): PatternAnalysis {
+    const result: PatternAnalysis = {
+      contextManagers: [],
+      exceptionHandling: [],
+      designPatterns: [],
+      pythonIdioms: [],
+      circularDependencies: [],
+      otherPatterns: [],
+    };
 
     // Identify Singleton pattern
-    const singletonPattern = this.identifySingletonPattern(entities);
-    if (singletonPattern) patterns.push(singletonPattern);
+    const singletonPattern = this.identifySingletonDesignPattern(entities);
+    if (singletonPattern) result.designPatterns.push(singletonPattern);
 
     // Identify Repository pattern
     const repositoryPattern = this.identifyRepositoryPattern(entities);
-    if (repositoryPattern) patterns.push(repositoryPattern);
+    if (repositoryPattern) result.otherPatterns!.push(repositoryPattern);
 
     // Identify Async/Await patterns
     const asyncPatterns = this.identifyAsyncPatterns(node);
-    patterns.push(...asyncPatterns);
+    result.otherPatterns!.push(...asyncPatterns);
 
     // Identify LINQ usage
     const linqPatterns = this.identifyLINQPatterns(node);
-    patterns.push(...linqPatterns);
+    result.otherPatterns!.push(...linqPatterns);
 
     // Identify Dependency Injection patterns
     const diPatterns = this.identifyDependencyInjectionPatterns(entities);
-    patterns.push(...diPatterns);
+    result.otherPatterns!.push(...diPatterns);
 
-    return patterns;
+    return result;
   }
 
   /**
    * Identify Singleton pattern
    */
-  private identifySingletonPattern(entities: ParsedEntity[]): PatternAnalysis | null {
+  private identifySingletonDesignPattern(entities: ParsedEntity[]): PatternAnalysis["designPatterns"][number] | null {
     for (const entity of entities) {
       if (entity.type !== "class") continue;
 
-      const metadata = entity.metadata as any;
       const hasStaticInstance = entities.some(
-        e =>
+        (e) =>
           e.type === "property" &&
           e.metadata?.className === entity.name &&
           e.metadata?.modifiers?.includes("static") &&
-          e.name.toLowerCase() === "instance"
+          e.name.toLowerCase() === "instance",
       );
 
       const hasPrivateConstructor = entities.some(
-        e =>
+        (e) =>
           e.type === "method" &&
           e.name === entity.name && // Constructor has same name as class
           e.metadata?.className === entity.name &&
-          e.metadata?.modifiers?.includes("private")
+          e.metadata?.modifiers?.includes("private"),
       );
 
       if (hasStaticInstance && hasPrivateConstructor) {
         return {
-          type: "singleton",
+          pattern: "singleton",
           confidence: 0.95,
-          entities: [entity.id],
+          entities: entity.id ? [entity.id] : [],
           description: `Singleton pattern detected in class ${entity.name}`,
         };
       }
@@ -775,25 +769,26 @@ export class CSharpAnalyzer {
   /**
    * Identify Repository pattern
    */
-  private identifyRepositoryPattern(entities: ParsedEntity[]): PatternAnalysis | null {
+  private identifyRepositoryPattern(
+    entities: ParsedEntity[],
+  ): NonNullable<PatternAnalysis["otherPatterns"]>[number] | null {
     for (const entity of entities) {
       if (entity.type !== "class" && entity.type !== "interface") continue;
 
       if (entity.name.endsWith("Repository") || entity.name.endsWith("Repo")) {
         const crudMethods = ["Create", "Read", "Update", "Delete", "Get", "Add", "Remove", "Find"];
         const classMethods = entities.filter(
-          e => e.type === "method" && (e.metadata?.className === entity.name || e.metadata?.interfaceName === entity.name)
+          (e) =>
+            e.type === "method" && (e.metadata?.className === entity.name || e.metadata?.interfaceName === entity.name),
         );
 
-        const hasCrudMethods = classMethods.some(m =>
-          crudMethods.some(crud => m.name.includes(crud))
-        );
+        const hasCrudMethods = classMethods.some((m) => crudMethods.some((crud) => m.name.includes(crud)));
 
         if (hasCrudMethods) {
           return {
-            type: "repository",
+            kind: "repository",
             confidence: 0.85,
-            entities: [entity.id],
+            entities: entity.id ? [entity.id] : [],
             description: `Repository pattern detected in ${entity.type} ${entity.name}`,
           };
         }
@@ -806,22 +801,20 @@ export class CSharpAnalyzer {
   /**
    * Identify async/await patterns
    */
-  private identifyAsyncPatterns(node: TreeSitterNode): PatternAnalysis[] {
-    const patterns: PatternAnalysis[] = [];
-    const asyncMethods = this.findNodes(node, "method_declaration").filter(m => {
+  private identifyAsyncPatterns(node: TreeSitterNode): NonNullable<PatternAnalysis["otherPatterns"]> {
+    const patterns: NonNullable<PatternAnalysis["otherPatterns"]> = [];
+    const asyncMethods = this.findNodes(node, "method_declaration").filter((m) => {
       const modifiers = this.extractModifiers(m);
       return modifiers.includes("async");
     });
 
     if (asyncMethods.length > 0) {
       patterns.push({
-        type: "async_await",
+        kind: "async_await",
         confidence: 1.0,
         entities: [],
         description: `Found ${asyncMethods.length} async methods using async/await pattern`,
-        metadata: {
-          count: asyncMethods.length,
-        },
+        metadata: { count: asyncMethods.length },
       });
     }
 
@@ -831,27 +824,25 @@ export class CSharpAnalyzer {
   /**
    * Identify LINQ patterns
    */
-  private identifyLINQPatterns(node: TreeSitterNode): PatternAnalysis[] {
-    const patterns: PatternAnalysis[] = [];
+  private identifyLINQPatterns(node: TreeSitterNode): NonNullable<PatternAnalysis["otherPatterns"]> {
+    const patterns: NonNullable<PatternAnalysis["otherPatterns"]> = [];
 
     // Check for LINQ query syntax
     const queryExpressions = this.findNodes(node, "query_expression");
     if (queryExpressions.length > 0) {
       patterns.push({
-        type: "linq_query",
+        kind: "linq_query",
         confidence: 1.0,
         entities: [],
         description: `Found ${queryExpressions.length} LINQ query expressions`,
-        metadata: {
-          count: queryExpressions.length,
-        },
+        metadata: { count: queryExpressions.length },
       });
     }
 
     // Check for LINQ method syntax (common methods)
     const linqMethods = ["Where", "Select", "OrderBy", "GroupBy", "Join", "FirstOrDefault", "Any", "All"];
     const invocations = this.findNodes(node, "invocation_expression");
-    const linqMethodCalls = invocations.filter(inv => {
+    const linqMethodCalls = invocations.filter((inv) => {
       const memberAccess = inv.childForFieldName("function");
       if (memberAccess && memberAccess.type === "member_access_expression") {
         const name = this.getNodeText(memberAccess.childForFieldName("name") || memberAccess);
@@ -862,13 +853,11 @@ export class CSharpAnalyzer {
 
     if (linqMethodCalls.length > 0) {
       patterns.push({
-        type: "linq_method",
+        kind: "linq_method",
         confidence: 0.9,
         entities: [],
         description: `Found ${linqMethodCalls.length} LINQ method calls`,
-        metadata: {
-          count: linqMethodCalls.length,
-        },
+        metadata: { count: linqMethodCalls.length },
       });
     }
 
@@ -878,24 +867,24 @@ export class CSharpAnalyzer {
   /**
    * Identify Dependency Injection patterns
    */
-  private identifyDependencyInjectionPatterns(entities: ParsedEntity[]): PatternAnalysis[] {
-    const patterns: PatternAnalysis[] = [];
+  private identifyDependencyInjectionPatterns(entities: ParsedEntity[]): NonNullable<PatternAnalysis["otherPatterns"]> {
+    const patterns: NonNullable<PatternAnalysis["otherPatterns"]> = [];
 
     // Check for constructor injection
     for (const entity of entities) {
       if (entity.type !== "class") continue;
 
       const constructors = entities.filter(
-        e => e.type === "method" && e.name === entity.name && e.metadata?.className === entity.name
+        (e) => e.type === "method" && e.name === entity.name && e.metadata?.className === entity.name,
       );
 
       for (const ctor of constructors) {
         const params = (ctor.metadata?.parameters || []) as any[];
-        if (params.length > 0 && params.some(p => p.type?.includes("I"))) {
+        if (params.length > 0 && params.some((p) => p.type?.includes("I"))) {
           patterns.push({
-            type: "constructor_injection",
+            kind: "constructor_injection",
             confidence: 0.8,
-            entities: [entity.id, ctor.id],
+            entities: [...(entity.id ? [entity.id] : []), ...(ctor.id ? [ctor.id] : [])],
             description: `Constructor injection pattern in ${entity.name}`,
           });
         }
@@ -935,12 +924,23 @@ export class CSharpAnalyzer {
   }
 
   /**
-   * Get location of a node
+   * Get location of a node (start/end with indices)
    */
-  private getNodeLocation(node: TreeSitterNode): { line: number; column: number } {
+  private getNodeLocation(node: TreeSitterNode): {
+    start: { line: number; column: number; index: number };
+    end: { line: number; column: number; index: number };
+  } {
     return {
-      line: node.startPosition.row + 1,
-      column: node.startPosition.column,
+      start: {
+        line: node.startPosition.row + 1,
+        column: node.startPosition.column,
+        index: node.startIndex,
+      },
+      end: {
+        line: node.endPosition.row + 1,
+        column: node.endPosition.column,
+        index: node.endIndex,
+      },
     };
   }
 
@@ -1110,3 +1110,11 @@ export class CSharpAnalyzer {
 
 // Export default instance
 export default new CSharpAnalyzer();
+
+// Local type for metrics to avoid `typeof this.metrics` in signatures
+type AnalyzerMetrics = {
+  entitiesExtracted: number;
+  relationshipsFound: number;
+  patternsIdentified: number;
+  parseTime: number;
+};

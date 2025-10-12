@@ -40,36 +40,36 @@ func main() {
 }
     `;
 
-    const filePath = "test.go";
-    const result = await parser.parse(filePath, code, "test-hash");
+    const filePath = "basic.go";
+    const result = await parser.parse(filePath, code, "go-hash-2");
 
     expect(result.entities).toBeDefined();
     expect(result.entities.length).toBeGreaterThan(0);
 
     // Check for package
-    const packages = result.entities.filter(e => e.type === "module");
+    const packages = result.entities.filter((e) => e.type === "module");
     expect(packages.length).toBe(1);
     expect(packages[0].name).toBe("main");
 
     // Check for functions
-    const functionNames = result.entities.filter(e => e.type === "function").map(e => e.name);
+    const functionNames = result.entities.filter((e) => e.type === "function").map((e) => e.name);
     expect(functionNames).toContain("add");
     expect(functionNames).toContain("PrintResult");
     expect(functionNames).toContain("main");
 
     // Check for exported function (starts with capital)
-    const printFunc = result.entities.find(e => e.name === "PrintResult");
+    const printFunc = result.entities.find((e) => e.name === "PrintResult");
     expect(printFunc?.metadata?.isPublic).toBe(true);
 
     // Check for private function
-    const addFunc = result.entities.find(e => e.name === "add");
+    const addFunc = result.entities.find((e) => e.name === "add");
     expect(addFunc?.metadata?.isPublic).toBe(false);
 
     // Check for imports
     expect(result.relationships).toBeDefined();
-    const imports = result.relationships?.filter(r => r.type === "imports");
+    const imports = result.relationships?.filter((r) => r.type === "imports");
     expect(imports?.length).toBeGreaterThan(0);
-    const importPaths = imports?.map(i => i.to);
+    const importPaths = imports?.map((i) => i.to);
     expect(importPaths).toContain("fmt");
     expect(importPaths).toContain("strings");
   });
@@ -100,37 +100,37 @@ func (r *Rectangle) Area() float64 {
 }
     `;
 
-    const filePath = "test.go";
-    const result = await parser.parse(filePath, code, "test-hash");
+    const filePath = "models.go";
+    const result = await parser.parse(filePath, code, "go-hash-3");
 
     // Check for structs
-    const structs = result.entities.filter(e => e.type === "class");
+    const structs = result.entities.filter((e) => e.type === "class");
     expect(structs.length).toBeGreaterThan(0);
 
     // Check for specific struct
-    const pointStruct = result.entities.find(e => e.name === "Point");
+    const pointStruct = result.entities.find((e) => e.name === "Point");
     expect(pointStruct).toBeDefined();
     expect(pointStruct?.type).toBe("class");
 
     // Check for struct fields
-    const fields = result.entities.filter(e => e.type === "property" && e.metadata?.parent?.includes("Point"));
+    const fields = result.entities.filter((e) => e.type === "property" && e.metadata?.parent?.includes("Point"));
     expect(fields.length).toBe(2);
-    const fieldNames = fields.map(f => f.name);
+    const fieldNames = fields.map((f) => f.name);
     expect(fieldNames).toContain("X");
     expect(fieldNames).toContain("Y");
 
     // Check for interfaces
-    const interfaces = result.entities.filter(e => e.type === "interface");
+    const interfaces = result.entities.filter((e) => e.type === "interface");
     expect(interfaces.length).toBeGreaterThan(0);
 
-    const shapeInterface = result.entities.find(e => e.name === "Shape");
+    const shapeInterface = result.entities.find((e) => e.name === "Shape");
     expect(shapeInterface).toBeDefined();
 
     // Check for methods
-    const methods = result.entities.filter(e => e.type === "method");
+    const methods = result.entities.filter((e) => e.type === "method");
     expect(methods.length).toBeGreaterThan(0);
 
-    const areaMethod = result.entities.find(e => e.name === "Area" && e.type === "method");
+    const areaMethod = result.entities.find((e) => e.name === "Area" && e.type === "method");
     expect(areaMethod).toBeDefined();
     expect(areaMethod?.metadata?.receiver).toBe("Rectangle");
   });
@@ -154,26 +154,26 @@ const PI = 3.14159
 var globalCounter int
     `;
 
-    const filePath = "test.go";
-    const result = await parser.parse(filePath, code, "test-hash");
+    const filePath = "config.go";
+    const result = await parser.parse(filePath, code, "go-hash-4");
 
     // Check for constants
-    const constants = result.entities.filter(e => e.type === "constant");
+    const constants = result.entities.filter((e) => e.type === "constant");
     expect(constants.length).toBeGreaterThan(0);
 
-    const versionConst = result.entities.find(e => e.name === "Version" && e.type === "constant");
+    const versionConst = result.entities.find((e) => e.name === "Version" && e.type === "constant");
     expect(versionConst).toBeDefined();
     expect(versionConst?.metadata?.value).toBe('"1.0.0"');
 
     // Check for variables
-    const variables = result.entities.filter(e => e.type === "variable");
+    const variables = result.entities.filter((e) => e.type === "variable");
     expect(variables.length).toBeGreaterThan(0);
 
-    const serverNameVar = result.entities.find(e => e.name === "ServerName" && e.type === "variable");
+    const serverNameVar = result.entities.find((e) => e.name === "ServerName" && e.type === "variable");
     expect(serverNameVar).toBeDefined();
     expect(serverNameVar?.metadata?.isPublic).toBe(true);
 
-    const globalCounterVar = result.entities.find(e => e.name === "globalCounter" && e.type === "variable");
+    const globalCounterVar = result.entities.find((e) => e.name === "globalCounter" && e.type === "variable");
     expect(globalCounterVar).toBeDefined();
     expect(globalCounterVar?.metadata?.isPublic).toBe(false);
   });
@@ -196,21 +196,21 @@ type Admin struct {
 }
     `;
 
-    const filePath = "test.go";
-    const result = await parser.parse(filePath, code, "test-hash");
+    const filePath = "types.go";
+    const result = await parser.parse(filePath, code, "go-hash-5");
 
     // Check for type aliases
-    const typedefs = result.entities.filter(e => e.type === "typedef");
+    const typedefs = result.entities.filter((e) => e.type === "typedef");
     expect(typedefs.length).toBeGreaterThan(0);
 
-    const userIDType = result.entities.find(e => e.name === "UserID" && e.type === "typedef");
+    const userIDType = result.entities.find((e) => e.name === "UserID" && e.type === "typedef");
     expect(userIDType).toBeDefined();
 
     // Check for struct embedding relationship
-    const embedRelations = result.relationships?.filter(r => r.type === "embeds");
+    const embedRelations = result.relationships?.filter((r) => r.type === "embeds");
     expect(embedRelations?.length).toBeGreaterThan(0);
 
-    const adminEmbeds = embedRelations?.find(r => r.from.includes("Admin"));
+    const adminEmbeds = embedRelations?.find((r) => r.from.includes("Admin"));
     expect(adminEmbeds).toBeDefined();
     expect(adminEmbeds?.to).toContain("User");
   });
@@ -245,16 +245,16 @@ func handleResult(result string) {
 }
     `;
 
-    const filePath = "test.go";
-    const result = await parser.parse(filePath, code, "test-hash");
+    const filePath = "concurrent.go";
+    const result = await parser.parse(filePath, code, "go-hash-5");
 
     // Check for function calls (including goroutine calls)
-    const callRelations = result.relationships?.filter(r => r.type === "calls");
+    const callRelations = result.relationships?.filter((r) => r.type === "calls");
     expect(callRelations?.length).toBeGreaterThan(0);
 
     // Check that processItem and handleResult functions are detected
-    const functions = result.entities.filter(e => e.type === "function");
-    const functionNames = functions.map(f => f.name);
+    const functions = result.entities.filter((e) => e.type === "function");
+    const functionNames = functions.map((f) => f.name);
     expect(functionNames).toContain("ProcessItems");
     expect(functionNames).toContain("processItem");
     expect(functionNames).toContain("handleResult");
