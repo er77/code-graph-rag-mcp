@@ -4,8 +4,8 @@
  * Tests for the Python code analyzer methods.
  */
 
-import { describe, expect, test, beforeEach } from "@jest/globals";
-import { PythonAnalyzer } from "../python-analyzer.js";
+import { beforeEach, describe, expect, test } from "@jest/globals";
+import { PythonAnalyzer } from "../../src/parsers/python-analyzer.js";
 
 describe("PythonAnalyzer", () => {
   let analyzer: PythonAnalyzer;
@@ -19,11 +19,11 @@ describe("PythonAnalyzer", () => {
   describe("resolveImportPath", () => {
     test.each([
       { importModule: "package.sub.mod", fromFile: "pkg/sub/module.py", expected: "package/sub/mod" },
-      { importModule: ".utils",          fromFile: "pkg/sub/module.py", expected: "pkg/sub/utils" },
-      { importModule: "..core",          fromFile: "pkg/sub/module.py", expected: "pkg/core" },
-      { importModule: "...",             fromFile: "pkg/sub/module.py", expected: "pkg" },
-      { importModule: ".",               fromFile: "pkg/sub/module.py", expected: "pkg/sub" },
-      { importModule: ".utils",          fromFile: "pkg\\sub\\module.py", expected: "pkg/sub/utils" },
+      { importModule: ".utils", fromFile: "pkg/sub/module.py", expected: "pkg/sub/utils" },
+      { importModule: "..core", fromFile: "pkg/sub/module.py", expected: "pkg/core" },
+      { importModule: "...", fromFile: "pkg/sub/module.py", expected: "pkg" },
+      { importModule: ".", fromFile: "pkg/sub/module.py", expected: "pkg/sub" },
+      { importModule: ".utils", fromFile: "pkg\\sub\\module.py", expected: "pkg/sub/utils" },
     ])("maps importModule '$importModule' from '$fromFile' to '$expected'", ({ importModule, fromFile, expected }) => {
       const result = (analyzer as any).resolveImportPath(importModule, fromFile);
       expect(result).toBe(expected);
@@ -38,9 +38,9 @@ describe("PythonAnalyzer", () => {
   describe("resolveClassPath", () => {
     test.each([
       { className: "pkg.mod.BaseClass", fromFile: "pkg/sub/module.py", expected: "pkg/mod" },
-      { className: "BaseClass",         fromFile: "pkg/sub/module.py", expected: "pkg/sub/module" },
-      { className: "top.level.Name",    fromFile: "anything/here.py",   expected: "top/level" },
-      { className: "",                  fromFile: "pkg/sub/module.py",  expected: "pkg/sub/module" },
+      { className: "BaseClass", fromFile: "pkg/sub/module.py", expected: "pkg/sub/module" },
+      { className: "top.level.Name", fromFile: "anything/here.py", expected: "top/level" },
+      { className: "", fromFile: "pkg/sub/module.py", expected: "pkg/sub/module" },
     ])("maps className '$className' from '$fromFile' to '$expected'", ({ className, fromFile, expected }) => {
       const result = (analyzer as any).resolveClassPath(className, fromFile);
       expect(result).toBe(expected);
@@ -154,7 +154,7 @@ describe("PythonAnalyzer", () => {
           "Sub",
           {
             classType: "regular",
-            baseClasses: ["A.Base"], 
+            baseClasses: ["A.Base"],
             mro: [],
             abstractMethods: [],
             magicMethods: [],

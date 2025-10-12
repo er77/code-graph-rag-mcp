@@ -2,28 +2,23 @@
  * TASK-20251005191500: C Language Analyzer
  *
  * Analyzer for C language supporting:
- * - Functions (static, extern, inline)
- * - Structs, unions, enums, typedefs
- * - Global variables and constants
- * - Macros and preprocessor directives
- * - Include relationships
+ *  - Functions (static, extern, inline)
+ *  - Structs, unions, enums, typedefs
+ *  - Global variables and constants
+ *  - Macros and preprocessor directives
+ *  - Include relationships
  *
  * Implementation follows patterns from CSharpAnalyzer and RustAnalyzer
  * with circuit breakers for safety.
  */
 
-import type {
-  ParsedEntity,
-  TreeSitterNode,
-  EntityRelationship,
-} from "../types/parser.js";
+import type { EntityRelationship, ParsedEntity, TreeSitterNode } from "../types/parser.js";
 
 // Circuit breaker constants
 const MAX_RECURSION_DEPTH = 50;
 const PARSE_TIMEOUT_MS = 5000;
 
 export class CAnalyzer {
-  private recursionDepth = 0;
   private parseStartTime = 0;
 
   /**
@@ -31,9 +26,8 @@ export class CAnalyzer {
    */
   async analyze(
     rootNode: TreeSitterNode,
-    filePath: string
+    filePath: string,
   ): Promise<{ entities: ParsedEntity[]; relationships: EntityRelationship[] }> {
-    this.recursionDepth = 0;
     this.parseStartTime = Date.now();
 
     const entities: ParsedEntity[] = [];
@@ -58,7 +52,7 @@ export class CAnalyzer {
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
-    depth = 0
+    depth = 0,
   ): void {
     // Circuit breaker: check recursion depth
     if (depth > MAX_RECURSION_DEPTH) {
@@ -73,31 +67,31 @@ export class CAnalyzer {
     // Process node based on type
     switch (node.type) {
       case "function_definition":
-        this.extractFunction(node, filePath, entities);
+        this.extractFunction(node, entities);
         break;
 
       case "declaration":
-        this.extractDeclaration(node, filePath, entities);
+        this.extractDeclaration(node, entities);
         break;
 
       case "struct_specifier":
-        this.extractStruct(node, filePath, entities);
+        this.extractStruct(node, entities);
         break;
 
       case "union_specifier":
-        this.extractUnion(node, filePath, entities);
+        this.extractUnion(node, entities);
         break;
 
       case "enum_specifier":
-        this.extractEnum(node, filePath, entities);
+        this.extractEnum(node, entities);
         break;
 
       case "type_definition":
-        this.extractTypedef(node, filePath, entities);
+        this.extractTypedef(node, entities);
         break;
 
       case "preproc_def":
-        this.extractMacro(node, filePath, entities);
+        this.extractMacro(node, entities);
         break;
 
       case "preproc_include":
@@ -105,7 +99,7 @@ export class CAnalyzer {
         break;
 
       case "preproc_function_def":
-        this.extractFunctionMacro(node, filePath, entities);
+        this.extractFunctionMacro(node, entities);
         break;
     }
 
@@ -119,78 +113,102 @@ export class CAnalyzer {
   }
 
   /**
-   * Extract function definitions
+   * Extract function definitions (with body)
    */
-  private extractFunction(
-    node: TreeSitterNode,
-    filePath: string,
-    entities: ParsedEntity[]
-  ): void {
+  private extractFunction(node: TreeSitterNode, entities: ParsedEntity[]): void {
     const declaratorNode = node.childForFieldName("declarator");
     if (!declaratorNode) return;
-
+  
     const nameNode = this.getFunctionName(declaratorNode);
     if (!nameNode) return;
-
+  
     const name = this.getNodeText(nameNode);
-    const modifiers: string[] = [];
-
-    // Check for storage class specifiers (static, extern, inline)
-    const storageNode = node.childForFieldName("storage_class_specifier");
-    if (storageNode) {
-      modifiers.push(this.getNodeText(storageNode));
-    }
-
-    // Check for inline keyword
-    const specifierNode = node.childForFieldName("type");
-    if (specifierNode && this.getNodeText(specifierNode).includes("inline")) {
-      modifiers.push("inline");
-    }
-
+    const modifiers = this.collectModifiers(node);
+  
     entities.push({
       name,
       type: "function",
       location: this.getNodeLocation(node),
-      modifiers: modifiers.length > 0 ? modifiers : undefined,
+      modifiers: modifiers.length ? modifiers : undefined,
     });
   }
 
   /**
-   * Extract global variable and constant declarations
+   * Extract declarations: functions without body (e.g. extern), variables/constants
    */
-  private extractDeclaration(
-    node: TreeSitterNode,
-    filePath: string,
-    entities: ParsedEntity[]
-  ): void {
+  private extractDeclaration(node: TreeSitterNode, entities: ParsedEntity[]): void {
+    const text = this.getNodeText(node);
+    const mods = this.collectModifiers(node);
+    const isConst = /\bconst\b/.test(text);
+  
+    
+    const initDecls = this.descendantsOfType(node, "init_declarator");
+    if (initDecls.length > 0) {
+      for (const id of initDecls) {
+        const dec = id.childForFieldName("declarator") || id;
+        if (!dec) continue;
+  
+        if (this.isFunctionDeclarator(dec)) {
+          const fnameNode = this.getFunctionName(dec);
+          if (!fnameNode) continue;
+          const name = this.getNodeText(fnameNode);
+          entities.push({
+            name,
+            type: "function",
+            location: this.getNodeLocation(node),
+            modifiers: mods.length ? mods : undefined,
+          });
+        } else {
+          const vnameNode = this.getDeclaratorName(dec);
+          if (!vnameNode) continue;
+          const name = this.getNodeText(vnameNode);
+          entities.push({
+            name,
+            type: isConst ? "constant" : "variable",
+            location: this.getNodeLocation(node),
+            modifiers: mods.length ? mods : undefined,
+          });
+        }
+      }
+      return;
+    }
+  
+    
     const declaratorNode = node.childForFieldName("declarator");
-    if (!declaratorNode) return;
-
-    const nameNode = this.getDeclaratorName(declaratorNode);
-    if (!nameNode) return;
-
-    const name = this.getNodeText(nameNode);
-    const isConst = this.getNodeText(node).includes("const");
-
-    entities.push({
-      name,
-      type: isConst ? "constant" : "variable",
-      location: this.getNodeLocation(node),
-    });
+    if (declaratorNode) {
+      if (this.isFunctionDeclarator(declaratorNode)) {
+        const fname = this.getFunctionName(declaratorNode);
+        if (fname) {
+          entities.push({
+            name: this.getNodeText(fname),
+            type: "function",
+            location: this.getNodeLocation(node),
+            modifiers: mods.length ? mods : undefined,
+          });
+        }
+        return;
+      }
+      const nameNode = this.getDeclaratorName(declaratorNode);
+      if (nameNode) {
+        entities.push({
+          name: this.getNodeText(nameNode),
+          type: isConst ? "constant" : "variable",
+          location: this.getNodeLocation(node),
+          modifiers: mods.length ? mods : undefined,
+        });
+      }
+    }
   }
-
   /**
    * Extract struct definitions
    */
-  private extractStruct(
-    node: TreeSitterNode,
-    filePath: string,
-    entities: ParsedEntity[]
-  ): void {
-    const nameNode = node.childForFieldName("name");
-    if (!nameNode) return;
-
-    const name = this.getNodeText(nameNode);
+  private extractStruct(node: TreeSitterNode, entities: ParsedEntity[]): void {
+    const nameNode = node.childForFieldName("name") || this.findFirstNamedChildByTypes(node, ["type_identifier", "identifier"]);
+    if (!nameNode) {
+      
+      return;
+    }
+    const name = `struct ${this.getNodeText(nameNode)}`;
     const children: ParsedEntity[] = [];
 
     // Extract struct fields
@@ -212,7 +230,7 @@ export class CAnalyzer {
     }
 
     entities.push({
-      name: `struct ${name}`,
+      name,
       type: "class", // Using 'class' for consistency with other analyzers
       location: this.getNodeLocation(node),
       children: children.length > 0 ? children : undefined,
@@ -222,17 +240,12 @@ export class CAnalyzer {
   /**
    * Extract union definitions
    */
-  private extractUnion(
-    node: TreeSitterNode,
-    filePath: string,
-    entities: ParsedEntity[]
-  ): void {
-    const nameNode = node.childForFieldName("name");
+  private extractUnion(node: TreeSitterNode, entities: ParsedEntity[]): void {
+    const nameNode = node.childForFieldName("name") || this.findFirstNamedChildByTypes(node, ["type_identifier", "identifier"]);
     if (!nameNode) return;
-
-    const name = this.getNodeText(nameNode);
+    const name = `union ${this.getNodeText(nameNode)}`;
     entities.push({
-      name: `union ${name}`,
+      name,
       type: "class",
       location: this.getNodeLocation(node),
     });
@@ -241,12 +254,8 @@ export class CAnalyzer {
   /**
    * Extract enum definitions
    */
-  private extractEnum(
-    node: TreeSitterNode,
-    filePath: string,
-    entities: ParsedEntity[]
-  ): void {
-    const nameNode = node.childForFieldName("name");
+  private extractEnum(node: TreeSitterNode, entities: ParsedEntity[]): void {
+    const nameNode = node.childForFieldName("name") || this.findFirstNamedChildByTypes(node, ["type_identifier", "identifier"]);
     const name = nameNode ? this.getNodeText(nameNode) : "anonymous";
 
     const children: ParsedEntity[] = [];
@@ -280,32 +289,47 @@ export class CAnalyzer {
   /**
    * Extract typedef definitions
    */
-  private extractTypedef(
-    node: TreeSitterNode,
-    filePath: string,
-    entities: ParsedEntity[]
-  ): void {
-    const declaratorNode = node.childForFieldName("declarator");
-    if (!declaratorNode) return;
+  private extractTypedef(node: TreeSitterNode, entities: ParsedEntity[]): void {
+    
+    const typeDeclarators = this.descendantsOfType(node, "type_declarator");
+    if (typeDeclarators.length > 0) {
+      for (const td of typeDeclarators) {
+        const nameNode =
+          this.findLastDescendantByTypes(td, ["type_identifier", "identifier"]) ||
+          td.childForFieldName("declarator");
+        if (!nameNode) continue;
+        const name = this.getNodeText(nameNode);
+        if (!name) continue;
+        entities.push({
+          name,
+          type: "type",
+          location: this.getNodeLocation(node),
+        });
+      }
+      return;
+    }
 
-    const name = this.getDeclaratorName(declaratorNode);
-    if (!name) return;
-
-    entities.push({
-      name: this.getNodeText(name),
-      type: "type",
-      location: this.getNodeLocation(node),
-    });
+    
+    const ids = this.descendantsOfType(node, "type_identifier");
+    if (ids.length > 0) {
+      const lastId = ids[ids.length - 1];
+      if (lastId) {
+        const name = this.getNodeText(lastId);
+        if (name) {
+          entities.push({
+            name,
+            type: "type",
+            location: this.getNodeLocation(node),
+          });
+        }
+      }
+    }
   }
 
   /**
    * Extract macro definitions
    */
-  private extractMacro(
-    node: TreeSitterNode,
-    filePath: string,
-    entities: ParsedEntity[]
-  ): void {
+  private extractMacro(node: TreeSitterNode, entities: ParsedEntity[]): void {
     const nameNode = node.childForFieldName("name");
     if (!nameNode) return;
 
@@ -320,11 +344,7 @@ export class CAnalyzer {
   /**
    * Extract function-like macros
    */
-  private extractFunctionMacro(
-    node: TreeSitterNode,
-    filePath: string,
-    entities: ParsedEntity[]
-  ): void {
+  private extractFunctionMacro(node: TreeSitterNode, entities: ParsedEntity[]): void {
     const nameNode = node.childForFieldName("name");
     if (!nameNode) return;
 
@@ -340,24 +360,20 @@ export class CAnalyzer {
   /**
    * Extract include directives as relationships
    */
-  private extractInclude(
-    node: TreeSitterNode,
-    filePath: string,
-    relationships: EntityRelationship[]
-  ): void {
-    const pathNode = node.childForFieldName("path");
+  private extractInclude(node: TreeSitterNode, filePath: string, relationships: EntityRelationship[]): void {
+    const pathNode =
+      node.childForFieldName("path") ||
+      this.findFirstNamedChildByTypes(node, ["system_lib_string", "string_literal"]);
     if (!pathNode) return;
-
-    const includePath = this.getNodeText(pathNode).replace(/[<">]/g, "");
-
+  
+    const raw = this.getNodeText(pathNode);
+    const includePath = raw.replace(/[<">]/g, "");
     relationships.push({
       from: filePath,
       to: includePath,
       type: "imports",
       sourceFile: filePath,
-      metadata: {
-        line: node.startPosition.row + 1,
-      },
+      metadata: { line: node.startPosition.row + 1 },
     });
   }
 
@@ -365,32 +381,56 @@ export class CAnalyzer {
    * Helper: Get function name from declarator
    */
   private getFunctionName(declarator: TreeSitterNode): TreeSitterNode | null {
+    if (!declarator) return null;
+  
+    // Сам идентификатор
+    if (declarator.type === "identifier") {
+      return declarator;
+    }
+  
+    // function_declarator: имя может быть глубоко внутри
     if (declarator.type === "function_declarator") {
-      const child = declarator.child(0);
-      if (child?.type === "identifier") {
-        return child;
+      const inner = declarator.childForFieldName("declarator") || declarator.child(0);
+      if (inner) {
+        const r = this.getFunctionName(inner);
+        if (r) return r;
       }
+      // fallback: найти первый identifier среди потомков
+      const id = this.findFirstDescendantByTypes(declarator, ["identifier"]);
+      if (id) return id;
     }
-    if (declarator.type === "pointer_declarator") {
-      return this.getFunctionName(declarator.childForFieldName("declarator") || declarator);
+  
+    // Всякие обёртки
+    if (
+      declarator.type === "pointer_declarator" ||
+      declarator.type === "parenthesized_declarator" ||
+      declarator.type === "abstract_pointer_declarator"
+    ) {
+      const inner = declarator.childForFieldName("declarator") || declarator.child(0);
+      if (inner) return this.getFunctionName(inner);
     }
-    return null;
+  
+    // fallback
+    return this.findFirstDescendantByTypes(declarator, ["identifier"]);
   }
-
   /**
    * Helper: Get declarator name
    */
   private getDeclaratorName(declarator: TreeSitterNode): TreeSitterNode | null {
-    if (declarator.type === "identifier") {
-      return declarator;
-    }
-    if (declarator.type === "pointer_declarator" || declarator.type === "array_declarator") {
-      const child = declarator.childForFieldName("declarator");
+    if (!declarator) return null;
+    if (declarator.type === "identifier" || declarator.type === "field_identifier") return declarator;
+  
+    if (
+      declarator.type === "pointer_declarator" ||
+      declarator.type === "array_declarator" ||
+      declarator.type === "parenthesized_declarator"
+    ) {
+      const child = declarator.childForFieldName("declarator") || declarator.child(0);
       return child ? this.getDeclaratorName(child) : null;
     }
-    return null;
+  
+    return this.findFirstDescendantByTypes(declarator, ["identifier", "field_identifier"]);
   }
-
   /**
    * Helper: Extract field name from field declaration
    */
@@ -425,5 +465,61 @@ export class CAnalyzer {
         index: node.endIndex,
       },
     };
+  }
+
+  // Helpers
+  private descendantsOfType(node: TreeSitterNode, type: string): TreeSitterNode[] {
+    const anyNode = node as unknown as { descendantsOfType?: (t: string) => TreeSitterNode[] };
+    if (typeof anyNode.descendantsOfType === "function") {
+      return anyNode.descendantsOfType(type) || [];
+    }
+    const out: TreeSitterNode[] = [];
+    for (let i = 0; i < node.childCount; i++) {
+      const c = node.child(i);
+      if (!c) continue;
+      if (c.type === type) out.push(c);
+      out.push(...this.descendantsOfType(c, type));
+    }
+    return out;
+  }
+
+  private findFirstDescendantByTypes(node: TreeSitterNode, types: string[]): TreeSitterNode | null {
+    for (const t of types) {
+      const list = this.descendantsOfType(node, t);
+      if (list.length > 0) return list[0] || null;
+    }
+    return null;
+  }
+
+  private findLastDescendantByTypes(node: TreeSitterNode, types: string[]): TreeSitterNode | null {
+    for (const t of types) {
+      const list = this.descendantsOfType(node, t);
+      if (list.length > 0) return list[list.length - 1] || null;
+    }
+    return null;
+  }
+
+  private findFirstNamedChildByTypes(node: TreeSitterNode, types: string[]): TreeSitterNode | null {
+    for (let i = 0; i < node.namedChildCount; i++) {
+      const c = node.namedChild(i);
+      if (c && types.includes(c.type)) return c;
+    }
+    return null;
+  }
+
+  private isFunctionDeclarator(node: TreeSitterNode): boolean {
+    if (node.type === "function_declarator") return true;
+    const inner = node.childForFieldName("declarator");
+    if (inner) return this.isFunctionDeclarator(inner);
+    return false;
+  }
+
+  private collectModifiers(node: TreeSitterNode): string[] {
+    const text = this.getNodeText(node);
+    const mods: string[] = [];
+    if (/\bstatic\b/.test(text)) mods.push("static");
+    if (/\binline\b/.test(text)) mods.push("inline");
+    if (/\bextern\b/.test(text)) mods.push("extern");
+    return mods;
   }
 }

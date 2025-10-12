@@ -4,17 +4,19 @@
  * that are delegated by the Conductor orchestrator
  */
 
-import { BaseAgent } from "./base.js";
-import { AgentTask, AgentType, AgentMessage } from "../types/agent.js";
-// Temporarily disable ParserAgent due to web-tree-sitter ESM issues
-// import { ParserAgent } from "./parser-agent.js";
-import { IndexerAgent } from "./indexer-agent.js";
-import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { readdirSync, statSync } from "fs";
-import { join, extname } from "path";
+import { extname, join } from "path";
+import { ConfigLoader } from "../config/yaml-config.js";
+import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
+import { getSQLiteManager } from "../storage/sqlite-manager.js";
+import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
+import { BaseAgent } from "./base.js";
+import { IndexerAgent } from "./indexer-agent.js";
+// Temporarily disable ParserAgent due to web-tree-sitter ESM issues
+import { ParserAgent } from "./parser-agent.js";
 
 export class DevAgent extends BaseAgent {
-  // private parserAgent: ParserAgent | null = null;
+  private parserAgent: ParserAgent | null = null;
   private indexerAgent: IndexerAgent | null = null;
 
   constructor(_agentId?: string) {
@@ -22,19 +24,27 @@ export class DevAgent extends BaseAgent {
       maxConcurrency: 3,
       memoryLimit: 256, // MB
       cpuAffinity: undefined,
-      priority: 7
+      priority: 7,
     });
   }
 
   protected async onInitialize(): Promise<void> {
-    // Initialize parser and indexer agents
     try {
-      // Temporarily disabled due to web-tree-sitter ESM issues
-      // this.parserAgent = new ParserAgent(knowledgeBus);
-      // await this.parserAgent.initialize();
-      // console.log(`[DevAgent ${this.id}] ParserAgent initialized`);
+      const configLoader = ConfigLoader.getInstance();
+      const useParser = configLoader.shouldUseParser();
+      if (useParser) {
+        try {
+          this.parserAgent = new ParserAgent();
+          await this.parserAgent.initialize();
+          console.log(`[DevAgent ${this.id}] ParserAgent initialized`);
+        } catch (e) {
+          console.warn(`[DevAgent ${this.id}] ParserAgent unavailable, fallback to heuristic indexing:`, e);
+          this.parserAgent = null;
+        }
+      }
 
-      this.indexerAgent = new IndexerAgent();
+      const sqliteManager = getSQLiteManager();
+      this.indexerAgent = new IndexerAgent(sqliteManager);
       await this.indexerAgent.initialize();
       console.log(`[DevAgent ${this.id}] IndexerAgent initialized`);
     } catch (error) {
@@ -62,10 +72,7 @@ export class DevAgent extends BaseAgent {
 
   protected canProcessTask(task: AgentTask): boolean {
     // DevAgent can handle index, implementation, and refactor tasks
-    return task.type === "index" ||
-           task.type === "implementation" ||
-           task.type === "refactor" ||
-           task.type === "dev";
+    return task.type === "index" || task.type === "implementation" || task.type === "refactor" || task.type === "dev";
   }
 
   protected async handleMessage(message: AgentMessage): Promise<void> {
@@ -101,10 +108,6 @@ export class DevAgent extends BaseAgent {
     const payload = task.payload as any;
     console.log(`[DevAgent ${this.id}] Starting real indexing for ${payload.directory}`);
 
-    // Temporarily disabled ParserAgent check
-    // if (!this.parserAgent || !this.indexerAgent) {
-    //   throw new Error("Parser or Indexer agents not initialized");
-    // }
     if (!this.indexerAgent) {
       throw new Error("Indexer agent not initialized");
     }
@@ -123,11 +126,7 @@ export class DevAgent extends BaseAgent {
 
     // Publish indexing started event
     // Publish indexing started event (topic, data, source)
-    knowledgeBus.publish(
-      "indexing:started",
-      result,
-      this.id
-    );
+    knowledgeBus.publish("indexing:started", result, this.id);
 
     // Perform real indexing using parser and indexer agents
     const indexingResult = await this.performRealIndexing(payload);
@@ -142,7 +141,7 @@ export class DevAgent extends BaseAgent {
 
   private async handleImplementationTask(task: AgentTask): Promise<unknown> {
     const payload = task.payload as any;
-    console.log(`[DevAgent ${this.id}] Implementing: ${payload.description || 'task'}`);
+    console.log(`[DevAgent ${this.id}] Implementing: ${payload.description || "task"}`);
 
     // Implementation tasks would involve code generation, modifications, etc.
     // For now, we'll return a success response
@@ -160,7 +159,7 @@ export class DevAgent extends BaseAgent {
 
   private async handleRefactorTask(task: AgentTask): Promise<unknown> {
     const payload = task.payload as any;
-    console.log(`[DevAgent ${this.id}] Refactoring: ${payload.target || 'code'}`);
+    console.log(`[DevAgent ${this.id}] Refactoring: ${payload.target || "code"}`);
 
     return {
       status: "completed",
@@ -192,14 +191,12 @@ export class DevAgent extends BaseAgent {
 
     const directory = payload.directory;
     const excludePatterns = payload.excludePatterns || [];
-    // const _incremental = payload.incremental || false;
 
-    // Get list of files to process
     const files = await this.collectFiles(directory, excludePatterns);
     console.log(`[DevAgent ${this.id}] Found ${files.length} files to process`);
 
-    // Process files in batches - larger batch for faster processing
-    const batchSize = 100;
+    const configLoader = ConfigLoader.getInstance();
+    const batchSize = configLoader.getDevIndexBatchSize();
     let totalEntities = 0;
     let totalRelationships = 0;
     let filesProcessed = 0;
@@ -207,223 +204,202 @@ export class DevAgent extends BaseAgent {
     for (let i = 0; i < files.length; i += batchSize) {
       const batch = files.slice(i, Math.min(i + batchSize, files.length));
 
-      // Parse files using ParserAgent
-      // const _parseTask: AgentTask = {
-      //   id: `parse-${Date.now()}-${i}`,
-      //   type: "parse:batch",
-      //   priority: 8,
-      //   payload: {
-      //     files: batch,
-      //     incremental,
-      //   },
-      //   createdAt: Date.now(),
-      // };
-
       try {
-        // Create real entities from files (since ParserAgent is temporarily disabled)
-        // const parseResult = await this.parserAgent!.process(parseTask);
-        // const parsedData = parseResult as any;
-
-        // Create meaningful entities from the actual files
-        const entities = [];
-        for (const file of batch) {
-          const fileName = file.split('/').pop() || 'unknown';
-          const fileNameNoExt = fileName.replace(/\.[^/.]+$/, '');
-          const ext = extname(file).substring(1);
-
-          // Create a file entity
-          entities.push({
-            name: fileName,
-            type: 'file',
-            filePath: file,
-            location: {
-              start: { line: 1, column: 0 },
-              end: { line: 1, column: 0 }
-            },
-            metadata: {
-              language: ext,
-              path: file
-            }
-          });
-
-          // Create module/class entities based on file naming patterns
-          if (ext === 'py' || ext === 'js' || ext === 'ts' || ext === 'jsx' || ext === 'tsx') {
-            // Add a module entity
-            entities.push({
-              name: fileNameNoExt,
-              type: ext === 'py' ? 'module' : 'module',
-              filePath: file,
-              location: {
-                start: { line: 1, column: 0 },
-                end: { line: 100, column: 0 }
-              },
-              metadata: {
-                language: ext,
-                moduleType: 'file'
-              }
-            });
-
-            // For Python files, guess at class name
-            if (ext === 'py' && /^[A-Z]/.test(fileNameNoExt)) {
-              entities.push({
-                name: fileNameNoExt,
-                type: 'class',
-                filePath: file,
-                location: {
-                  start: { line: 5, column: 0 },
-                  end: { line: 50, column: 0 }
-                },
-                metadata: {
-                  language: 'python',
-                  visibility: 'public'
-                }
-              });
-            }
-
-            // For JS/TS files, add common function patterns
-            if ((ext === 'js' || ext === 'ts') && !file.includes('.test.') && !file.includes('.spec.')) {
-              entities.push({
-                name: `export_default`,
-                type: 'function',
-                filePath: file,
-                location: {
-                  start: { line: 10, column: 0 },
-                  end: { line: 30, column: 0 }
-                },
-                metadata: {
-                  language: ext,
-                  exported: true
-                }
-              });
-            }
-          }
-        }
-
-        // Create relationships between entities
-        const relationships = [];
-        // Relationships creation - removed logging for performance
-
-        // Create relationships between files and their modules
-        for (const entity of entities) {
-          if (entity.type === 'file') {
-            // Find corresponding module in same batch
-            const moduleEntity = entities.find(e =>
-              e.type === 'module' && e.filePath === entity.filePath
-            );
-            if (moduleEntity) {
-              relationships.push({
-                from: entity.name,
-                to: moduleEntity.name,
-                type: 'contains',
-                filePath: entity.filePath
-              });
-            }
-          } else if (entity.type === 'module') {
-            // Create relationships between modules and their classes/functions
-            const relatedEntities = entities.filter(e =>
-              (e.type === 'class' || e.type === 'function') &&
-              e.filePath === entity.filePath
-            );
-            for (const related of relatedEntities) {
-              relationships.push({
-                from: entity.name,
-                to: related.name,
-                type: related.type === 'class' ? 'defines_class' : 'defines_function',
-                filePath: entity.filePath
-              });
-            }
-          } else if (entity.type === 'class') {
-            // Create relationships between classes and their methods
-            const functions = entities.filter(e =>
-              e.type === 'function' && e.filePath === entity.filePath
-            );
-            for (const func of functions) {
-              relationships.push({
-                from: entity.name,
-                to: func.name,
-                type: 'has_method',
-                filePath: entity.filePath
-              });
-            }
-          }
-        }
-
-        // Add cross-file import relationships based on common patterns
-        for (let j = 0; j < batch.length; j++) {
-          const currentFile = batch[j];
-          if (!currentFile) continue; 
-          const currentFileName = currentFile.split('/').pop()?.replace(/\.[^/.]+$/, '') || '';
-
-          // Create import relationships for common patterns
-          if (currentFileName.includes('service') || currentFileName.includes('Service')) {
-            // Services often import from utils and models
-            const utilFiles = batch.filter(f =>
-              f.includes('util') || f.includes('helper')
-            );
-            for (const utilFile of utilFiles) {
-              const utilName = utilFile.split('/').pop()?.replace(/\.[^/.]+$/, '') || '';
-              if (utilName && currentFileName) {
-                relationships.push({
-                  from: currentFileName,
-                  to: utilName,
-                  type: 'imports',
-                  filePath: currentFile
-                });
-              }
-            }
-          }
-
-          // Components often import from services
-          if (currentFileName.includes('component') || currentFileName.includes('Component')) {
-            const serviceFiles = batch.filter(f =>
-              f.includes('service') || f.includes('Service')
-            );
-            for (const serviceFile of serviceFiles) {
-              const serviceName = serviceFile.split('/').pop()?.replace(/\.[^/.]+$/, '') || '';
-              if (serviceName && currentFileName) {
-                relationships.push({
-                  from: currentFileName,
-                  to: serviceName,
-                  type: 'uses',
-                  filePath: currentFile
-                });
-              }
-            }
-          }
-        }
-
-        // Relationships created - removed logging for performance
-        const parsedData = { entities, relationships };
-
-        if (parsedData && parsedData.entities) {
-          // Index parsed entities using IndexerAgent
-          const indexTask: AgentTask = {
-            id: `index-entities-${Date.now()}-${i}`,
-            type: "index:entities",
-            priority: 7,
-            payload: {
-              entities: parsedData.entities,
-              relationships: parsedData.relationships,
-              filePath: batch[0], // Representative file for this batch
-            },
+        if (this.parserAgent) {
+          const parseTask: AgentTask = {
+            id: `parse-${Date.now()}-${i}`,
+            type: "parse:batch",
+            priority: 8,
+            payload: { files: batch, options: {} },
             createdAt: Date.now(),
           };
 
-          const indexResult = await this.indexerAgent!.process(indexTask);
-          const indexed = indexResult as any;
+          const results = (await this.parserAgent.process(parseTask)) as any[]; // ParseResult[]
 
-          if (indexed) {
-            totalEntities += indexed.entitiesIndexed || 0;
-            totalRelationships += indexed.relationshipsCreated || 0;
-            filesProcessed += batch.length;
+          const byFile = new Map<string, { entities: any[]; relationships: any[] }>();
+
+          for (const res of results || []) {
+            const fp = res?.filePath;
+            if (!fp) continue;
+            const slot = byFile.get(fp) ?? { entities: [], relationships: [] };
+
+            if (Array.isArray(res.entities)) {
+              slot.entities.push(...res.entities);
+            }
+
+            if (Array.isArray(res.relationships)) {
+              for (const r of res.relationships) {
+                if (r && r.from && r.to && r.type) {
+                  slot.relationships.push({
+                    from: r.from,
+                    to: r.to,
+                    type: r.type,
+                    targetFile: fp,
+                  });
+                }
+              }
+            }
+
+            byFile.set(fp, slot);
+          }
+
+          for (const [file, group] of byFile.entries()) {
+            if (!group.entities.length) continue;
+
+            const indexTask: AgentTask = {
+              id: `index-entities-${Date.now()}-${i}-${file}`,
+              type: "index:entities",
+              priority: 7,
+              payload: {
+                entities: group.entities,
+                relationships: group.relationships,
+                filePath: file,
+              },
+              createdAt: Date.now(),
+            };
+
+            try {
+              const indexResult = await this.indexerAgent!.process(indexTask);
+              const indexed = indexResult as any;
+              if (indexed) {
+                totalEntities += indexed.entitiesIndexed || 0;
+                totalRelationships += indexed.relationshipsCreated || 0;
+                filesProcessed += 1;
+              }
+            } catch (err) {
+              console.error(`[DevAgent ${this.id}] Indexing failed for file ${file}:`, err);
+            }
+          }
+        } else {
+          const entities: any[] = [];
+          const relationships: any[] = [];
+
+          for (const file of batch) {
+            const fileName = file.split("/").pop() || "unknown";
+            const fileNameNoExt = fileName.replace(/\.[^/.]+$/, "");
+            const ext = extname(file).substring(1);
+
+            // file entity
+            entities.push({
+              name: fileName,
+              type: "file",
+              filePath: file,
+              location: { start: { line: 1, column: 0 }, end: { line: 1, column: 0 } },
+              metadata: { language: ext, path: file },
+            });
+
+            // module entity
+            if (ext === "py" || ext === "js" || ext === "ts" || ext === "jsx" || ext === "tsx") {
+              entities.push({
+                name: fileNameNoExt,
+                type: "module",
+                filePath: file,
+                location: { start: { line: 1, column: 0 }, end: { line: 100, column: 0 } },
+                metadata: { language: ext, moduleType: "file" },
+              });
+
+              if (ext === "py" && /^[A-Z]/.test(fileNameNoExt)) {
+                entities.push({
+                  name: fileNameNoExt,
+                  type: "class",
+                  filePath: file,
+                  location: { start: { line: 5, column: 0 }, end: { line: 50, column: 0 } },
+                  metadata: { language: "python", visibility: "public" },
+                });
+              }
+
+              if ((ext === "js" || ext === "ts") && !file.includes(".test.") && !file.includes(".spec.")) {
+                entities.push({
+                  name: `export_default`,
+                  type: "function",
+                  filePath: file,
+                  location: { start: { line: 10, column: 0 }, end: { line: 30, column: 0 } },
+                  metadata: { language: ext, exported: true },
+                });
+              }
+            }
+          }
+
+          // file -> module
+          for (const entity of entities) {
+            if (entity.type === "file") {
+              const moduleEntity = entities.find((e) => e.type === "module" && e.filePath === entity.filePath);
+              if (moduleEntity) {
+                relationships.push({
+                  from: entity.name,
+                  to: moduleEntity.name,
+                  type: "contains",
+                  filePath: entity.filePath,
+                });
+              }
+            }
+          }
+          // module -> class/function
+          for (const entity of entities) {
+            if (entity.type === "module") {
+              const related = entities.filter(
+                (e) => (e.type === "class" || e.type === "function") && e.filePath === entity.filePath,
+              );
+              for (const rel of related) {
+                relationships.push({
+                  from: entity.name,
+                  to: rel.name,
+                  type: rel.type === "class" ? "defines_class" : "defines_function",
+                  filePath: entity.filePath,
+                });
+              }
+            }
+          }
+          // class -> methods
+          for (const entity of entities) {
+            if (entity.type === "class") {
+              const funcs = entities.filter((e) => e.type === "function" && e.filePath === entity.filePath);
+              for (const f of funcs) {
+                relationships.push({ from: entity.name, to: f.name, type: "has_method", filePath: entity.filePath });
+              }
+            }
+          }
+
+          const byFile = new Map<string, { entities: any[]; relationships: any[] }>();
+          for (const e of entities) {
+            const slot = byFile.get(e.filePath) ?? { entities: [], relationships: [] };
+            slot.entities.push(e);
+            byFile.set(e.filePath, slot);
+          }
+          for (const r of relationships) {
+            const fp = r.filePath || null;
+            if (!fp) continue;
+            const slot = byFile.get(fp) ?? { entities: [], relationships: [] };
+            slot.relationships.push({ from: r.from, to: r.to, type: r.type, targetFile: r.filePath });
+            byFile.set(fp, slot);
+          }
+
+          for (const [file, group] of byFile.entries()) {
+            if (!group.entities.length) continue;
+            const indexTask: AgentTask = {
+              id: `index-entities-${Date.now()}-${i}-${file}`,
+              type: "index:entities",
+              priority: 7,
+              payload: { entities: group.entities, relationships: group.relationships, filePath: file },
+              createdAt: Date.now(),
+            };
+            try {
+              const indexResult = await this.indexerAgent!.process(indexTask);
+              const indexed = indexResult as any;
+              if (indexed) {
+                totalEntities += indexed.entitiesIndexed || 0;
+                totalRelationships += indexed.relationshipsCreated || 0;
+                filesProcessed += 1;
+              }
+            } catch (err) {
+              console.error(`[DevAgent ${this.id}] Indexing failed for file ${file}:`, err);
+            }
           }
         }
       } catch (error) {
         console.error(`[DevAgent ${this.id}] Error processing batch ${i}:`, error);
-        // Continue with next batch
       }
 
-      // Report progress only at major milestones to improve performance
       if ((i + batchSize) % 500 === 0 || i + batchSize >= files.length) {
         console.log(`[DevAgent ${this.id}] Progress: ${filesProcessed}/${files.length} files processed`);
       }
@@ -487,9 +463,9 @@ export class DevAgent extends BaseAgent {
     console.log(`[DevAgent ${this.id}] Shutting down...`);
 
     // Shutdown sub-agents
-    // if (this.parserAgent) {
-    //   await this.parserAgent.shutdown();
-    // }
+    if (this.parserAgent) {
+      await this.parserAgent.shutdown();
+    }
     if (this.indexerAgent) {
       await this.indexerAgent.shutdown();
     }

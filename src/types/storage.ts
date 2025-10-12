@@ -83,6 +83,14 @@ export interface Entity {
       isDefault?: boolean;
       isNamespace?: boolean;
     };
+    // Additional useful fields for all languages
+    signature?: string;
+    language?: string;
+    decorators?: Array<{
+      name: string;
+      arguments?: string[];
+      isBuiltin?: boolean;
+    }>;
   };
   hash: string;
   createdAt: number;
@@ -381,6 +389,9 @@ export function parsedEntityToEntity(
       returnType: parsed.returnType,
       parameters: parsed.parameters,
       importData: parsed.importData,
+      signature: parsed.signature,
+      language: parsed.language,
+      decorators: parsed.decorators,
     },
     hash,
   };

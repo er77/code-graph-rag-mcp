@@ -90,7 +90,6 @@ const MAGIC_METHOD_TYPES: Record<string, MagicType> = {
   __invert__: "invert",
 };
 
-
 // Built-in decorators for Layer 1
 const BUILTIN_DECORATORS = [
   "property",
@@ -215,7 +214,6 @@ export class PythonAnalyzer {
       patternConfidenceThreshold: 0.7,
       ...config,
     };
-
   }
 
   /**
@@ -700,13 +698,17 @@ export class PythonAnalyzer {
     console.log("[PythonAnalyzer] Executing Layer 3: Relationship Mapping");
     const layer3StartTime = Date.now();
 
-    await withPerformanceMonitoring("Layer3Analysis", () => {
-      this.analyzeInheritanceHierarchy(context);
-      this.analyzeMethodOverrides(context);
-      this.analyzeImportDependencies(rootNode, context);
-      this.createCrossReferences(context);
-      this.analyzeMethodResolutionOrder(context);
-    }, context.metrics);
+    await withPerformanceMonitoring(
+      "Layer3Analysis",
+      () => {
+        this.analyzeInheritanceHierarchy(context);
+        this.analyzeMethodOverrides(context);
+        this.analyzeImportDependencies(rootNode, context);
+        this.createCrossReferences(context);
+        this.analyzeMethodResolutionOrder(context);
+      },
+      context.metrics,
+    );
     context.metrics.relationshipMapping.timeMs = Date.now() - layer3StartTime;
     console.log(`[PythonAnalyzer] Layer 3 completed in ${context.metrics.relationshipMapping.timeMs}ms`);
   }
@@ -731,13 +733,17 @@ export class PythonAnalyzer {
       circularDependencies: [],
     };
 
-    await withPerformanceMonitoring("Layer4Analysis", () => {
-      patterns.contextManagers = this.analyzeContextManagers(rootNode);
-      patterns.exceptionHandling = this.analyzeExceptionHandling(rootNode);
-      patterns.designPatterns = this.detectDesignPatterns(context);
-      patterns.pythonIdioms = this.identifyPythonIdioms(rootNode);
-      patterns.circularDependencies = this.detectCircularDependencies(context);
-    }, context.metrics);
+    await withPerformanceMonitoring(
+      "Layer4Analysis",
+      () => {
+        patterns.contextManagers = this.analyzeContextManagers(rootNode);
+        patterns.exceptionHandling = this.analyzeExceptionHandling(rootNode);
+        patterns.designPatterns = this.detectDesignPatterns(context);
+        patterns.pythonIdioms = this.identifyPythonIdioms(rootNode);
+        patterns.circularDependencies = this.detectCircularDependencies(context);
+      },
+      context.metrics,
+    );
     context.metrics.patternRecognition.timeMs = Date.now() - layer4StartTime;
     context.metrics.patternRecognition.totalPatternsFound =
       patterns.contextManagers.length +
@@ -1120,7 +1126,7 @@ export class PythonAnalyzer {
 
         const baseEntity = context.entities.find((e) => e.name === name);
         const loc = methodInfo.location || baseEntity?.location;
-        if (!loc) continue; 
+        if (!loc) continue;
 
         const setterName = `${name}_setter`;
         const getterName = `${name}_getter`;
@@ -1313,7 +1319,7 @@ export class PythonAnalyzer {
 
         if (moduleNode && importList) {
           for (const importItem of importList.namedChildren) {
-            if (importItem.type === "," || !importItem.text) continue; 
+            if (importItem.type === "," || !importItem.text) continue;
 
             const dependency: ImportDependency = {
               sourceFile: context.filePath,
@@ -1367,7 +1373,7 @@ export class PythonAnalyzer {
       if (classInfo.baseClasses && classInfo.baseClasses.length > 0) {
         const mro = this.calculateMRO(className, context.classes);
         classInfo.mro = mro;
-        classInfo.methodResolutionOrder = mro; 
+        classInfo.methodResolutionOrder = mro;
         context.metrics.relationshipMapping.mroCalculations =
           (context.metrics.relationshipMapping.mroCalculations || 0) + 1;
       }
@@ -1487,7 +1493,7 @@ export class PythonAnalyzer {
     const dependencyGraph = this.buildDependencyGraph(context);
     const cycles = this.findAllCycles(dependencyGraph);
 
-    return cycles.map(cycle => ({
+    return cycles.map((cycle) => ({
       cycle: cycle.path,
       type: this.determineCycleType(cycle, context),
       severity: this.calculateCycleSeverity(cycle),
@@ -1536,14 +1542,7 @@ export class PythonAnalyzer {
 
     for (const node of graph.keys()) {
       if (!visited.has(node)) {
-        this.dfsDetectCycles(
-          node,
-          graph,
-          visited,
-          recursionStack,
-          currentPath,
-          cycles
-        );
+        this.dfsDetectCycles(node, graph, visited, recursionStack, currentPath, cycles);
       }
     }
 
@@ -1556,7 +1555,7 @@ export class PythonAnalyzer {
     visited: Set<string>,
     recursionStack: Set<string>,
     currentPath: string[],
-    cycles: Array<{ path: string[]; edges: Array<{ from: string; to: string }> }>
+    cycles: Array<{ path: string[]; edges: Array<{ from: string; to: string }> }>,
   ): void {
     visited.add(node);
     recursionStack.add(node);
@@ -1566,14 +1565,7 @@ export class PythonAnalyzer {
 
     for (const neighbor of neighbors) {
       if (!visited.has(neighbor)) {
-        this.dfsDetectCycles(
-          neighbor,
-          graph,
-          visited,
-          recursionStack,
-          currentPath,
-          cycles
-        );
+        this.dfsDetectCycles(neighbor, graph, visited, recursionStack, currentPath, cycles);
       } else if (recursionStack.has(neighbor)) {
         const cycleStartIndex = currentPath.indexOf(neighbor);
         if (cycleStartIndex !== -1) {
@@ -1601,32 +1593,28 @@ export class PythonAnalyzer {
 
   private determineCycleType(
     cycle: { path: string[]; edges: Array<{ from: string; to: string }> },
-    context: AnalysisContext
+    context: AnalysisContext,
   ): "import" | "inheritance" | "reference" {
     let hasImport = false;
     let hasInheritance = false;
 
     for (const edge of cycle.edges) {
-      if (context.imports.some(imp =>
-        this.resolveImportPath(imp.targetModule, context.filePath) === edge.to
-      )) {
+      if (context.imports.some((imp) => this.resolveImportPath(imp.targetModule, context.filePath) === edge.to)) {
         hasImport = true;
       }
 
       for (const [_className, classInfo] of context.classes.entries()) {
-        if (classInfo.baseClasses?.some(base =>
-          this.resolveClassPath(base, edge.from) === edge.to
-        )) {
+        if (classInfo.baseClasses?.some((base) => this.resolveClassPath(base, edge.from) === edge.to)) {
           hasInheritance = true;
         }
       }
 
       // Check for reference relationships matching this edge
-      if (context.relationships.some(rel =>
-        rel.type === "references" &&
-        rel.sourceFile === edge.from &&
-        rel.targetFile === edge.to
-      )) {
+      if (
+        context.relationships.some(
+          (rel) => rel.type === "references" && rel.sourceFile === edge.from && rel.targetFile === edge.to,
+        )
+      ) {
         // we treat references as a fallback; no variable needed here
         hasImport = hasImport || false; // no-op to keep logic explicit
       }
@@ -1637,10 +1625,10 @@ export class PythonAnalyzer {
     return "reference";
   }
 
-
-  private calculateCycleSeverity(
-    cycle: { path: string[]; edges: Array<{ from: string; to: string }> }
-  ): "warning" | "error" {
+  private calculateCycleSeverity(cycle: {
+    path: string[];
+    edges: Array<{ from: string; to: string }>;
+  }): "warning" | "error" {
     // Severity criteria:
     // 1. Cycle length (short cycles are worse)
     // 2. File type (cycles in core modules are worse)
@@ -1651,10 +1639,8 @@ export class PythonAnalyzer {
       return "error";
     }
 
-    const hasCoreModule = cycle.path.some(path =>
-      path.includes('/core/') ||
-      path.includes('/base/') ||
-      path.includes('__init__')
+    const hasCoreModule = cycle.path.some(
+      (path) => path.includes("/core/") || path.includes("/base/") || path.includes("__init__"),
     );
 
     if (hasCoreModule) {
@@ -1663,24 +1649,20 @@ export class PythonAnalyzer {
     return "warning";
   }
 
-  private generateCycleDescription(
-    cycle: { path: string[]; edges: Array<{ from: string; to: string }> }
-  ): string {
+  private generateCycleDescription(cycle: { path: string[]; edges: Array<{ from: string; to: string }> }): string {
     const cycleLength = cycle.path.length - 1;
-    const fileNames = cycle.path.slice(0, -1).map(p => this.getFileName(p));
+    const fileNames = cycle.path.slice(0, -1).map((p) => this.getFileName(p));
 
     if (cycleLength === 2) {
       return `Mutual dependency between ${fileNames[0]} and ${fileNames[1]}`;
     } else if (cycleLength === 3) {
-      return `Triangular dependency: ${fileNames.join(' → ')} → ${fileNames[0]}`;
+      return `Triangular dependency: ${fileNames.join(" → ")} → ${fileNames[0]}`;
     } else {
-      return `Circular dependency chain of ${cycleLength} files: ${fileNames.slice(0, 3).join(' → ')}...`;
+      return `Circular dependency chain of ${cycleLength} files: ${fileNames.slice(0, 3).join(" → ")}...`;
     }
   }
 
-  private suggestCycleFix(
-    cycle: { path: string[]; edges: Array<{ from: string; to: string }> }
-  ): string {
+  private suggestCycleFix(cycle: { path: string[]; edges: Array<{ from: string; to: string }> }): string {
     const suggestions: string[] = [];
 
     const cycleLength = cycle.path.length - 1;
@@ -1701,39 +1683,41 @@ export class PythonAnalyzer {
     return suggestions.join("; ");
   }
 
-
   private normalizeFilePath(path: string): string {
-    return path.replace(/\.py$/, '').replace(/\\/g, '/');
+    return path.replace(/\.py$/, "").replace(/\\/g, "/");
   }
 
   private resolveImportPath(importModule: string, fromFile: string): string | undefined {
     if (!importModule) return undefined;
-  
+
     const toPosix = (p: string) => p.replace(/\\/g, "/");
-    const norm = (p: string) => toPosix(p).replace(/\/+/g, "/").replace(/^\/+|\/+$/g, "");
-  
-    const fromModuleId = this.normalizeFilePath(fromFile); 
+    const norm = (p: string) =>
+      toPosix(p)
+        .replace(/\/+/g, "/")
+        .replace(/^\/+|\/+$/g, "");
+
+    const fromModuleId = this.normalizeFilePath(fromFile);
     const fromDir = fromModuleId.includes("/") ? fromModuleId.slice(0, fromModuleId.lastIndexOf("/")) : "";
-  
+
     const rel = /^\.+/.exec(importModule);
     if (rel) {
       const dots = rel[0].length;
-  
+
       let base = fromDir;
       for (let i = 1; i < dots; i++) {
         base = base.includes("/") ? base.slice(0, base.lastIndexOf("/")) : "";
       }
-  
+
       const remainder = importModule.slice(dots).replace(/\./g, "/");
       let combined = remainder ? [base, remainder].filter(Boolean).join("/") : base;
-  
+
       if (!combined) {
         combined = fromModuleId.split("/")[0] || "";
       }
-  
+
       return norm(combined);
     }
-  
+
     return norm(importModule.replace(/\./g, "/"));
   }
 
@@ -1751,18 +1735,18 @@ export class PythonAnalyzer {
   }
 
   private getFileName(path: string): string {
-    const parts = path.split('/');
+    const parts = path.split("/");
     return parts[parts.length - 1] || path;
   }
 
   private deduplicateCycles(
-    cycles: Array<{ path: string[]; edges: Array<{ from: string; to: string }> }>
+    cycles: Array<{ path: string[]; edges: Array<{ from: string; to: string }> }>,
   ): Array<{ path: string[]; edges: Array<{ from: string; to: string }> }> {
     const uniqueCycles = new Map<string, { path: string[]; edges: Array<{ from: string; to: string }> }>();
 
     for (const cycle of cycles) {
       const nodes = cycle.path.slice(0, -1).sort();
-      const key = nodes.join('|');
+      const key = nodes.join("|");
 
       if (!uniqueCycles.has(key)) {
         uniqueCycles.set(key, cycle);
@@ -1804,7 +1788,6 @@ export class PythonAnalyzer {
     const currentEdges = graph.get(currentFile) || new Set<string>();
     PythonAnalyzer.dependencyCache.set(currentFile, new Set(currentEdges));
   }
-
 
   // =============================================================================
   // UTILITY HELPER METHODS

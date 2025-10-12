@@ -26,8 +26,8 @@ import {
   AgentType,
   type ResourceConstraints,
 } from "../types/agent.js";
-import { BaseAgent } from "./base.js";
 import { logger } from "../utils/logger.js";
+import { BaseAgent } from "./base.js";
 import { isEventfulAgent } from "./coordinator.js";
 
 interface ConductorConfig {
@@ -169,8 +169,10 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
 
     // Step 2: Generate method proposals if complexity > threshold
     // Skip approval for automated indexing operations
-    const isIndexingTask = task.type === "index" || task.type === "semantic" ||
-                          (task.payload && typeof task.payload === 'object' && 'directory' in task.payload);
+    const isIndexingTask =
+      task.type === "index" ||
+      task.type === "semantic" ||
+      (task.payload && typeof task.payload === "object" && "directory" in task.payload);
 
     if (complexity.requiresApproval && !isIndexingTask) {
       const proposals = await this.generateOptimizedMethodProposals(task, complexity);
@@ -329,7 +331,12 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     const subtasks: SubTask[] = [];
 
     // Special handling for indexing tasks with batch processing
-    if (task.type === "index" && task.payload && typeof task.payload === 'object' && 'excludePatterns' in task.payload) {
+    if (
+      task.type === "index" &&
+      task.payload &&
+      typeof task.payload === "object" &&
+      "excludePatterns" in task.payload
+    ) {
       const payload = task.payload as any;
       const isBatchProcessing = payload.excludePatterns?.includes("__batch_processing_enabled__");
 
@@ -351,8 +358,8 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
             ...(payload || {}),
             excludePatterns: cleanedPatterns,
             batchMode: true,
-            batchNumber: 1
-          }
+            batchNumber: 1,
+          },
         });
 
         return subtasks;
@@ -369,8 +376,8 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
         priority: 8,
         payload: {
           type: "index",
-          ...(task.payload || {})
-        }
+          ...(task.payload || {}),
+        },
       });
       return subtasks;
     }
@@ -442,7 +449,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
       // Queue for when agent becomes available
       this.pendingTasks.set(subtask.id, {
         id: subtask.id,
-        type: subtask.targetAgent === "dora" ? "research" : (subtask.payload?.type || "implementation"),
+        type: subtask.targetAgent === "dora" ? "research" : subtask.payload?.type || "implementation",
         priority: subtask.priority,
         payload: subtask.payload || subtask,
         createdAt: Date.now(),
@@ -455,8 +462,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     }
 
     // Create agent task - preserve task type from payload if present
-    const taskType = subtask.payload?.type ||
-                    (subtask.targetAgent === "dora" ? "research" : "implementation");
+    const taskType = subtask.payload?.type || (subtask.targetAgent === "dora" ? "research" : "implementation");
 
     const agentTask: AgentTask = {
       id: subtask.id,
@@ -539,7 +545,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     if (isEventfulAgent(agent)) {
       agent.on("task:completed", this.handleTaskCompleted.bind(this));
       agent.on("task:failed", this.handleTaskFailed.bind(this));
-    } 
+    }
 
     this.emit("agent:registered", agent.id);
   }
@@ -593,7 +599,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     if (this.config.mandatoryDelegation) {
       console.warn(`[CONDUCTOR] Route called directly - redirecting to delegation system`);
       await this.processThroughDelegation(task);
-      return undefined; 
+      return undefined;
     }
 
     return undefined;
@@ -616,9 +622,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   }
 
   private selectByPriority(agents: Agent[]): Agent {
-    return agents
-      .slice()
-      .sort((a, b) => b.capabilities.priority - a.capabilities.priority)[0]!;
+    return agents.slice().sort((a, b) => b.capabilities.priority - a.capabilities.priority)[0]!;
   }
 
   private startHealthMonitoring(): void {
@@ -746,7 +750,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
 
   private initializeMethodProposalTemplates(): void {
     // Create reusable templates for common task patterns
-    const templateTypes = ['refactor', 'implementation', 'analysis', 'optimization', 'debugging'];
+    const templateTypes = ["refactor", "implementation", "analysis", "optimization", "debugging"];
 
     for (const type of templateTypes) {
       this.methodProposalTemplates.set(type, this.createMethodProposalTemplate(type));
@@ -794,7 +798,9 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
 
     // Log performance improvements every 100 tasks
     if (this.performanceMetrics.totalTasks > 0 && this.performanceMetrics.totalTasks % 100 === 0) {
-      console.log(`[CONDUCTOR] TASK-004B: Performance metrics - overhead reduction: ${this.performanceMetrics.overheadReduction.toFixed(1)}%`);
+      console.log(
+        `[CONDUCTOR] TASK-004B: Performance metrics - overhead reduction: ${this.performanceMetrics.overheadReduction.toFixed(1)}%`,
+      );
     }
   }
 
@@ -842,7 +848,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     if (template) {
       this.performanceMetrics.cacheHitRate++;
       console.log(`[CONDUCTOR] TASK-004B: Using cached method proposals for ${taskTypeKey}`);
-      return template.map(proposal => ({
+      return template.map((proposal) => ({
         ...proposal,
         description: proposal.description.replace(taskTypeKey, `${taskTypeKey} for ${task.type}`),
       }));
@@ -862,11 +868,11 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
 
   private getTaskTypeKey(task: AgentTask): string {
     const payload = task.payload as any;
-    if (payload?.requiresResearch) return 'analysis';
-    if (task.type.includes('refactor')) return 'refactor';
-    if (task.type.includes('implement')) return 'implementation';
-    if (task.type.includes('optimize')) return 'optimization';
-    if (task.type.includes('debug') || task.type.includes('fix')) return 'debugging';
-    return 'implementation'; // default
+    if (payload?.requiresResearch) return "analysis";
+    if (task.type.includes("refactor")) return "refactor";
+    if (task.type.includes("implement")) return "implementation";
+    if (task.type.includes("optimize")) return "optimization";
+    if (task.type.includes("debug") || task.type.includes("fix")) return "debugging";
+    return "implementation"; // default
   }
 }

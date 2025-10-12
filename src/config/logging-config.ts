@@ -5,7 +5,7 @@
  */
 
 import { resolve } from "path";
-import { type LoggerConfig, LogLevel } from "../utils/logger.js";
+import { type LoggerConfig, LogLevel } from "../utils/logger-types.js";
 
 // Get the root directory of the project
 const projectRoot = process.cwd().includes("examples/") ? resolve(process.cwd(), "../..") : process.cwd();
@@ -13,8 +13,8 @@ const projectRoot = process.cwd().includes("examples/") ? resolve(process.cwd(),
 export const LOGGING_CONFIG: LoggerConfig = {
   logDir: resolve(projectRoot, "logs_llm"),
   maxFileSize: 10 * 1024 * 1024, // 10MB
-  maxFiles: 20, // Keep more files for comprehensive debugging
-  logLevel: LogLevel.DEBUG, // Capture all activity
+  maxFiles: 20,
+  logLevel: LogLevel.DEBUG,
   enableRotation: true,
   enableTimestamp: true,
   enableStackTrace: true,

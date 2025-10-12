@@ -14,7 +14,6 @@ import {
 } from "../types/agent.js";
 import { BaseAgent } from "./base.js";
 
-
 type EventfulAgent = Agent & {
   on: (event: string, listener: (...args: any[]) => void) => void;
 };
@@ -122,11 +121,10 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
     this.agents.set(agent.id, agent);
     console.log(`[Coordinator] Registered agent ${agent.id} of type ${agent.type}`);
 
-    
     if (isEventfulAgent(agent)) {
       agent.on("task:completed", this.handleTaskCompleted.bind(this));
       agent.on("task:failed", this.handleTaskFailed.bind(this));
-    } 
+    }
     this.emit("agent:registered", agent.id);
   }
 
@@ -228,9 +226,7 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
   }
 
   private selectByPriority(agents: Agent[]): Agent {
-    return agents
-      .slice()
-      .sort((a, b) => b.capabilities.priority - a.capabilities.priority)[0]!;
+    return agents.slice().sort((a, b) => b.capabilities.priority - a.capabilities.priority)[0]!;
   }
 
   private startHealthMonitoring(): void {

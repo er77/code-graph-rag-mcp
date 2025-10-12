@@ -31,12 +31,6 @@ const MAX_LIMIT = 1000;
 const INDEX_COST_FACTOR = 0.1; // Using index reduces cost by 90%
 const FULL_SCAN_COST = 1000;
 
-const AVAILABLE_INDEXES = {
-  entities: ["type", "file_path", "name", "hash"],
-  relationships: ["from_id", "to_id", "type"],
-  files: ["path", "hash"],
-};
-
 // =============================================================================
 // 3. QUERY OPTIMIZER IMPLEMENTATION
 // =============================================================================

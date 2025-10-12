@@ -36,6 +36,7 @@
     "noImplicitReturns": true,
     "noUncheckedIndexedAccess": true
   },
-  "include": ["src/**/*"],
+  "typeRoots": ["./node_modules/@types", "./src/types"],
+  "include": ["src/**/*", "src/types/**/*.d.ts"],
   "exclude": ["node_modules", "dist", "tmp", "src/__mocks__"]
 }

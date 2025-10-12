@@ -9,35 +9,33 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { spawn } from "child_process";
 
-const TEST_DIR = "/home/er77/_work_fodler/baserow-develop";
+const TEST_DIR =
+  process.env.TEST_DIR ||
+  process.env.TARGET_DIR ||
+  (process.env.PROJECT_DIR ? `${process.env.PROJECT_DIR}/../target-repo` : "/tmp/target-repo");
 
 async function testMCPServer() {
   console.log("🧪 Starting MCP Protocol Tests\n");
 
   // Start the MCP server as a subprocess
-  const serverProcess = spawn("node", [
-    "/home/er77/_work_fodler/code-graph-rag-mcp/dist/index.js",
-    TEST_DIR
-  ]);
+  const DIST_JS = process.env.DIST_JS || `${process.cwd()}/dist/index.js`;
+  const serverProcess = spawn("node", [DIST_JS, TEST_DIR]);
 
   // Create MCP client transport
   const transport = new StdioClientTransport({
     command: "node",
-    args: [
-      "/home/er77/_work_fodler/code-graph-rag-mcp/dist/index.js",
-      TEST_DIR
-    ]
+    args: [DIST_JS, TEST_DIR],
   });
 
   // Create MCP client
   const client = new Client(
     {
       name: "test-client",
-      version: "1.0.0"
+      version: "1.0.0",
     },
     {
-      capabilities: {}
-    }
+      capabilities: {},
+    },
   );
 
   try {
@@ -60,7 +58,7 @@ async function testMCPServer() {
     const tests = [
       {
         name: "graph:analyze",
-        args: { directory: TEST_DIR }
+        args: { directory: TEST_DIR },
       },
       {
         name: "graph:index",
@@ -68,39 +66,39 @@ async function testMCPServer() {
           directory: TEST_DIR,
           incremental: true,
           batchMode: true,
-          excludePatterns: ["node_modules/**", "*.test.js"]
-        }
+          excludePatterns: ["node_modules/**", "*.test.js"],
+        },
       },
       {
         name: "query:search",
-        args: { query: "class", limit: 3 }
+        args: { query: "class", limit: 3 },
       },
       {
         name: "query:findEntity",
-        args: { name: "BaserowApplication", type: "class" }
+        args: { name: "BaserowApplication", type: "class" },
       },
       {
         name: "query:getRelationships",
-        args: { entityId: "test-id", relationshipType: "imports" }
+        args: { entityId: "test-id", relationshipType: "imports" },
       },
       {
         name: "semantic:search",
-        args: { query: "database models", limit: 3 }
+        args: { query: "database models", limit: 3 },
       },
       {
         name: "semantic:explain",
         args: {
           code: "def calculate_total(items):\\n    return sum(item.price for item in items)",
-          language: "python"
-        }
+          language: "python",
+        },
       },
       {
         name: "semantic:suggest",
         args: {
           code: "def add(a,b):\\n    return a+b",
-          language: "python"
-        }
-      }
+          language: "python",
+        },
+      },
     ];
 
     // Run tests
@@ -114,16 +112,16 @@ async function testMCPServer() {
             method: "tools/call",
             params: {
               name: test.name,
-              arguments: test.args
-            }
+              arguments: test.args,
+            },
           },
-          { meta: {} }
+          { meta: {} },
         );
 
         console.log("   ✅ Success!");
         if (result.content && result.content.length > 0) {
           const content = result.content[0];
-          if (typeof content === 'string') {
+          if (typeof content === "string") {
             console.log(`   Result: ${content.substring(0, 200)}...`);
           } else if (content.text) {
             console.log(`   Result: ${content.text.substring(0, 200)}...`);
@@ -135,7 +133,6 @@ async function testMCPServer() {
     }
 
     console.log("\n✅ All tests completed!");
-
   } catch (error) {
     console.error("❌ Test failed:", error);
   } finally {

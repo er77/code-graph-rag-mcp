@@ -1,7 +1,6 @@
 /**
  * TASK-001: Parser Agent Implementation
- *
- * High-performance parser agent using tree-sitter for code analysis.
+    const memoryThreshold = config.memoryLimit * 0.8;      if (usage.memory > config.memoryLimit * 0.9) { * High-performance parser agent using tree-sitter for code analysis.
  * Achieves 100+ files/second throughput with incremental parsing.
  *
  * Architecture References:
@@ -16,6 +15,7 @@ import type { EventEmitter } from "node:events";
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import type { Worker } from "node:worker_threads";
+import { getConfig } from "../config/yaml-config.js";
 import { IncrementalParser } from "../parsers/incremental-parser.js";
 import { isFileSupported } from "../parsers/language-configs.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
@@ -25,14 +25,17 @@ import { BaseAgent } from "./base.js";
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
 // =============================================================================
-const PARSER_CONFIG = {
-  maxConcurrency: 4, // Parallel file processing
-  memoryLimit: 256, // MB
-  priority: 8, // High priority for parsing
-  batchSize: 10, // Files per batch
-  cacheSize: 100 * 1024 * 1024, // 100MB cache
-  workerPoolSize: 2, // Number of worker threads
-};
+function getParserConfig() {
+  const config = getConfig();
+  return {
+    maxConcurrency: config.parser.agent?.maxConcurrency ?? 4,
+    memoryLimit: config.parser.agent?.memoryLimit ?? 512,
+    priority: config.parser.agent?.priority ?? 8,
+    batchSize: config.parser.agent?.batchSize ?? 10,
+    cacheSize: config.parser.agent?.cacheSize ?? 100 * 1024 * 1024,
+    workerPoolSize: config.parser.agent?.workerPoolSize ?? 2,
+  };
+}
 
 // Knowledge Bus topics
 const TOPICS = {
@@ -73,14 +76,16 @@ export class ParserAgent extends BaseAgent {
   private stats: ParserStats;
 
   constructor(knowledgeBus?: EventEmitter) {
+    const config = getParserConfig();
+
     // TASK-001: Initialize with optimized configuration
     super(AgentType.PARSER, {
-      maxConcurrency: PARSER_CONFIG.maxConcurrency,
-      memoryLimit: PARSER_CONFIG.memoryLimit,
-      priority: PARSER_CONFIG.priority,
+      maxConcurrency: config.maxConcurrency,
+      memoryLimit: config.memoryLimit,
+      priority: config.priority,
     });
 
-    this.parser = new IncrementalParser(PARSER_CONFIG.cacheSize);
+    this.parser = new IncrementalParser(config.cacheSize);
     this.knowledgeBus = knowledgeBus || null;
 
     this.stats = {
@@ -114,7 +119,8 @@ export class ParserAgent extends BaseAgent {
       this.knowledgeBus.on(TOPICS.FILE_CHANGED, this.handleFileChange.bind(this));
     }
 
-    console.log(`[${this.id}] Parser Agent initialized with ${PARSER_CONFIG.workerPoolSize} workers`);
+    const config = getParserConfig();
+    console.log(`[${this.id}] Parser Agent initialized with ${config.workerPoolSize} workers`);
   }
 
   /**
@@ -153,9 +159,13 @@ export class ParserAgent extends BaseAgent {
       return false;
     }
 
-    // Check memory constraints
-    if (this.getMemoryUsage() > PARSER_CONFIG.memoryLimit * 0.8) {
-      console.warn(`[${this.id}] Memory limit approaching, cannot accept new tasks`);
+    // Check memory constraints and auto-cleanup if needed
+    const config = getParserConfig();
+    const currentMemory = this.getMemoryUsage();
+    const memoryThreshold = config.memoryLimit * 0.8;
+
+    if (currentMemory > memoryThreshold) {
+      console.warn(`[${this.id}] Memory limit approaching (${currentMemory}MB > ${memoryThreshold}MB), clearing cache`);
       return false;
     }
 
@@ -216,7 +226,10 @@ export class ParserAgent extends BaseAgent {
       if (errors.length > 0) {
         const message =
           `Parsing failed for ${errors.length} file(s): ` +
-          errors.slice(0, 3).map((e) => e.message).join("; ");
+          errors
+            .slice(0, 3)
+            .map((e) => e.message)
+            .join("; ");
         throw new Error(message);
       }
 
@@ -400,7 +413,8 @@ export class ParserAgent extends BaseAgent {
   private setupEventHandlers(): void {
     // Monitor resource usage
     this.on("resource:warning", (usage) => {
-      if (usage.memory > PARSER_CONFIG.memoryLimit * 0.9) {
+      const config = getParserConfig();
+      if (usage.memory > config.memoryLimit * 0.9) {
         console.warn(`[${this.id}] Memory usage high: ${usage.memory}MB`);
         // Clear some cache to free memory
         this.parser.clearCache();

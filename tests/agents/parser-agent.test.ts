@@ -17,9 +17,9 @@ import { join } from "node:path";
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "@jest/globals";
+import { ParserAgent } from "../../src/agents/parser-agent.js";
 import { AgentStatus } from "../../src/types/agent.js";
 import type { FileChange, ParseResult, ParserTask } from "../../src/types/parser.js";
-import { ParserAgent } from "../../src/agents/parser-agent.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION

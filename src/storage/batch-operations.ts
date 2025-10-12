@@ -10,11 +10,11 @@
  * - SQLite Manager: src/storage/sqlite-manager.ts
  */
 
+import { createHash } from "node:crypto";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import type Database from "better-sqlite3";
-import { nanoid } from "nanoid";
 import type { BatchResult, Entity, ParsedEntity, Relationship } from "../types/storage.js";
 import { RelationType } from "../types/storage.js";
 
@@ -25,6 +25,7 @@ const DEFAULT_BATCH_SIZE = 1000;
 const MAX_BATCH_SIZE = 5000;
 const RETRY_ATTEMPTS = 3;
 const RETRY_DELAY = 100; // ms
+const ID_LENGTH = 12;
 
 // =============================================================================
 // 3. BATCH OPERATIONS CLASS
@@ -39,8 +40,34 @@ export class BatchOperations {
     this.batchSize = Math.min(batchSize, MAX_BATCH_SIZE);
   }
 
+  // ---------------------------------------------------------------------------
+  // Helpers: stable keys/ids
+  // ---------------------------------------------------------------------------
+
+  private entityKey(e: Entity): string {
+    const s = e.location?.start?.index ?? -1;
+    const eIdx = e.location?.end?.index ?? -1;
+    const key = `${e.filePath}|${e.type}|${e.name}|${s}-${eIdx}`;
+    return key;
+  }
+
+  private stableEntityId(e: Entity): string {
+    const key = this.entityKey(e);
+    return createHash("sha256").update(key).digest("base64url").slice(0, ID_LENGTH);
+  }
+
+  private relationshipKey(r: { fromId: string; toId: string; type: RelationType }): string {
+    return `${r.fromId}|${r.toId}|${r.type}`;
+  }
+
+  private stableRelationshipId(r: { fromId: string; toId: string; type: RelationType }): string {
+    return createHash("sha256").update(this.relationshipKey(r)).digest("base64url").slice(0, ID_LENGTH);
+  }
+
   /**
    * Insert entities in batches with transaction support
+   * - Local deduplication by entityKey
+   * - Stable IDs based on key
    */
   async insertEntities(
     entities: Entity[],
@@ -50,15 +77,36 @@ export class BatchOperations {
     const errors: Array<{ item: unknown; error: string }> = [];
     let totalProcessed = 0;
 
+    // Log database path for debugging
+    console.log("[BatchOperations] Database path:", this.db.name || "unknown");
+
     const insertStmt = this.db.prepare(`
-      INSERT OR REPLACE INTO entities 
+      INSERT INTO entities
       (id, name, type, file_path, location, metadata, hash, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        type = excluded.type,
+        file_path = excluded.file_path,
+        location = excluded.location,
+        metadata = excluded.metadata,
+        hash = COALESCE(excluded.hash, entities.hash),
+        updated_at = excluded.updated_at
     `);
 
+    const seen = new Set<string>();
+    const uniq: Entity[] = [];
+    for (const e of entities) {
+      const key = this.entityKey(e);
+      if (!seen.has(key)) {
+        seen.add(key);
+        uniq.push(e);
+      }
+    }
+
     // Process in batches
-    for (let i = 0; i < entities.length; i += this.batchSize) {
-      const batch = entities.slice(i, Math.min(i + this.batchSize, entities.length));
+    for (let i = 0; i < uniq.length; i += this.batchSize) {
+      const batch = uniq.slice(i, Math.min(i + this.batchSize, uniq.length));
 
       // Retry logic for batch processing
       let attempts = 0;
@@ -69,8 +117,10 @@ export class BatchOperations {
           const transaction = this.db.transaction((batch: Entity[]) => {
             for (const entity of batch) {
               const now = Date.now();
+              const id = this.stableEntityId(entity);
+
               insertStmt.run(
-                entity.id || nanoid(12),
+                id,
                 entity.name,
                 entity.type,
                 entity.filePath,
@@ -89,7 +139,7 @@ export class BatchOperations {
 
           // Report progress
           if (onProgress) {
-            onProgress(totalProcessed, entities.length);
+            onProgress(totalProcessed, uniq.length);
           }
         } catch (error) {
           attempts++;
@@ -120,6 +170,8 @@ export class BatchOperations {
 
   /**
    * Insert relationships in batches
+   * - Local deduplication by relationshipKey
+   * - Stable IDs based on key
    */
   async insertRelationships(
     relationships: Relationship[],
@@ -130,14 +182,26 @@ export class BatchOperations {
     let totalProcessed = 0;
 
     const insertStmt = this.db.prepare(`
-      INSERT OR REPLACE INTO relationships 
+      INSERT INTO relationships
       (id, from_id, to_id, type, metadata)
       VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        metadata = COALESCE(excluded.metadata, relationships.metadata)
     `);
 
+    const seen = new Set<string>();
+    const uniq: Relationship[] = [];
+    for (const r of relationships) {
+      const key = this.relationshipKey({ fromId: r.fromId, toId: r.toId, type: r.type });
+      if (!seen.has(key)) {
+        seen.add(key);
+        uniq.push(r);
+      }
+    }
+
     // Process in batches
-    for (let i = 0; i < relationships.length; i += this.batchSize) {
-      const batch = relationships.slice(i, Math.min(i + this.batchSize, relationships.length));
+    for (let i = 0; i < uniq.length; i += this.batchSize) {
+      const batch = uniq.slice(i, Math.min(i + this.batchSize, uniq.length));
 
       let attempts = 0;
       let batchSuccess = false;
@@ -146,13 +210,8 @@ export class BatchOperations {
         try {
           const transaction = this.db.transaction((batch: Relationship[]) => {
             for (const rel of batch) {
-              insertStmt.run(
-                rel.id || nanoid(12),
-                rel.fromId,
-                rel.toId,
-                rel.type,
-                rel.metadata ? JSON.stringify(rel.metadata) : null,
-              );
+              const id = this.stableRelationshipId({ fromId: rel.fromId, toId: rel.toId, type: rel.type });
+              insertStmt.run(id, rel.fromId, rel.toId, rel.type, rel.metadata ? JSON.stringify(rel.metadata) : null);
             }
           });
 
@@ -162,7 +221,7 @@ export class BatchOperations {
 
           // Report progress
           if (onProgress) {
-            onProgress(totalProcessed, relationships.length);
+            onProgress(totalProcessed, uniq.length);
           }
         } catch (error) {
           attempts++;
@@ -323,10 +382,11 @@ export class BatchOperations {
       // Import relationships
       if (entity.type === "import" && entity.importData) {
         for (const specifier of entity.importData.specifiers) {
+          const toId = `import:${entity.importData.source}:${specifier.imported || specifier.local}`;
           relationships.push({
-            id: nanoid(12),
+            id: this.stableRelationshipId({ fromId, toId, type: RelationType.IMPORTS }),
             fromId,
-            toId: `import:${entity.importData.source}:${specifier.imported || specifier.local}`,
+            toId,
             type: RelationType.IMPORTS,
             metadata: {
               line: entity.location.start.line,
@@ -343,7 +403,7 @@ export class BatchOperations {
           const toId = entityMap.get(ref);
           if (toId) {
             relationships.push({
-              id: nanoid(12),
+              id: this.stableRelationshipId({ fromId, toId, type: RelationType.REFERENCES }),
               fromId,
               toId,
               type: RelationType.REFERENCES,
@@ -362,7 +422,7 @@ export class BatchOperations {
           const childId = entityMap.get(child.name);
           if (childId) {
             relationships.push({
-              id: nanoid(12),
+              id: this.stableRelationshipId({ fromId, toId: childId, type: RelationType.CONTAINS }),
               fromId,
               toId: childId,
               type: RelationType.CONTAINS,

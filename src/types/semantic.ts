@@ -11,7 +11,8 @@
  *
  * @task_id TASK-002
  * @history
- *  - 2025-09-14: Created by Dev-Agent - TASK-002: Initial semantic types implementation
+ *  - 2025-09-14: Created by Dev-Agent - TASK-002: Initial semantic types
+ * implementation
  */
 
 // =============================================================================
@@ -155,11 +156,42 @@ export interface VectorStoreConfig {
 /**
  * Embedding generator configuration
  */
+export type EmbeddingProviderKind = "memory" | "transformers" | "ollama" | "openai" | "cloudru";
+
 export interface EmbeddingConfig {
   modelName: string;
   quantized: boolean;
   localPath?: string;
   batchSize: number;
+
+  provider?: EmbeddingProviderKind; // default: 'memory'
+  ollama?: {
+    baseUrl?: string;
+    timeoutMs?: number;
+    concurrency?: number;
+    headers?: Record<string, string>;
+    autoPull?: boolean;
+    warmupText?: string;
+    checkServer?: boolean;
+    pullTimeoutMs?: number;
+  };
+  openai?: {
+    baseUrl?: string;
+    apiKey?: string;
+    timeoutMs?: number;
+    concurrency?: number;
+    maxBatchSize?: number;
+  };
+  cloudru?: {
+    baseUrl?: string;
+    apiKey?: string;
+    timeoutMs?: number;
+    concurrency?: number;
+    maxBatchSize?: number;
+  };
+  memory?: {
+    dimension?: number;
+  };
 }
 
 /**

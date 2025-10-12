@@ -13,6 +13,7 @@
  * - Schema Migrations: src/storage/schema-migrations.ts
  */
 
+import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
@@ -30,7 +31,7 @@ import type {
   RelationType,
   StorageMetrics,
 } from "../types/storage.js";
-import { getSQLiteManager, type SQLiteManager } from "./sqlite-manager.js";
+import type { SQLiteManager } from "./sqlite-manager.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -67,30 +68,27 @@ export class GraphStorageImpl implements GraphStorage {
     this.prepareStatements();
   }
 
-  
   async initialize(): Promise<void> {
     this.ensureReady(true);
   }
 
   private ensureReady(force = false): void {
+    if (!this.sqliteManager) {
+      throw new Error("SQLiteManager is required but not provided");
+    }
+
     try {
-      if (!force && this.sqliteManager?.isOpen()) {
+      if (!force && this.sqliteManager.isOpen()) {
         this.db.pragma("user_version");
         return;
       }
-    } catch {
-      
+    } catch {}
+
+    if (!this.sqliteManager.isOpen()) {
+      this.sqliteManager.initialize();
     }
 
-    
-    const manager = getSQLiteManager();
-    if (!manager.isOpen()) {
-      manager.initialize();
-    }
-
-    
-    if (force || manager !== this.sqliteManager) {
-      this.sqliteManager = manager;
+    if (force) {
       this.db = this.sqliteManager.getConnection();
       this.prepareStatements();
     }
@@ -102,10 +100,21 @@ export class GraphStorageImpl implements GraphStorage {
   private prepareStatements(): void {
     // Enhanced entity operations with v2 fields
     this.statements.insertEntity = this.db.prepare(`
-      INSERT OR REPLACE INTO entities
+      INSERT INTO entities
       (id, name, type, file_path, location, metadata, hash, created_at, updated_at,
        complexity_score, language, size_bytes)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        type = excluded.type,
+        file_path = excluded.file_path,
+        location = excluded.location,
+        metadata = excluded.metadata,
+        hash = COALESCE(excluded.hash, entities.hash),
+        updated_at = excluded.updated_at,
+        complexity_score = excluded.complexity_score,
+        language = excluded.language,
+        size_bytes = excluded.size_bytes
     `);
 
     this.statements.updateEntity = this.db.prepare(`
@@ -125,9 +134,12 @@ export class GraphStorageImpl implements GraphStorage {
 
     // Enhanced relationship operations with v2 fields
     this.statements.insertRelationship = this.db.prepare(`
-      INSERT OR REPLACE INTO relationships
+      INSERT INTO relationships
       (id, from_id, to_id, type, metadata, weight, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        metadata = COALESCE(excluded.metadata, relationships.metadata),
+        weight = excluded.weight
     `);
 
     this.statements.deleteRelationship = this.db.prepare(`
@@ -160,7 +172,8 @@ export class GraphStorageImpl implements GraphStorage {
       "insert_entity",
       () => {
         const now = Date.now();
-        const id = entity.id || this.generateId();
+
+        const id = this.stableEntityId(entity);
 
         // Calculate complexity score and language if not provided
         const complexityScore = entity.complexityScore ?? this.calculateComplexity(entity);
@@ -195,11 +208,21 @@ export class GraphStorageImpl implements GraphStorage {
         const errors: Array<{ item: unknown; error: string }> = [];
         let processed = 0;
 
-        const transaction = this.db.transaction((entities: Entity[]) => {
-          for (const entity of entities) {
+        const seen = new Set<string>();
+        const uniq: Entity[] = [];
+        for (const e of entities) {
+          const key = this.entityKey(e);
+          if (!seen.has(key)) {
+            seen.add(key);
+            uniq.push(e);
+          }
+        }
+
+        const tx = this.db.transaction((items: Entity[]) => {
+          for (const entity of items) {
             try {
               const now = Date.now();
-              const id = entity.id || this.generateId();
+              const id = this.stableEntityId(entity);
 
               // Calculate enhanced fields
               const complexityScore = entity.complexityScore ?? this.calculateComplexity(entity);
@@ -232,7 +255,7 @@ export class GraphStorageImpl implements GraphStorage {
         });
 
         try {
-          transaction(entities);
+          tx(uniq);
         } catch (error) {
           console.error("[GraphStorage] Batch insert failed:", error);
         }
@@ -334,7 +357,7 @@ export class GraphStorageImpl implements GraphStorage {
 
   async insertRelationship(relationship: Relationship): Promise<void> {
     this.ensureReady();
-    const id = relationship.id || this.generateId();
+    const id = this.stableRelationshipId(relationship);
     const now = Date.now();
 
     this.statements.insertRelationship!.run(
@@ -354,34 +377,39 @@ export class GraphStorageImpl implements GraphStorage {
     const errors: Array<{ item: unknown; error: string }> = [];
     let processed = 0;
 
-    const transaction = this.db.transaction((relationships: Relationship[]) => {
-      for (const relationship of relationships) {
-        try {
-          const id = relationship.id || this.generateId();
-          const now = Date.now();
+    const seen = new Set<string>();
+    const uniq: Relationship[] = [];
+    for (const r of relationships) {
+      const key = this.relationshipKey(r);
+      if (!seen.has(key)) {
+        seen.add(key);
+        uniq.push(r);
+      }
+    }
 
+    const tx = this.db.transaction((rels: Relationship[]) => {
+      for (const r of rels) {
+        try {
+          const id = this.stableRelationshipId(r);
+          const now = Date.now();
           this.statements.insertRelationship!.run(
             id,
-            relationship.fromId,
-            relationship.toId,
-            relationship.type,
-            relationship.metadata ? JSON.stringify(relationship.metadata) : null,
-            relationship.weight ?? 1.0,
-            relationship.createdAt ?? now,
+            r.fromId,
+            r.toId,
+            r.type,
+            r.metadata ? JSON.stringify(r.metadata) : null,
+            r.weight ?? 1.0,
+            r.createdAt ?? now,
           );
-
           processed++;
         } catch (error) {
-          errors.push({
-            item: relationship,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          errors.push({ item: r, error: error instanceof Error ? error.message : String(error) });
         }
       }
     });
 
     try {
-      transaction(relationships);
+      tx(uniq);
     } catch (error) {
       console.error("[GraphStorage] Batch relationship insert failed:", error);
     }
@@ -664,6 +692,37 @@ export class GraphStorageImpl implements GraphStorage {
    */
   private generateId(): string {
     return nanoid(ID_LENGTH);
+  }
+
+  /**
+   * Generate stable entity key
+   */
+  private entityKey(e: Entity): string {
+    const s = e.location?.start?.index ?? -1;
+    const eIdx = e.location?.end?.index ?? -1;
+    return `${e.filePath}|${e.type}|${e.name}|${s}-${eIdx}`;
+  }
+
+  /**
+   * Generate stable entity ID
+   */
+  private stableEntityId(e: Entity): string {
+    const key = this.entityKey(e);
+    return createHash("sha256").update(key).digest("base64url").slice(0, ID_LENGTH);
+  }
+
+  /**
+   * Generate stable relationship key
+   */
+  private relationshipKey(r: Relationship): string {
+    return `${r.fromId}|${r.toId}|${r.type}`;
+  }
+
+  /**
+   * Generate stable relationship ID
+   */
+  private stableRelationshipId(r: Relationship): string {
+    return createHash("sha256").update(this.relationshipKey(r)).digest("base64url").slice(0, ID_LENGTH);
   }
 
   /**

@@ -8,7 +8,7 @@
  * @created 2025-10-05
  */
 
-import { describe, it, expect, beforeAll } from "@jest/globals";
+import { beforeAll, describe, expect, it } from "@jest/globals";
 import { RustAnalyzer } from "../../src/parsers/rust-analyzer";
 import type { TreeSitterNode } from "../../src/types/parser";
 
@@ -33,21 +33,21 @@ describe("RustAnalyzer", () => {
       const mockNode = createMockNode("enum_item", "TestEnum");
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      expect(result.entities.some(e => e.type === "enum")).toBe(true);
+      expect(result.entities.some((e) => e.type === "enum")).toBe(true);
     });
 
     it("should extract traits", async () => {
       const mockNode = createMockNode("trait_item", "TestTrait");
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      expect(result.entities.some(e => e.type === "trait")).toBe(true);
+      expect(result.entities.some((e) => e.type === "trait")).toBe(true);
     });
 
     it("should extract functions", async () => {
       const mockNode = createMockFunctionNode("test_function", false, false);
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      const func = result.entities.find(e => e.type === "function");
+      const func = result.entities.find((e) => e.type === "function");
       expect(func).toBeDefined();
       expect(func?.name).toBe("test_function");
     });
@@ -56,7 +56,7 @@ describe("RustAnalyzer", () => {
       const mockNode = createMockFunctionNode("async_function", true, false);
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      const func = result.entities.find(e => e.type === "function");
+      const func = result.entities.find((e) => e.type === "function");
       expect(func?.metadata?.isAsync).toBe(true);
     });
 
@@ -64,35 +64,36 @@ describe("RustAnalyzer", () => {
       const mockNode = createMockNode("mod_item", "test_module");
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      expect(result.entities.some(e => e.type === "module")).toBe(true);
+      expect(result.entities.some((e) => e.type === "module")).toBe(true);
     });
 
     it("should extract type aliases", async () => {
       const mockNode = createMockNode("type_item", "MyType");
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      expect(result.entities.some(e => e.type === "type_alias")).toBe(true);
+      expect(result.entities.some((e) => e.type === "typedef")).toBe(true);
     });
 
     it("should extract constants", async () => {
       const mockNode = createMockNode("const_item", "MY_CONST");
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      expect(result.entities.some(e => e.type === "constant")).toBe(true);
+      expect(result.entities.some((e) => e.type === "constant")).toBe(true);
     });
 
     it("should extract static items", async () => {
       const mockNode = createMockNode("static_item", "MY_STATIC");
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      expect(result.entities.some(e => e.type === "static")).toBe(true);
+      const st = result.entities.find((e) => e.metadata?.isStatic);
+      expect(st).toBeDefined();
     });
 
     it("should extract macros", async () => {
       const mockNode = createMockNode("macro_definition", "my_macro");
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      expect(result.entities.some(e => e.type === "macro")).toBe(true);
+      expect(result.entities.some((e) => e.type === "macro")).toBe(true);
     });
   });
 
@@ -101,21 +102,21 @@ describe("RustAnalyzer", () => {
       const mockNode = createMockImplNode("TestStruct", "TestTrait");
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      expect(result.relationships.some(r => r.type === "implements")).toBe(true);
+      expect(result.relationships.some((r) => r.type === "implements")).toBe(true);
     });
 
     it("should extract trait extensions", async () => {
       const mockNode = createMockTraitExtensionNode("SubTrait", "SuperTrait");
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      expect(result.relationships.some(r => r.type === "extends")).toBe(true);
+      expect(result.relationships.some((r) => r.type === "inherits")).toBe(true);
     });
 
     it("should extract module containment", async () => {
       const mockNode = createMockNestedModuleNode();
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      expect(result.relationships.some(r => r.type === "contains")).toBe(true);
+      expect(result.relationships.some((r) => r.type === "contains")).toBe(true);
     });
   });
 
@@ -124,7 +125,7 @@ describe("RustAnalyzer", () => {
       const mockNode = createMockLifetimeNode();
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      const entity = result.entities.find(e => e.type === "struct");
+      const entity = result.entities.find((e) => e.type === "struct");
       expect(entity?.metadata?.lifetimes).toContain("'a");
     });
 
@@ -132,7 +133,7 @@ describe("RustAnalyzer", () => {
       const mockNode = createMockGenericNode();
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      const entity = result.entities.find(e => e.type === "struct");
+      const entity = result.entities.find((e) => e.type === "struct");
       expect(entity?.metadata?.generics).toContain("T");
     });
 
@@ -140,7 +141,7 @@ describe("RustAnalyzer", () => {
       const mockNode = createMockDeriveNode();
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      const entity = result.entities.find(e => e.type === "struct");
+      const entity = result.entities.find((e) => e.type === "struct");
       expect(entity?.metadata?.derives).toContain("Debug");
       expect(entity?.metadata?.derives).toContain("Clone");
     });
@@ -157,7 +158,7 @@ describe("RustAnalyzer", () => {
       const mockNode = createMockFunctionNode("unsafe_function", false, true);
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      const func = result.entities.find(e => e.type === "function");
+      const func = result.entities.find((e) => e.type === "function");
       expect(func?.metadata?.isUnsafe).toBe(true);
     });
 
@@ -165,7 +166,7 @@ describe("RustAnalyzer", () => {
       const mockNode = createMockEnumWithVariantsNode();
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      const enumEntity = result.entities.find(e => e.type === "enum");
+      const enumEntity = result.entities.find((e) => e.type === "enum");
       expect(enumEntity?.metadata?.variants).toContain("Variant1");
       expect(enumEntity?.metadata?.variants).toContain("Variant2");
     });
@@ -174,14 +175,14 @@ describe("RustAnalyzer", () => {
       const mockNode = createMockStructWithFieldsNode();
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      expect(result.entities.some(e => e.type === "field")).toBe(true);
+      expect(result.entities.some((e) => e.type === "field")).toBe(true);
     });
 
     it("should extract trait methods", async () => {
       const mockNode = createMockTraitWithMethodsNode();
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      const methods = result.entities.filter(e => e.type === "method");
+      const methods = result.entities.filter((e) => e.type === "method");
       expect(methods.length).toBeGreaterThan(0);
     });
 
@@ -189,7 +190,7 @@ describe("RustAnalyzer", () => {
       const mockNode = createMockAssociatedTypeNode();
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      expect(result.entities.some(e => e.type === "associated_type")).toBe(true);
+      expect(result.entities.some((e) => e.type === "typedef")).toBe(true);
     });
 
     it("should extract use statements", async () => {
@@ -206,7 +207,7 @@ describe("RustAnalyzer", () => {
       const mockNode = createMockBuilderNode();
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      const builderPattern = result.patterns.find(p => p.type === "builder");
+      const builderPattern = result.patterns.designPatterns.find((p) => p.pattern === "builder");
       expect(builderPattern).toBeDefined();
       expect(builderPattern?.confidence).toBeGreaterThan(0.9);
     });
@@ -215,7 +216,7 @@ describe("RustAnalyzer", () => {
       const mockNode = createMockIteratorNode();
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      const iteratorPattern = result.patterns.find(p => p.type === "iterator");
+      const iteratorPattern = result.patterns.designPatterns.find((p) => p.pattern === "iterator");
       expect(iteratorPattern).toBeDefined();
     });
 
@@ -223,7 +224,7 @@ describe("RustAnalyzer", () => {
       const mockNode = createMockResultNode();
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      const resultPattern = result.patterns.find(p => p.type === "result_error_handling");
+      const resultPattern = result.patterns.otherPatterns?.find((p) => p.kind === "result_error_handling");
       expect(resultPattern).toBeDefined();
     });
 
@@ -231,7 +232,7 @@ describe("RustAnalyzer", () => {
       const mockNode = createMockBorrowingNode();
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      const borrowPattern = result.patterns.find(p => p.type === "borrowing");
+      const borrowPattern = result.patterns.otherPatterns?.find((p) => p.kind === "borrowing");
       expect(borrowPattern).toBeDefined();
     });
 
@@ -239,7 +240,7 @@ describe("RustAnalyzer", () => {
       const mockNode = createMockUnsafeNode();
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      const unsafePattern = result.patterns.find(p => p.type === "unsafe_code");
+      const unsafePattern = result.patterns.otherPatterns?.find((p) => p.kind === "unsafe_code");
       expect(unsafePattern).toBeDefined();
     });
 
@@ -247,7 +248,7 @@ describe("RustAnalyzer", () => {
       const mockNode = createMockLifetimeAnnotationNode();
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      const lifetimePattern = result.patterns.find(p => p.type === "lifetime_annotations");
+      const lifetimePattern = result.patterns.otherPatterns?.find((p) => p.kind === "lifetime_annotations");
       expect(lifetimePattern).toBeDefined();
     });
   });
@@ -272,16 +273,30 @@ function createMockNode(type: string, name: string): TreeSitterNode {
     text: name,
     startPosition: { row: 0, column: 0 },
     endPosition: { row: 0, column: name.length },
+    startIndex: 0,
+    endIndex: name.length,
     childCount: 0,
     child: () => null,
+    namedChild: () => null,
     namedChildren: [],
+    namedChildCount: 0,
+    parent: null,
+    nextSibling: null,
+    previousSibling: null,
+    firstChild: null,
+    lastChild: null,
+    firstNamedChild: null,
+    lastNamedChild: null,
+    descendantForPosition: () => ({}) as TreeSitterNode,
+    descendantsOfType: () => [],
+    children: [],
     childForFieldName: (field: string) => {
       if (field === "name") {
-        return { text: name, type: "identifier" } as TreeSitterNode;
+        return createMockNode("identifier", name);
       }
       return null;
     },
-  } as TreeSitterNode;
+  };
 }
 
 function createMockFunctionNode(name: string, isAsync: boolean, isUnsafe: boolean): TreeSitterNode {
@@ -292,8 +307,8 @@ function createMockFunctionNode(name: string, isAsync: boolean, isUnsafe: boolea
 
   node.childCount = modifierCount;
   node.child = (index: number) => {
-    if (isAsync && index === 0) return { type: "async", text: "async" } as TreeSitterNode;
-    if (isUnsafe && index === (isAsync ? 1 : 0)) return { type: "unsafe", text: "unsafe" } as TreeSitterNode;
+    if (isAsync && index === 0) return createMockNode("async", "async");
+    if (isUnsafe && index === (isAsync ? 1 : 0)) return createMockNode("unsafe", "unsafe");
     return null;
   };
   return node;
@@ -302,8 +317,15 @@ function createMockFunctionNode(name: string, isAsync: boolean, isUnsafe: boolea
 function createMockImplNode(typeName: string, traitName: string): TreeSitterNode {
   const node = createMockNode("impl_item", "");
   node.childForFieldName = (field: string) => {
-    if (field === "type") return { text: typeName, type: "type_identifier" } as TreeSitterNode;
-    if (field === "trait") return { text: traitName, type: "type_identifier" } as TreeSitterNode;
+    if (field === "type") return createMockNode("type_identifier", typeName);
+    if (field === "trait") return createMockNode("type_identifier", traitName);
+    if (field === "body") {
+      return {
+        ...createMockNode("declaration_list", ""),
+        childCount: 1,
+        child: () => createMockNode("function_item", "next"),
+      };
+    }
     return null;
   };
   return node;
@@ -312,13 +334,13 @@ function createMockImplNode(typeName: string, traitName: string): TreeSitterNode
 function createMockTraitExtensionNode(subTrait: string, superTrait: string): TreeSitterNode {
   const node = createMockNode("trait_item", subTrait);
   node.childForFieldName = (field: string) => {
-    if (field === "name") return { text: subTrait, type: "identifier" } as TreeSitterNode;
+    if (field === "name") return createMockNode("identifier", subTrait);
     if (field === "supertraits") {
       return {
-        type: "trait_bounds",
+        ...createMockNode("trait_bounds", ""),
         childCount: 1,
-        child: () => ({ text: superTrait, type: "type" } as TreeSitterNode),
-      } as TreeSitterNode;
+        child: () => createMockNode("type", superTrait),
+      };
     }
     return null;
   };
@@ -330,10 +352,10 @@ function createMockNestedModuleNode(): TreeSitterNode {
   node.childForFieldName = (field: string) => {
     if (field === "body") {
       return {
-        type: "declaration_list",
+        ...createMockNode("declaration_list", ""),
         childCount: 1,
         child: () => createMockNode("mod_item", "nested_module"),
-      } as TreeSitterNode;
+      };
     }
     return null;
   };
@@ -345,10 +367,10 @@ function createMockLifetimeNode(): TreeSitterNode {
   node.childForFieldName = (field: string) => {
     if (field === "type_parameters") {
       return {
-        type: "type_parameters",
+        ...createMockNode("type_parameters", ""),
         childCount: 1,
-        child: () => ({ text: "'a", type: "lifetime" } as TreeSitterNode),
-      } as TreeSitterNode;
+        child: () => createMockNode("lifetime", "'a"),
+      };
     }
     return null;
   };
@@ -360,13 +382,13 @@ function createMockGenericNode(): TreeSitterNode {
   node.childForFieldName = (field: string) => {
     if (field === "type_parameters") {
       return {
-        type: "type_parameters",
+        ...createMockNode("type_parameters", ""),
         childCount: 1,
         child: () => ({
-          type: "type_parameter",
-          childForFieldName: () => ({ text: "T", type: "type_identifier" } as TreeSitterNode),
-        } as TreeSitterNode),
-      } as TreeSitterNode;
+          ...createMockNode("type_parameter", ""),
+          childForFieldName: (f: string) => (f === "name" ? createMockNode("type_identifier", "T") : null),
+        }),
+      };
     }
     return null;
   };
@@ -375,7 +397,27 @@ function createMockGenericNode(): TreeSitterNode {
 
 function createMockDeriveNode(): TreeSitterNode {
   const node = createMockNode("struct_item", "DeriveStruct");
-  // Add derive attribute
+  
+  const attr = {
+    ...createMockNode("attribute_item", "derive"),
+    childForFieldName: (field: string) => {
+      if (field === "path") {
+        return createMockNode("identifier", "derive");
+      }
+      if (field === "arguments") {
+        return {
+          ...createMockNode("arguments", ""),
+          childCount: 2,
+          child: (i: number) => createMockNode("identifier", i === 0 ? "Debug" : "Clone"),
+        };
+      }
+      return null;
+    },
+  };
+  
+  node.childCount = 1;
+  node.children = [attr];
+  node.child = (i: number) => (i === 0 ? attr : null);
   return node;
 }
 
@@ -383,10 +425,10 @@ function createMockVisibilityNode(visibility: string): TreeSitterNode {
   const node = createMockNode("struct_item", "VisibleStruct");
   node.childForFieldName = (field: string) => {
     if (field === "visibility_modifier") {
-      return { text: visibility, type: "visibility_modifier" } as TreeSitterNode;
+      return createMockNode("visibility_modifier", visibility);
     }
     if (field === "name") {
-      return { text: "VisibleStruct", type: "identifier" } as TreeSitterNode;
+      return createMockNode("identifier", "VisibleStruct");
     }
     return null;
   };
@@ -398,16 +440,13 @@ function createMockEnumWithVariantsNode(): TreeSitterNode {
   node.childForFieldName = (field: string) => {
     if (field === "body") {
       return {
-        type: "enum_variant_list",
+        ...createMockNode("enum_variant_list", ""),
         childCount: 2,
         child: (i: number) => ({
-          type: "enum_variant",
-          childForFieldName: () => ({
-            text: i === 0 ? "Variant1" : "Variant2",
-            type: "identifier"
-          } as TreeSitterNode),
-        } as TreeSitterNode),
-      } as TreeSitterNode;
+          ...createMockNode("enum_variant", ""),
+          childForFieldName: () => createMockNode("identifier", i === 0 ? "Variant1" : "Variant2"),
+        }),
+      };
     }
     return null;
   };
@@ -419,10 +458,10 @@ function createMockStructWithFieldsNode(): TreeSitterNode {
   node.childForFieldName = (field: string) => {
     if (field === "body") {
       return {
-        type: "field_declaration_list",
+        ...createMockNode("field_declaration_list", ""),
         childCount: 1,
         child: () => createMockNode("field_declaration", "field1"),
-      } as TreeSitterNode;
+      };
     }
     return null;
   };
@@ -434,10 +473,10 @@ function createMockTraitWithMethodsNode(): TreeSitterNode {
   node.childForFieldName = (field: string) => {
     if (field === "body") {
       return {
-        type: "declaration_list",
+        ...createMockNode("declaration_list", ""),
         childCount: 1,
         child: () => createMockNode("function_signature_item", "trait_method"),
-      } as TreeSitterNode;
+      };
     }
     return null;
   };
@@ -449,10 +488,10 @@ function createMockAssociatedTypeNode(): TreeSitterNode {
   node.childForFieldName = (field: string) => {
     if (field === "body") {
       return {
-        type: "declaration_list",
+        ...createMockNode("declaration_list", ""),
         childCount: 1,
         child: () => createMockNode("associated_type", "Output"),
-      } as TreeSitterNode;
+      };
     }
     return null;
   };
@@ -463,7 +502,7 @@ function createMockUseNode(): TreeSitterNode {
   const node = createMockNode("use_declaration", "");
   node.childForFieldName = (field: string) => {
     if (field === "argument") {
-      return { text: "std::collections::HashMap", type: "use_tree" } as TreeSitterNode;
+      return createMockNode("use_tree", "std::collections::HashMap");
     }
     return null;
   };
@@ -471,24 +510,54 @@ function createMockUseNode(): TreeSitterNode {
 }
 
 function createMockBuilderNode(): TreeSitterNode {
-  const node = createMockNode("struct_item", "TestBuilder");
-  // Add build method impl
-  return node;
+  
+  const structNode = createMockNode("struct_item", "TestBuilder");
+  const implNode = createMockNode("impl_item", "");
+  implNode.childForFieldName = (field: string) => {
+    if (field === "type") return createMockNode("type_identifier", "TestBuilder");
+    if (field === "body") {
+      const body = createMockNode("declaration_list", "");
+      body.childCount = 1;
+      body.child = () => {
+        const fn = createMockNode("function_item", "build");
+        fn.childForFieldName = (f: string) => (f === "name" ? createMockNode("identifier", "build") : null);
+        return fn;
+      };
+      return body;
+    }
+    return null;
+  };
+  const root = createMockNode("source_file", "");
+  root.childCount = 2;
+  root.child = (i: number) => (i === 0 ? structNode : implNode);
+  return root;
 }
 
 function createMockIteratorNode(): TreeSitterNode {
-  const node = createMockNode("impl_item", "");
-  node.childForFieldName = (field: string) => {
-    if (field === "trait") return { text: "Iterator", type: "type_identifier" } as TreeSitterNode;
+  // impl Iterator for IterType { fn next(&mut self) {} }
+  const impl = createMockNode("impl_item", "");
+  impl.childForFieldName = (field: string) => {
+    if (field === "trait") return createMockNode("type_identifier", "Iterator");
+    if (field === "type") return createMockNode("type_identifier", "IterType");
+    if (field === "body") {
+      const body = createMockNode("declaration_list", "");
+      body.childCount = 1;
+      body.child = () => {
+        const fn = createMockNode("function_item", "next");
+        fn.childForFieldName = (f: string) => (f === "name" ? createMockNode("identifier", "next") : null);
+        return fn;
+      };
+      return body;
+    }
     return null;
   };
-  return node;
+  return impl;
 }
 
 function createMockResultNode(): TreeSitterNode {
   const node = createMockNode("generic_type", "");
   node.childForFieldName = (field: string) => {
-    if (field === "type") return { text: "Result", type: "type_identifier" } as TreeSitterNode;
+    if (field === "type") return createMockNode("type_identifier", "Result");
     return null;
   };
   return node;
@@ -511,12 +580,18 @@ function createMockComplexNode(): TreeSitterNode {
   node.childCount = 5;
   node.child = (index: number) => {
     switch (index) {
-      case 0: return createMockNode("struct_item", "Struct1");
-      case 1: return createMockNode("enum_item", "Enum1");
-      case 2: return createMockNode("trait_item", "Trait1");
-      case 3: return createMockNode("function_item", "function1");
-      case 4: return createMockNode("mod_item", "module1");
-      default: return null;
+      case 0:
+        return createMockNode("struct_item", "Struct1");
+      case 1:
+        return createMockNode("enum_item", "Enum1");
+      case 2:
+        return createMockNode("trait_item", "Trait1");
+      case 3:
+        return createMockNode("function_item", "function1");
+      case 4:
+        return createMockNode("mod_item", "module1");
+      default:
+        return null;
     }
   };
   return node;

@@ -192,3 +192,4 @@ AGENTS.md
 /.memory_bank/logs_llm
 /.memory_bank
 /.memory_bank
+data/*

@@ -21,10 +21,7 @@
  * Implementation uses regex patterns as fallback strategy with graceful degradation.
  */
 
-import type {
-  ParsedEntity,
-  EntityRelationship,
-} from "../types/parser.js";
+import type { EntityRelationship, ParsedEntity } from "../types/parser.js";
 
 // Circuit breaker constants
 const MAX_FILE_SIZE = 1024 * 1024; // 1MB max file size for regex parsing
@@ -33,23 +30,22 @@ const PARSE_TIMEOUT_MS = 5000;
 export class VbaAnalyzer {
   private parseStartTime = 0;
   private currentModule = "";
-  private currentClass: string | null = null;
 
   /**
    * Helper: Get location info from line-based parsing
    */
-  private getLineLocation(lineNumber: number, line: string) {
+  private getLineLocation(lineNumber: number, line?: string) {
     return {
       start: {
         line: lineNumber,
         column: 0,
-        index: 0 // Approximation
+        index: 0, // Approximation
       },
       end: {
         line: lineNumber,
-        column: line.length,
-        index: 0 // Approximation
-      }
+        column: (line?.length ?? 0),
+        index: 0, // Approximation
+      },
     };
   }
 
@@ -59,7 +55,7 @@ export class VbaAnalyzer {
    */
   async analyze(
     content: string,
-    filePath: string
+    filePath: string,
   ): Promise<{ entities: ParsedEntity[]; relationships: EntityRelationship[] }> {
     this.resetState();
 
@@ -89,7 +85,6 @@ export class VbaAnalyzer {
   private resetState(): void {
     this.parseStartTime = Date.now();
     this.currentModule = "";
-    this.currentClass = null;
   }
 
   /**
@@ -109,9 +104,9 @@ export class VbaAnalyzer {
     content: string,
     filePath: string,
     entities: ParsedEntity[],
-    relationships: EntityRelationship[]
+    relationships: EntityRelationship[],
   ): void {
-    const lines = content.split('\n');
+    const lines = content.split(/\r?\n/);
 
     // Track current context
     let currentScope: string | null = null;
@@ -131,19 +126,19 @@ export class VbaAnalyzer {
       optionCompare: /^\s*Option\s+Compare\s+(Binary|Text|Database)/i,
 
       // Subroutines and Functions
-      subStart: /^\s*(Public|Private|Friend)?\s*(Static)?\s*Sub\s+(\w+)\s*\(([^)]*)\)/i,
-      functionStart: /^\s*(Public|Private|Friend)?\s*(Static)?\s*Function\s+(\w+)\s*\(([^)]*)\)\s*(As\s+(\w+))?/i,
+      subStart: /^\s*(Public|Private|Friend)?\s*(Static)?\s*Sub\s+(\w+)\s*KATEX_INLINE_OPEN([^)]*)KATEX_INLINE_CLOSE/i,
+      functionStart: /^\s*(Public|Private|Friend)?\s*(Static)?\s*Function\s+(\w+)\s*KATEX_INLINE_OPEN([^)]*)KATEX_INLINE_CLOSE\s*(As\s+(\w+))?/i,
       subEnd: /^\s*End\s+Sub/i,
       functionEnd: /^\s*End\s+Function/i,
 
       // Properties
-      propertyGet: /^\s*(Public|Private|Friend)?\s*Property\s+Get\s+(\w+)\s*\(([^)]*)\)\s*(As\s+(\w+))?/i,
-      propertyLet: /^\s*(Public|Private|Friend)?\s*Property\s+Let\s+(\w+)\s*\(([^)]*)\)/i,
-      propertySet: /^\s*(Public|Private|Friend)?\s*Property\s+Set\s+(\w+)\s*\(([^)]*)\)/i,
+      propertyGet: /^\s*(Public|Private|Friend)?\s*Property\s+Get\s+(\w+)\s*KATEX_INLINE_OPEN([^)]*)KATEX_INLINE_CLOSE\s*(As\s+(\w+))?/i,
+      propertyLet: /^\s*(Public|Private|Friend)?\s*Property\s+Let\s+(\w+)\s*KATEX_INLINE_OPEN([^)]*)KATEX_INLINE_CLOSE/i,
+      propertySet: /^\s*(Public|Private|Friend)?\s*Property\s+Set\s+(\w+)\s*KATEX_INLINE_OPEN([^)]*)KATEX_INLINE_CLOSE/i,
       propertyEnd: /^\s*End\s+Property/i,
 
       // Variables and Constants
-      dimStatement: /^\s*(Public|Private|Dim|Global)?\s*(Dim|Const)\s+(\w+)(?:\s*\(([^)]*)\))?\s*(As\s+(\w+))?/i,
+      dimStatement: /^\s*(Public|Private|Dim|Global)?\s*(Dim|Const)\s+(\w+)(?:\s*KATEX_INLINE_OPEN([^)]*)KATEX_INLINE_CLOSE)?\s*(As\s+(\w+))?/i,
       constStatement: /^\s*(Public|Private)?\s*Const\s+(\w+)\s*(As\s+(\w+))?\s*=\s*(.+)/i,
 
       // User-defined types
@@ -161,11 +156,11 @@ export class VbaAnalyzer {
       implementsStatement: /^\s*Implements\s+(\w+)/i,
 
       // Events
-      eventHandler: /^\s*(Public|Private)?\s*Sub\s+(\w+)_(\w+)\s*\(([^)]*)\)/i,
+      eventHandler: /^\s*(Public|Private)?\s*Sub\s+(\w+)_(\w+)\s*KATEX_INLINE_OPEN([^)]*)KATEX_INLINE_CLOSE/i,
       withEvents: /^\s*(Public|Private|Dim)?\s*WithEvents\s+(\w+)\s+As\s+(\w+)/i,
 
       // Procedure calls (simple detection)
-      callStatement: /^\s*(?:Call\s+)?(\w+)(?:\s+|\s*\()/i,
+      callStatement: /^\s*(?:Call\s+)?(\w+)(?:\s+|\s*KATEX_INLINE_OPEN)/i,
 
       // Comments
       comment: /^\s*(?:'|Rem\s)/i,
@@ -175,38 +170,41 @@ export class VbaAnalyzer {
     for (let i = 0; i < lines.length; i++) {
       this.checkTimeout();
 
-      const line = lines[i];
+      const lineText = lines[i] ?? "";
       const lineNumber = i + 1;
 
       // Skip comments
-      if (patterns.comment.test(line)) {
+      if (patterns.comment.test(lineText)) {
         continue;
       }
 
       // Module attributes
-      const moduleMatch = line.match(patterns.moduleAttribute);
+      const moduleMatch = lineText.match(patterns.moduleAttribute);
       if (moduleMatch) {
-        this.currentModule = moduleMatch[1];
+        const moduleName = moduleMatch[1] ?? "UnknownModule";
+        this.currentModule = moduleName;
         entities.push({
           id: `${filePath}:module:${this.currentModule}`,
-          name: this.currentModule,
+          name: moduleName,
           type: "module",
           filePath,
-          location: this.getLineLocation(lineNumber, line),
+          location: this.getLineLocation(lineNumber, lineText),
           metadata: {
-            isVbaModule: true
-          }
+            isVbaModule: true,
+          },
         });
         continue;
       }
 
       // Subroutines
-      const subMatch = line.match(patterns.subStart);
+      const subMatch = lineText.match(patterns.subStart);
       if (subMatch) {
-        const visibility = subMatch[1] || "Public";
+        const visibility = subMatch[1] ?? "Public";
         const isStatic = !!subMatch[2];
         const subName = subMatch[3];
         const params = subMatch[4];
+
+        if (!subName) continue;
 
         // Check if it's an event handler
         const eventMatch = subName.match(/^(\w+)_(\w+)$/);
@@ -215,39 +213,43 @@ export class VbaAnalyzer {
         currentScope = subName;
         currentScopeType = "Sub";
 
+        const metadata: Record<string, any> = {
+          isPublic: visibility === "Public",
+          isStatic,
+          isEventHandler,
+          parameters: this.parseParameters(params),
+          module: this.currentModule,
+        };
+
+        if (isEventHandler && eventMatch) {
+          if (eventMatch[1]) metadata.objectName = eventMatch[1];
+          if (eventMatch[2]) metadata.eventName = eventMatch[2];
+        }
+
         const entity: ParsedEntity = {
           id: `${filePath}:sub:${subName}`,
           name: subName,
           type: "function",
           filePath,
-          location: this.getLineLocation(lineNumber, line),
+          location: this.getLineLocation(lineNumber, lineText),
           modifiers: [visibility.toLowerCase()],
-          metadata: {
-            isPublic: visibility === "Public",
-            isStatic,
-            isEventHandler,
-            parameters: this.parseParameters(params),
-            module: this.currentModule
-          }
+          metadata,
         };
-
-        if (isEventHandler && eventMatch) {
-          entity.metadata.objectName = eventMatch[1];
-          entity.metadata.eventName = eventMatch[2];
-        }
 
         entities.push(entity);
         continue;
       }
 
       // Functions
-      const functionMatch = line.match(patterns.functionStart);
+      const functionMatch = lineText.match(patterns.functionStart);
       if (functionMatch) {
-        const visibility = functionMatch[1] || "Public";
+        const visibility = functionMatch[1] ?? "Public";
         const isStatic = !!functionMatch[2];
         const funcName = functionMatch[3];
         const params = functionMatch[4];
         const returnType = functionMatch[6];
+
+        if (!funcName) continue;
 
         currentScope = funcName;
         currentScopeType = "Function";
@@ -257,26 +259,28 @@ export class VbaAnalyzer {
           name: funcName,
           type: "function",
           filePath,
-          location: this.getLineLocation(lineNumber, line),
+          location: this.getLineLocation(lineNumber, lineText),
           modifiers: [visibility.toLowerCase()],
           returnType,
           metadata: {
             isPublic: visibility === "Public",
             isStatic,
             parameters: this.parseParameters(params),
-            module: this.currentModule
-          }
+            module: this.currentModule,
+          },
         });
         continue;
       }
 
       // Properties
-      const propertyGetMatch = line.match(patterns.propertyGet);
+      const propertyGetMatch = lineText.match(patterns.propertyGet);
       if (propertyGetMatch) {
-        const visibility = propertyGetMatch[1] || "Public";
+        const visibility = propertyGetMatch[1] ?? "Public";
         const propName = propertyGetMatch[2];
         const params = propertyGetMatch[3];
         const returnType = propertyGetMatch[5];
+
+        if (!propName) continue;
 
         currentScope = propName;
         currentScopeType = "PropertyGet";
@@ -286,24 +290,26 @@ export class VbaAnalyzer {
           name: `${propName} (Get)`,
           type: "property",
           filePath,
-          location: this.getLineLocation(lineNumber, line),
+          location: this.getLineLocation(lineNumber, lineText),
           modifiers: [visibility.toLowerCase()],
           returnType,
           metadata: {
             isPublic: visibility === "Public",
             propertyType: "Get",
             parameters: this.parseParameters(params),
-            module: this.currentModule
-          }
+            module: this.currentModule,
+          },
         });
         continue;
       }
 
-      const propertyLetMatch = line.match(patterns.propertyLet);
+      const propertyLetMatch = lineText.match(patterns.propertyLet);
       if (propertyLetMatch) {
-        const visibility = propertyLetMatch[1] || "Public";
+        const visibility = propertyLetMatch[1] ?? "Public";
         const propName = propertyLetMatch[2];
         const params = propertyLetMatch[3];
+
+        if (!propName) continue;
 
         currentScope = propName;
         currentScopeType = "PropertyLet";
@@ -313,23 +319,25 @@ export class VbaAnalyzer {
           name: `${propName} (Let)`,
           type: "property",
           filePath,
-          location: this.getLineLocation(lineNumber, line),
+          location: this.getLineLocation(lineNumber, lineText),
           modifiers: [visibility.toLowerCase()],
           metadata: {
             isPublic: visibility === "Public",
             propertyType: "Let",
             parameters: this.parseParameters(params),
-            module: this.currentModule
-          }
+            module: this.currentModule,
+          },
         });
         continue;
       }
 
-      const propertySetMatch = line.match(patterns.propertySet);
+      const propertySetMatch = lineText.match(patterns.propertySet);
       if (propertySetMatch) {
-        const visibility = propertySetMatch[1] || "Public";
+        const visibility = propertySetMatch[1] ?? "Public";
         const propName = propertySetMatch[2];
         const params = propertySetMatch[3];
+
+        if (!propName) continue;
 
         currentScope = propName;
         currentScopeType = "PropertySet";
@@ -339,30 +347,32 @@ export class VbaAnalyzer {
           name: `${propName} (Set)`,
           type: "property",
           filePath,
-          location: this.getLineLocation(lineNumber, line),
+          location: this.getLineLocation(lineNumber, lineText),
           modifiers: [visibility.toLowerCase()],
           metadata: {
             isPublic: visibility === "Public",
             propertyType: "Set",
             parameters: this.parseParameters(params),
-            module: this.currentModule
-          }
+            module: this.currentModule,
+          },
         });
         continue;
       }
 
       // End of procedures
-      if (patterns.subEnd.test(line) || patterns.functionEnd.test(line) || patterns.propertyEnd.test(line)) {
+      if (patterns.subEnd.test(lineText) || patterns.functionEnd.test(lineText) || patterns.propertyEnd.test(lineText)) {
         currentScope = null;
         currentScopeType = null;
         continue;
       }
 
       // User-defined types
-      const typeStartMatch = line.match(patterns.typeStart);
+      const typeStartMatch = lineText.match(patterns.typeStart);
       if (typeStartMatch) {
-        const visibility = typeStartMatch[1] || "Public";
+        const visibility = typeStartMatch[1] ?? "Public";
         const typeName = typeStartMatch[2];
+
+        if (!typeName) continue;
 
         inType = true;
         currentType = typeName;
@@ -372,18 +382,18 @@ export class VbaAnalyzer {
           name: typeName,
           type: "typedef",
           filePath,
-          location: this.getLineLocation(lineNumber, line),
+          location: this.getLineLocation(lineNumber, lineText),
           modifiers: [visibility.toLowerCase()],
           metadata: {
             isPublic: visibility === "Public",
             isUserDefinedType: true,
-            module: this.currentModule
-          }
+            module: this.currentModule,
+          },
         });
         continue;
       }
 
-      if (patterns.typeEnd.test(line)) {
+      if (patterns.typeEnd.test(lineText)) {
         inType = false;
         currentType = null;
         continue;
@@ -391,22 +401,24 @@ export class VbaAnalyzer {
 
       // Type fields
       if (inType && currentType) {
-        const fieldMatch = line.match(patterns.typeField);
+        const fieldMatch = lineText.match(patterns.typeField);
         if (fieldMatch) {
           const fieldName = fieldMatch[1];
           const fieldType = fieldMatch[3];
+
+          if (!fieldName) continue;
 
           entities.push({
             id: `${filePath}:type:${currentType}:field:${fieldName}`,
             name: fieldName,
             type: "property",
             filePath,
-            location: this.getLineLocation(lineNumber, line),
+            location: this.getLineLocation(lineNumber, lineText),
             metadata: {
               fieldType,
               parent: `${filePath}:type:${currentType}`,
-              module: this.currentModule
-            }
+              module: this.currentModule,
+            },
           });
 
           relationships.push({
@@ -414,18 +426,20 @@ export class VbaAnalyzer {
             to: `${filePath}:type:${currentType}`,
             type: "member_of",
             metadata: {
-              memberType: "field"
-            }
+              memberType: "field",
+            },
           });
         }
         continue;
       }
 
       // Enums
-      const enumStartMatch = line.match(patterns.enumStart);
+      const enumStartMatch = lineText.match(patterns.enumStart);
       if (enumStartMatch) {
-        const visibility = enumStartMatch[1] || "Public";
+        const visibility = enumStartMatch[1] ?? "Public";
         const enumName = enumStartMatch[2];
+
+        if (!enumName) continue;
 
         inType = true;
         currentType = enumName;
@@ -435,62 +449,66 @@ export class VbaAnalyzer {
           name: enumName,
           type: "enum",
           filePath,
-          location: this.getLineLocation(lineNumber, line),
+          location: this.getLineLocation(lineNumber, lineText),
           modifiers: [visibility.toLowerCase()],
           metadata: {
             isPublic: visibility === "Public",
-            module: this.currentModule
-          }
+            module: this.currentModule,
+          },
         });
         continue;
       }
 
-      if (patterns.enumEnd.test(line)) {
+      if (patterns.enumEnd.test(lineText)) {
         inType = false;
         currentType = null;
         continue;
       }
 
       // Constants
-      const constMatch = line.match(patterns.constStatement);
+      const constMatch = lineText.match(patterns.constStatement);
       if (constMatch) {
-        const visibility = constMatch[1] || "Private";
+        const visibility = constMatch[1] ?? "Private";
         const constName = constMatch[2];
         const constType = constMatch[4];
         const constValue = constMatch[5];
+
+        if (!constName) continue;
 
         entities.push({
           id: `${filePath}:const:${constName}`,
           name: constName,
           type: "constant",
           filePath,
-          location: this.getLineLocation(lineNumber, line),
+          location: this.getLineLocation(lineNumber, lineText),
           modifiers: [visibility.toLowerCase()],
           metadata: {
             isPublic: visibility === "Public",
             constantType: constType,
             value: constValue,
             module: this.currentModule,
-            scope: currentScope
-          }
+            scope: currentScope,
+          },
         });
         continue;
       }
 
       // Variables
-      const dimMatch = line.match(patterns.dimStatement);
-      if (dimMatch && !dimMatch[0].includes("Const")) {
-        const visibility = dimMatch[1] || "Private";
+      const dimMatch = lineText.match(patterns.dimStatement);
+      if (dimMatch && !dimMatch[0]?.includes("Const")) {
+        const visibility = dimMatch[1] ?? "Private";
         const varName = dimMatch[3];
         const arrayDims = dimMatch[4];
         const varType = dimMatch[6];
+
+        if (!varName) continue;
 
         entities.push({
           id: `${filePath}:var:${varName}`,
           name: varName,
           type: "variable",
           filePath,
-          location: this.getLineLocation(lineNumber, line),
+          location: this.getLineLocation(lineNumber, lineText),
           modifiers: [visibility.toLowerCase()],
           metadata: {
             isPublic: visibility === "Public" || visibility === "Global",
@@ -498,69 +516,97 @@ export class VbaAnalyzer {
             isArray: !!arrayDims,
             arrayDimensions: arrayDims,
             module: this.currentModule,
-            scope: currentScope
-          }
+            scope: currentScope,
+          },
         });
         continue;
       }
 
       // WithEvents variables (for event handling)
-      const withEventsMatch = line.match(patterns.withEvents);
+      const withEventsMatch = lineText.match(patterns.withEvents);
       if (withEventsMatch) {
-        const visibility = withEventsMatch[1] || "Private";
+        const visibility = withEventsMatch[1] ?? "Private";
         const varName = withEventsMatch[2];
         const varType = withEventsMatch[3];
+
+        if (!varName) continue;
 
         entities.push({
           id: `${filePath}:var:${varName}`,
           name: varName,
           type: "variable",
           filePath,
-          location: this.getLineLocation(lineNumber, line),
+          location: this.getLineLocation(lineNumber, lineText),
           modifiers: [visibility.toLowerCase()],
           metadata: {
             isPublic: visibility === "Public",
             variableType: varType,
             withEvents: true,
-            module: this.currentModule
-          }
+            module: this.currentModule,
+          },
         });
         continue;
       }
 
       // Implements statement
-      const implementsMatch = line.match(patterns.implementsStatement);
+      const implementsMatch = lineText.match(patterns.implementsStatement);
       if (implementsMatch) {
         const interfaceName = implementsMatch[1];
+        if (!interfaceName) continue;
 
         relationships.push({
           from: `${filePath}:module:${this.currentModule}`,
           to: interfaceName,
           type: "implements",
           metadata: {
-            implementationType: "interface"
-          }
+            implementationType: "interface",
+          },
         });
         continue;
       }
 
       // Simple procedure call detection (within procedures)
       if (currentScope && !inType) {
-        const callMatch = line.match(patterns.callStatement);
+        const callMatch = lineText.match(patterns.callStatement);
         if (callMatch) {
           const calledProc = callMatch[1];
 
           // Skip VBA keywords
-          const vbaKeywords = ['If', 'Then', 'Else', 'ElseIf', 'End', 'For', 'Next', 'Do', 'Loop', 'While', 'Until', 'Select', 'Case', 'With', 'Exit', 'Return', 'GoTo', 'On', 'Error', 'Resume', 'Dim', 'Set', 'Let', 'ReDim'];
+          const vbaKeywords = [
+            "If",
+            "Then",
+            "Else",
+            "ElseIf",
+            "End",
+            "For",
+            "Next",
+            "Do",
+            "Loop",
+            "While",
+            "Until",
+            "Select",
+            "Case",
+            "With",
+            "Exit",
+            "Return",
+            "GoTo",
+            "On",
+            "Error",
+            "Resume",
+            "Dim",
+            "Set",
+            "Let",
+            "ReDim",
+          ];
 
-          if (!vbaKeywords.includes(calledProc)) {
+          if (calledProc && !vbaKeywords.includes(calledProc)) {
             relationships.push({
               from: `${filePath}:${currentScopeType?.toLowerCase()}:${currentScope}`,
               to: calledProc,
               type: "calls",
               metadata: {
-                callType: "procedure"
-              }
+                callType: "procedure",
+              },
             });
           }
         }
@@ -571,13 +617,13 @@ export class VbaAnalyzer {
   /**
    * Parse parameters from parameter string
    */
-  private parseParameters(paramString: string): Array<{ name: string; type?: string }> {
+  private parseParameters(paramString?: string): Array<{ name: string; type?: string }> {
     if (!paramString || paramString.trim() === "") {
       return [];
     }
 
     const params: Array<{ name: string; type?: string }> = [];
-    const paramParts = paramString.split(',');
+    const paramParts = paramString.split(",");
 
     for (const part of paramParts) {
       const trimmed = part.trim();
@@ -585,11 +631,10 @@ export class VbaAnalyzer {
       // Match patterns like "ByVal name As Type" or "ByRef name As Type" or just "name As Type" or "name"
       const match = trimmed.match(/(?:(?:ByVal|ByRef)\s+)?(\w+)(?:\s+As\s+(\w+))?/i);
 
-      if (match) {
-        params.push({
-          name: match[1],
-          type: match[2]
-        });
+      if (match && match[1]) {
+        const name = match[1]!;
+        const type = match[2];
+        params.push({ name, type });
       }
     }
 

@@ -7,28 +7,12 @@
 
 import { existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
+import type { LoggerConfig } from "./logger-types.js";
+import { LogLevel } from "./logger-types.js";
 
 // =============================================================================
 // LOGGING CONFIGURATION
 // =============================================================================
-
-export interface LoggerConfig {
-  logDir: string;
-  maxFileSize: number; // bytes
-  maxFiles: number;
-  logLevel: LogLevel;
-  enableRotation: boolean;
-  enableTimestamp: boolean;
-  enableStackTrace: boolean;
-}
-
-export enum LogLevel {
-  DEBUG = 0,
-  INFO = 1,
-  WARN = 2,
-  ERROR = 3,
-  CRITICAL = 4,
-}
 
 export interface LogEntry {
   timestamp: string;
@@ -333,3 +317,7 @@ export function logMCPOperation<T>(operation: string, fn: (requestId: string) =>
       throw error;
     });
 }
+
+// Re-export types for backward compatibility
+export type { LoggerConfig } from "./logger-types.js";
+export { LogLevel } from "./logger-types.js";

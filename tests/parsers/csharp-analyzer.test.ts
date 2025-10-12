@@ -8,7 +8,7 @@
  * @created 2025-10-05
  */
 
-import { describe, it, expect, beforeAll } from "@jest/globals";
+import { beforeAll, describe, expect, it } from "@jest/globals";
 import { CSharpAnalyzer } from "../../src/parsers/csharp-analyzer";
 import type { TreeSitterNode } from "../../src/types/parser";
 
@@ -33,37 +33,37 @@ describe("CSharpAnalyzer", () => {
       const mockNode = createMockNode("interface_declaration", "ITestInterface");
       const result = await analyzer.analyze(mockNode, "test.cs");
 
-      expect(result.entities.some(e => e.type === "interface")).toBe(true);
+      expect(result.entities.some((e) => e.type === "interface")).toBe(true);
     });
 
     it("should extract structs", async () => {
       const mockNode = createMockNode("struct_declaration", "TestStruct");
       const result = await analyzer.analyze(mockNode, "test.cs");
 
-      expect(result.entities.some(e => e.type === "struct")).toBe(true);
+      expect(result.entities.some((e) => e.type === "struct")).toBe(true);
     });
 
     it("should extract enums", async () => {
       const mockNode = createMockNode("enum_declaration", "TestEnum");
       const result = await analyzer.analyze(mockNode, "test.cs");
 
-      expect(result.entities.some(e => e.type === "enum")).toBe(true);
+      expect(result.entities.some((e) => e.type === "enum")).toBe(true);
     });
 
     it("should extract methods with modifiers", async () => {
-      const mockNode = createMockMethodNode("TestMethod", ["public", "async"]);
+      const mockNode = createMockClassWithMethod("TestMethod", ["public", "async"]);
       const result = await analyzer.analyze(mockNode, "test.cs");
 
-      const method = result.entities.find(e => e.type === "method");
+      const method = result.entities.find((e) => e.type === "method" && e.name === "TestMethod");
       expect(method).toBeDefined();
       expect(method?.metadata?.isAsync).toBe(true);
     });
 
     it("should extract properties", async () => {
-      const mockNode = createMockPropertyNode("TestProperty", "string");
+      const mockNode = createMockClassWithProperty("TestProperty", "string", { get: true, set: true });
       const result = await analyzer.analyze(mockNode, "test.cs");
 
-      const property = result.entities.find(e => e.type === "property");
+      const property = result.entities.find((e) => e.type === "property" && e.name === "TestProperty");
       expect(property).toBeDefined();
       expect(property?.metadata?.propertyType).toBe("string");
     });
@@ -72,14 +72,18 @@ describe("CSharpAnalyzer", () => {
       const mockNode = createMockNode("record_declaration", "TestRecord");
       const result = await analyzer.analyze(mockNode, "test.cs");
 
-      expect(result.entities.some(e => e.type === "record")).toBe(true);
+      const rec = result.entities.find((e) => e.name === "TestRecord" && e.metadata?.isRecord === true);
+      expect(rec).toBeDefined();
+      expect(rec?.type).toBe("class");
     });
 
     it("should extract delegates", async () => {
       const mockNode = createMockNode("delegate_declaration", "TestDelegate");
       const result = await analyzer.analyze(mockNode, "test.cs");
 
-      expect(result.entities.some(e => e.type === "delegate")).toBe(true);
+      const del = result.entities.find((e) => e.name === "TestDelegate" && e.metadata?.csharpKind === "delegate");
+      expect(del).toBeDefined();
+      expect(del?.type).toBe("typedef");
     });
   });
 
@@ -96,7 +100,7 @@ describe("CSharpAnalyzer", () => {
       const mockNode = createMockImplementationNode("TestClass", "ITestInterface");
       const result = await analyzer.analyze(mockNode, "test.cs");
 
-      expect(result.relationships.some(r => r.type === "inherits")).toBe(true);
+      expect(result.relationships.some((r) => r.type === "inherits")).toBe(true);
     });
   });
 
@@ -105,7 +109,7 @@ describe("CSharpAnalyzer", () => {
       const mockNode = createMockSingletonNode();
       const result = await analyzer.analyze(mockNode, "test.cs");
 
-      const singletonPattern = result.patterns.find(p => p.type === "singleton");
+      const singletonPattern = result.patterns.designPatterns.find((p) => p.pattern === "singleton");
       expect(singletonPattern).toBeDefined();
       expect(singletonPattern?.confidence).toBeGreaterThan(0.9);
     });
@@ -114,15 +118,15 @@ describe("CSharpAnalyzer", () => {
       const mockNode = createMockRepositoryNode();
       const result = await analyzer.analyze(mockNode, "test.cs");
 
-      const repoPattern = result.patterns.find(p => p.type === "repository");
+      const repoPattern = result.patterns.otherPatterns?.find((p) => p.kind === "repository");
       expect(repoPattern).toBeDefined();
     });
 
     it("should identify async/await patterns", async () => {
-      const mockNode = createMockAsyncMethodNode();
+      const mockNode = createMockClassWithMethod("AsyncMethod", ["public", "async"]);
       const result = await analyzer.analyze(mockNode, "test.cs");
 
-      const asyncPattern = result.patterns.find(p => p.type === "async_await");
+      const asyncPattern = result.patterns.otherPatterns?.find((p) => p.kind === "async_await");
       expect(asyncPattern).toBeDefined();
     });
 
@@ -130,14 +134,16 @@ describe("CSharpAnalyzer", () => {
       const mockNode = createMockLINQNode();
       const result = await analyzer.analyze(mockNode, "test.cs");
 
-      expect(result.patterns.some(p => p.type === "linq_query" || p.type === "linq_method")).toBe(true);
+      expect(result.patterns.otherPatterns?.some((p) => p.kind === "linq_query" || p.kind === "linq_method")).toBe(
+        true,
+      );
     });
 
     it("should identify Dependency Injection patterns", async () => {
       const mockNode = createMockDINode();
       const result = await analyzer.analyze(mockNode, "test.cs");
 
-      const diPattern = result.patterns.find(p => p.type === "constructor_injection");
+      const diPattern = result.patterns.otherPatterns?.find((p) => p.kind === "constructor_injection");
       expect(diPattern).toBeDefined();
     });
   });
@@ -147,15 +153,15 @@ describe("CSharpAnalyzer", () => {
       const mockNode = createMockPartialClassNode();
       const result = await analyzer.analyze(mockNode, "test.cs");
 
-      const partialClass = result.entities.find(e => e.type === "class");
+      const partialClass = result.entities.find((e) => e.type === "class" && e.name === "PartialClass");
       expect(partialClass?.metadata?.isPartial).toBe(true);
     });
 
     it("should extract extension methods", async () => {
-      const mockNode = createMockExtensionMethodNode();
+      const mockNode = createMockClassWithMethod("ExtensionMethod", ["public", "static"]);
       const result = await analyzer.analyze(mockNode, "test.cs");
 
-      const method = result.entities.find(e => e.type === "method");
+      const method = result.entities.find((e) => e.type === "method" && e.name === "ExtensionMethod");
       expect(method?.metadata?.modifiers).toContain("static");
     });
 
@@ -163,15 +169,15 @@ describe("CSharpAnalyzer", () => {
       const mockNode = createMockAttributedClassNode();
       const result = await analyzer.analyze(mockNode, "test.cs");
 
-      const entity = result.entities.find(e => e.type === "class");
+      const entity = result.entities.find((e) => e.type === "class" && e.name === "AttributedClass");
       expect(entity?.metadata?.attributes).toContain("Serializable");
     });
 
     it("should extract events", async () => {
-      const mockNode = createMockEventNode();
+      const mockNode = createMockClassWithEvent("TestEvent", "EventHandler");
       const result = await analyzer.analyze(mockNode, "test.cs");
 
-      expect(result.entities.some(e => e.type === "event")).toBe(true);
+      expect(result.entities.some((e) => e.type === "event" && e.name === "TestEvent")).toBe(true);
     });
 
     it("should extract using statements", async () => {
@@ -179,7 +185,7 @@ describe("CSharpAnalyzer", () => {
       const result = await analyzer.analyze(mockNode, "test.cs");
 
       expect(result.imports).toHaveLength(1);
-      expect(result.imports[0].type).toBe("using");
+      expect(result.imports[0].type).toBe("import");
     });
   });
 
@@ -196,61 +202,130 @@ describe("CSharpAnalyzer", () => {
   });
 });
 
-// Helper functions to create mock nodes for testing
-function createMockNode(type: string, name: string): TreeSitterNode {
-  return {
+// ===== Helpers
+
+function makeNode(type: string, text = ""): TreeSitterNode {
+  const n: any = {
     type,
-    text: name,
+    text,
     startPosition: { row: 0, column: 0 },
-    endPosition: { row: 0, column: name.length },
+    endPosition: { row: 0, column: text.length },
+    startIndex: 0,
+    endIndex: text.length,
     childCount: 0,
-    child: () => null,
-    namedChildren: [],
-    childForFieldName: (field: string) => {
-      if (field === "name") {
-        return { text: name, type: "identifier" } as TreeSitterNode;
-      }
-      return null;
-    },
-  } as TreeSitterNode;
+    namedChildCount: 0,
+    child: (_i: number) => null,
+    namedChild: (_i: number) => null,
+    parent: null,
+    nextSibling: null,
+    prevSibling: null,
+    namedChildren: [] as TreeSitterNode[],
+    children: [] as TreeSitterNode[],
+    childForFieldName: (_field: string) => null,
+  };
+  return n as unknown as TreeSitterNode;
 }
 
-function createMockMethodNode(name: string, modifiers: string[]): TreeSitterNode {
-  const node = createMockNode("method_declaration", name);
-  let modifierIndex = 0;
-  node.child = (index: number) => {
-    if (index < modifiers.length) {
-      return { text: modifiers[index], type: "modifier" } as TreeSitterNode;
+function createIdentifierNode(name: string): TreeSitterNode {
+  return makeNode("identifier", name);
+}
+
+function createModifierNode(text: string): TreeSitterNode {
+  return makeNode("modifier", text);
+}
+
+function createMockNode(type: string, name: string): TreeSitterNode {
+  const node = makeNode(type, name);
+  node.childForFieldName = (field: string) => {
+    if (field === "name") return createIdentifierNode(name);
+    return null;
+  };
+  return node;
+}
+
+function createMockClassWithMethod(methodName: string, modifiers: string[]): TreeSitterNode {
+  const cls = createMockNode("class_declaration", "Container");
+  const method = makeNode("method_declaration", methodName);
+
+  method.childForFieldName = (field: string) => {
+    if (field === "name") return createIdentifierNode(methodName);
+    if (field === "type") return createIdentifierNode("void");
+    if (field === "parameters") {
+      const list = makeNode("parameter_list", "()");
+      list.childCount = 0;
+      list.child = () => null;
+      return list;
     }
     return null;
   };
-  node.childCount = modifiers.length;
-  return node;
+  method.childCount = modifiers.length;
+  method.child = (index: number) => (index < modifiers.length ? createModifierNode(modifiers[index]) : null);
+
+  cls.childCount = 1;
+  cls.child = (i: number) => (i === 0 ? method : null);
+  return cls;
 }
 
-function createMockPropertyNode(name: string, type: string): TreeSitterNode {
-  const node = createMockNode("property_declaration", name);
-  node.childForFieldName = (field: string) => {
-    if (field === "name") return { text: name, type: "identifier" } as TreeSitterNode;
-    if (field === "type") return { text: type, type: "predefined_type" } as TreeSitterNode;
+function createMockClassWithProperty(
+  name: string,
+  type: string,
+  access: { get?: boolean; set?: boolean; init?: boolean } = {},
+): TreeSitterNode {
+  const cls = createMockNode("class_declaration", "Container");
+  const prop = makeNode("property_declaration", name);
+
+  const accessors = makeNode("accessor_list", "");
+  const accs: TreeSitterNode[] = [];
+  if (access.get) accs.push(makeNode("get_accessor", "get"));
+  if (access.set) accs.push(makeNode("set_accessor", "set"));
+  if (access.init) accs.push(makeNode("init_accessor", "init"));
+  accessors.childCount = accs.length;
+  accessors.child = (i: number) => accs[i] ?? null;
+
+  prop.childForFieldName = (field: string) => {
+    if (field === "name") return createIdentifierNode(name);
+    if (field === "type") return createIdentifierNode(type);
+    if (field === "accessors") return accessors;
     return null;
   };
-  return node;
+
+  cls.childCount = 1;
+  cls.child = (i: number) => (i === 0 ? prop : null);
+  return cls;
+}
+
+function createParameterNode(name: string, type: string): TreeSitterNode {
+  const param = makeNode("parameter", `${type} ${name}`);
+  param.childForFieldName = (field: string) => {
+    if (field === "name") return createIdentifierNode(name);
+    if (field === "type") return createIdentifierNode(type);
+    return null;
+  };
+  return param;
+}
+
+function createParametersList(params: Array<{ name: string; type: string }>): TreeSitterNode {
+  const list = makeNode("parameter_list", "");
+  const paramNodes = params.map((p) => createParameterNode(p.name, p.type));
+  list.childCount = paramNodes.length;
+  list.child = (i: number) => paramNodes[i] ?? null;
+  return list;
 }
 
 function createMockInheritanceNode(derived: string, base: string): TreeSitterNode {
   const node = createMockNode("class_declaration", derived);
+
+  const baseTypeNode = makeNode("base_type", base);
+  const baseList = makeNode("base_list", "");
+  baseList.childCount = 1;
+  baseList.child = () => baseTypeNode;
+
   node.childForFieldName = (field: string) => {
-    if (field === "name") return { text: derived, type: "identifier" } as TreeSitterNode;
-    if (field === "bases") {
-      return {
-        type: "base_list",
-        childCount: 1,
-        child: () => ({ text: base, type: "base_type" } as TreeSitterNode),
-      } as TreeSitterNode;
-    }
+    if (field === "name") return createIdentifierNode(derived);
+    if (field === "bases") return baseList;
     return null;
   };
+
   return node;
 }
 
@@ -259,71 +334,141 @@ function createMockImplementationNode(className: string, interfaceName: string):
 }
 
 function createMockSingletonNode(): TreeSitterNode {
-  const node = createMockNode("class_declaration", "SingletonClass");
-  // Add properties and methods that would indicate singleton pattern
-  return node;
+  const cls = createMockNode("class_declaration", "SingletonClass");
+
+  // Static Instance property
+  const prop = makeNode("property_declaration", "Instance");
+  prop.childForFieldName = (field: string) => {
+    if (field === "name") return createIdentifierNode("Instance");
+    if (field === "type") return createIdentifierNode("SingletonClass");
+    if (field === "accessors") {
+      const accessors = makeNode("accessor_list", "");
+      accessors.childCount = 1;
+      accessors.child = () => makeNode("get_accessor", "get");
+      return accessors;
+    }
+    return null;
+  };
+  prop.childCount = 1;
+  prop.child = (i: number) => (i === 0 ? createModifierNode("static") : null);
+
+  // "Constructor" as method with private modifier
+  const ctor = makeNode("method_declaration", "SingletonClass");
+  ctor.childForFieldName = (field: string) => {
+    if (field === "name") return createIdentifierNode("SingletonClass");
+    if (field === "type") return createIdentifierNode("void");
+    if (field === "parameters") return createParametersList([]);
+    return null;
+  };
+  ctor.childCount = 1;
+  ctor.child = (i: number) => (i === 0 ? createModifierNode("private") : null);
+
+  cls.childCount = 2;
+  cls.child = (i: number) => (i === 0 ? prop : i === 1 ? ctor : null);
+
+  return cls;
 }
 
 function createMockRepositoryNode(): TreeSitterNode {
-  return createMockNode("class_declaration", "UserRepository");
-}
+  const cls = createMockNode("class_declaration", "UserRepository");
 
-function createMockAsyncMethodNode(): TreeSitterNode {
-  return createMockMethodNode("AsyncMethod", ["public", "async"]);
+  const createMethod = makeNode("method_declaration", "Create");
+  createMethod.childForFieldName = (field: string) => {
+    if (field === "name") return createIdentifierNode("Create");
+    if (field === "type") return createIdentifierNode("void");
+    if (field === "parameters") return createParametersList([]);
+    return null;
+  };
+
+  const getMethod = makeNode("method_declaration", "Get");
+  getMethod.childForFieldName = (field: string) => {
+    if (field === "name") return createIdentifierNode("Get");
+    if (field === "type") return createIdentifierNode("void");
+    if (field === "parameters") return createParametersList([]);
+    return null;
+  };
+
+  cls.childCount = 2;
+  cls.child = (i: number) => (i === 0 ? createMethod : i === 1 ? getMethod : null);
+
+  return cls;
 }
 
 function createMockLINQNode(): TreeSitterNode {
-  const node = createMockNode("query_expression", "");
-  node.type = "query_expression";
-  return node;
+  return makeNode("query_expression", "");
 }
 
 function createMockDINode(): TreeSitterNode {
-  const node = createMockNode("class_declaration", "ServiceClass");
-  // Add constructor with interface parameters
-  return node;
+  const cls = createMockNode("class_declaration", "ServiceClass");
+  const ctor = makeNode("method_declaration", "ServiceClass");
+  ctor.childForFieldName = (field: string) => {
+    if (field === "name") return createIdentifierNode("ServiceClass");
+    if (field === "type") return createIdentifierNode("void");
+    if (field === "parameters") return createParametersList([{ name: "logger", type: "ILogger" }]);
+    return null;
+  };
+  cls.childCount = 1;
+  cls.child = (i: number) => (i === 0 ? ctor : null);
+  return cls;
 }
 
 function createMockPartialClassNode(): TreeSitterNode {
-  return createMockMethodNode("PartialClass", ["public", "partial"]);
-}
-
-function createMockExtensionMethodNode(): TreeSitterNode {
-  return createMockMethodNode("ExtensionMethod", ["public", "static"]);
+  const cls = createMockNode("class_declaration", "PartialClass");
+  cls.childCount = 1;
+  cls.child = (i: number) => (i === 0 ? createModifierNode("partial") : null);
+  return cls;
 }
 
 function createMockAttributedClassNode(): TreeSitterNode {
-  const node = createMockNode("class_declaration", "AttributedClass");
-  // Add attribute nodes
-  return node;
+  const cls = createMockNode("class_declaration", "AttributedClass");
+
+  const attribute = makeNode("attribute", "Serializable");
+  attribute.childForFieldName = (field: string) => {
+    if (field === "name") return createIdentifierNode("Serializable");
+    return null;
+  };
+
+  const attrList = makeNode("attribute_list", "");
+  attrList.childCount = 1;
+  attrList.child = (i: number) => (i === 0 ? attribute : null);
+
+  cls.childCount = 1;
+  cls.child = (i: number) => (i === 0 ? attrList : null);
+
+  return cls;
 }
 
-function createMockEventNode(): TreeSitterNode {
-  return createMockNode("event_declaration", "TestEvent");
+function createMockClassWithEvent(name: string, type: string): TreeSitterNode {
+  const cls = createMockNode("class_declaration", "Container");
+  const evt = makeNode("event_declaration", name);
+  evt.childForFieldName = (field: string) => {
+    if (field === "name") return createIdentifierNode(name);
+    if (field === "type") return createIdentifierNode(type);
+    return null;
+  };
+  cls.childCount = 1;
+  cls.child = (i: number) => (i === 0 ? evt : null);
+  return cls;
 }
 
 function createMockUsingNode(): TreeSitterNode {
-  const node = createMockNode("using_directive", "");
+  const node = makeNode("using_directive", "");
   node.childForFieldName = (field: string) => {
-    if (field === "name") return { text: "System", type: "qualified_name" } as TreeSitterNode;
+    if (field === "name") return makeNode("qualified_name", "System");
     return null;
   };
   return node;
 }
 
 function createMockComplexNode(): TreeSitterNode {
-  // Create a complex node with multiple entities
-  const node = createMockNode("compilation_unit", "");
-  node.childCount = 5;
-  node.child = (index: number) => {
-    switch (index) {
-      case 0: return createMockNode("class_declaration", "Class1");
-      case 1: return createMockNode("interface_declaration", "Interface1");
-      case 2: return createMockNode("struct_declaration", "Struct1");
-      case 3: return createMockNode("enum_declaration", "Enum1");
-      case 4: return createMockMethodNode("Method1", ["public"]);
-      default: return null;
-    }
-  };
+  const node = makeNode("compilation_unit", "");
+  const childs: TreeSitterNode[] = [
+    createMockNode("class_declaration", "Class1"),
+    createMockNode("interface_declaration", "Interface1"),
+    createMockNode("struct_declaration", "Struct1"),
+    createMockNode("enum_declaration", "Enum1"),
+  ];
+  node.childCount = childs.length;
+  node.child = (i: number) => childs[i] ?? null;
   return node;
 }

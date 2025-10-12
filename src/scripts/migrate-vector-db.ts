@@ -83,7 +83,7 @@ class VectorDatabaseMigrator {
   private async createBackup(): Promise<string> {
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     const backupPath = `${this.dbPath}.backup-${timestamp}`;
-    const sourceDb = new Database(this.dbPath);   
+    const sourceDb = new Database(this.dbPath);
     await sourceDb.backup(backupPath);
     sourceDb.close();
     return backupPath;

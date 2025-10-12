@@ -52,7 +52,7 @@ export class ResourceManager extends EventEmitter {
     const totalMemoryGB = os.totalmem() / (1024 * 1024 * 1024);
     const defaultMemoryMB = Math.min(
       Math.max(1024, Math.floor(totalMemoryGB * 256)), // Scale with system memory
-      2048 // Cap at 2GB
+      2048, // Cap at 2GB
     );
 
     this.constraints = constraints || {
@@ -62,7 +62,9 @@ export class ResourceManager extends EventEmitter {
       maxTaskQueueSize: 100,
     };
 
-    console.log(`Resource Manager initialized: ${this.constraints.maxMemoryMB}MB memory, ${this.constraints.maxConcurrentAgents} max agents`);
+    console.log(
+      `Resource Manager initialized: ${this.constraints.maxMemoryMB}MB memory, ${this.constraints.maxConcurrentAgents} max agents`,
+    );
   }
 
   /**
@@ -261,7 +263,7 @@ export class ResourceManager extends EventEmitter {
     // In production, would track actual CPU time
     // Guard load average as it may return [0,0,0] or be unsupported in some envs
     const loadAvgArr = os.loadavg();
-    const loadAvg = Array.isArray(loadAvgArr) && typeof loadAvgArr[0] === 'number' ? loadAvgArr[0] : 0;
+    const loadAvg = Array.isArray(loadAvgArr) && typeof loadAvgArr[0] === "number" ? loadAvgArr[0] : 0;
     const cores = os.cpus().length || 1;
     return Math.min(100, (loadAvg / cores) * 100);
   }
@@ -328,14 +330,18 @@ export class ResourceManager extends EventEmitter {
     if (fileCount > 5000) {
       adjustedMemoryMB = Math.min(this.constraints.maxMemoryMB * 2, 4096); // Double memory, cap at 4GB
       adjustedConcurrentAgents = Math.max(2, Math.floor(adjustedConcurrentAgents / 2)); // Reduce concurrent agents
-      console.log(`Very large codebase detected (${fileCount} files), memory: ${adjustedMemoryMB}MB, agents: ${adjustedConcurrentAgents}`);
+      console.log(
+        `Very large codebase detected (${fileCount} files), memory: ${adjustedMemoryMB}MB, agents: ${adjustedConcurrentAgents}`,
+      );
     }
 
     // Extremely large codebase (>10000 files) adjustments
     if (fileCount > 10000) {
       adjustedMemoryMB = Math.min(this.constraints.maxMemoryMB * 3, 6144); // Triple memory, cap at 6GB
       adjustedConcurrentAgents = 1; // Single agent for stability
-      console.log(`Extremely large codebase detected (${fileCount} files), switching to single-agent mode with ${adjustedMemoryMB}MB`);
+      console.log(
+        `Extremely large codebase detected (${fileCount} files), switching to single-agent mode with ${adjustedMemoryMB}MB`,
+      );
     }
 
     // Apply adjustments
@@ -346,7 +352,7 @@ export class ResourceManager extends EventEmitter {
       fileCount,
       projectSizeMB,
       newMemoryLimit: adjustedMemoryMB,
-      newAgentLimit: adjustedConcurrentAgents
+      newAgentLimit: adjustedConcurrentAgents,
     });
   }
 

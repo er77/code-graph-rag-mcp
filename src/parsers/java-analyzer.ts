@@ -24,11 +24,7 @@
  * pattern from Go and C++ analyzers with Java-specific adaptations.
  */
 
-import type {
-  ParsedEntity,
-  TreeSitterNode,
-  EntityRelationship,
-} from "../types/parser.js";
+import type { EntityRelationship, ParsedEntity, TreeSitterNode } from "../types/parser.js";
 
 // Circuit breaker constants
 const MAX_RECURSION_DEPTH = 50;
@@ -47,6 +43,7 @@ export class JavaAnalyzer {
   private parseStartTime = 0;
   private currentPackage = "";
   private currentClass: string | null = null;
+  
 
   /**
    * Helper: Convert tree-sitter position to ParsedEntity location
@@ -56,14 +53,39 @@ export class JavaAnalyzer {
       start: {
         line: node.startPosition.row + 1,
         column: node.startPosition.column,
-        index: node.startIndex
+        index: node.startIndex,
       },
       end: {
         line: node.endPosition.row + 1,
         column: node.endPosition.column,
-        index: node.endIndex
-      }
+        index: node.endIndex,
+      },
     };
+  }
+
+  /**
+   * Ensure a module entity exists for the current package (including default)
+   * Returns the module id
+   */
+  private ensurePackageEntity(filePath: string, entities: ParsedEntity[]): string {
+    const pkg = this.currentPackage || "(default)";
+    const moduleId = `${filePath}:package:${pkg}`;
+    
+    const exists = entities.some((e) => e.id === moduleId);
+    if (!exists) {
+      entities.push({
+        id: moduleId,
+        name: pkg,
+        type: "module",
+        filePath,
+        location: {
+          start: { line: 1, column: 0, index: 0 },
+          end: { line: 1, column: 0, index: 0 },
+        },
+        metadata: { isPackage: true },
+      });
+    }
+    return moduleId;
   }
 
   /**
@@ -71,7 +93,7 @@ export class JavaAnalyzer {
    */
   async analyze(
     rootNode: TreeSitterNode,
-    filePath: string
+    filePath: string,
   ): Promise<{ entities: ParsedEntity[]; relationships: EntityRelationship[] }> {
     this.resetState();
 
@@ -127,7 +149,7 @@ export class JavaAnalyzer {
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
-    parentContext?: string
+    parentContext?: string,
   ): void {
     this.recursionDepth++;
     this.checkCircuitBreakers();
@@ -151,7 +173,7 @@ export class JavaAnalyzer {
 
         case "import_declaration":
           // Handle imports
-          this.extractImports(node, filePath, relationships);
+          this.extractImports(node, filePath, entities, relationships);
           break;
 
         case "class_declaration":
@@ -176,7 +198,7 @@ export class JavaAnalyzer {
 
         case "annotation_type_declaration":
           // Extract annotation declaration
-          this.extractAnnotation(node, filePath, entities, relationships);
+          this.extractAnnotation(node, filePath, entities);
           break;
 
         case "method_declaration":
@@ -218,9 +240,9 @@ export class JavaAnalyzer {
    * Extract package declaration
    */
   private extractPackage(node: TreeSitterNode, filePath: string, entities: ParsedEntity[]): void {
-    const packageNameNode = node.namedChildren.find(c => c.type === "scoped_identifier" || c.type === "identifier");
+    const packageNameNode = node.namedChildren.find((c) => c.type === "scoped_identifier" || c.type === "identifier");
     if (packageNameNode) {
-      const packageName = packageNameNode.text.replace(/\s+/g, '');
+      const packageName = packageNameNode.text.replace(/\s+/g, "");
       this.currentPackage = packageName;
 
       entities.push({
@@ -230,8 +252,8 @@ export class JavaAnalyzer {
         filePath,
         location: this.getNodeLocation(node),
         metadata: {
-          isPackage: true
-        }
+          isPackage: true,
+        },
       });
     }
   }
@@ -239,22 +261,29 @@ export class JavaAnalyzer {
   /**
    * Extract imports and create relationships
    */
-  private extractImports(node: TreeSitterNode, filePath: string, relationships: EntityRelationship[]): void {
-    const importPath = node.namedChildren.find(c => c.type === "scoped_identifier" || c.type === "identifier");
-    const asterisk = node.namedChildren.find(c => c.type === "asterisk");
+  private extractImports(
+    node: TreeSitterNode,
+    filePath: string,
+    entities: ParsedEntity[],
+    relationships: EntityRelationship[],
+  ): void {
+    const importPath = node.namedChildren.find((c) => c.type === "scoped_identifier" || c.type === "identifier");
+    const asterisk = node.namedChildren.find((c) => c.type === "asterisk");
 
     if (importPath) {
       const path = importPath.text;
       const isWildcard = !!asterisk;
+      
+      const fromId = this.ensurePackageEntity(filePath, entities);
 
       relationships.push({
-        from: `${filePath}:package:${this.currentPackage}`,
+        from: fromId,
         to: path,
         type: "imports",
         metadata: {
           isWildcard,
-          isStatic: node.text.includes("static")
-        }
+          isStatic: node.text.includes("static"),
+        },
       });
     }
   }
@@ -262,7 +291,12 @@ export class JavaAnalyzer {
   /**
    * Extract class declaration
    */
-  private extractClass(node: TreeSitterNode, filePath: string, entities: ParsedEntity[], relationships: EntityRelationship[]): void {
+  private extractClass(
+    node: TreeSitterNode,
+    filePath: string,
+    entities: ParsedEntity[],
+    relationships: EntityRelationship[],
+  ): void {
     const nameNode = node.childForFieldName("name");
     const className = nameNode?.text;
 
@@ -272,9 +306,10 @@ export class JavaAnalyzer {
       this.currentClass = fullClassName;
 
       const modifiers = this.extractModifiers(node);
+      const classId = `${filePath}:class:${fullClassName}`;
 
       const entity: ParsedEntity = {
-        id: `${filePath}:class:${fullClassName}`,
+        id: classId,
         name: fullClassName,
         type: "class",
         filePath,
@@ -288,8 +323,8 @@ export class JavaAnalyzer {
           isPrivate: modifiers.includes("private"),
           isProtected: modifiers.includes("protected"),
           package: this.currentPackage,
-          isInnerClass: !!previousClass
-        }
+          isInnerClass: !!previousClass,
+        },
       };
 
       entities.push(entity);
@@ -300,12 +335,12 @@ export class JavaAnalyzer {
         const superclassName = superclass.namedChildren[0]?.text;
         if (superclassName) {
           relationships.push({
-            from: entity.id,
+            from: classId,
             to: `${filePath}:class:${superclassName}`,
             type: "inherits",
             metadata: {
-              inheritanceType: "extends"
-            }
+              inheritanceType: "extends",
+            },
           });
         }
       }
@@ -313,13 +348,13 @@ export class JavaAnalyzer {
       // Extract interfaces
       const interfaces = node.childForFieldName("interfaces");
       if (interfaces) {
-        const interfaceList = interfaces.namedChildren.filter(c => c.type === "type_identifier");
+        const interfaceList = interfaces.namedChildren.filter((c) => c.type === "type_identifier");
         for (const iface of interfaceList) {
           relationships.push({
-            from: entity.id,
+            from: classId,
             to: `${filePath}:interface:${iface.text}`,
             type: "implements",
-            metadata: {}
+            metadata: {},
           });
         }
       }
@@ -343,24 +378,32 @@ export class JavaAnalyzer {
   /**
    * Extract interface declaration
    */
-  private extractInterface(node: TreeSitterNode, filePath: string, entities: ParsedEntity[], relationships: EntityRelationship[]): void {
+  private extractInterface(
+    node: TreeSitterNode,
+    filePath: string,
+    entities: ParsedEntity[],
+    relationships: EntityRelationship[],
+  ): void {
     const nameNode = node.childForFieldName("name");
     const interfaceName = nameNode?.text;
 
     if (interfaceName) {
       const modifiers = this.extractModifiers(node);
+      const previousClass = this.currentClass;
+      const fullInterfaceName = previousClass ? `${previousClass}.${interfaceName}` : interfaceName;
+      const interfaceId = `${filePath}:interface:${fullInterfaceName}`;
 
       const entity: ParsedEntity = {
-        id: `${filePath}:interface:${interfaceName}`,
-        name: interfaceName,
+        id: interfaceId,
+        name: fullInterfaceName,
         type: "interface",
         filePath,
         location: this.getNodeLocation(node),
         modifiers,
         metadata: {
           isPublic: modifiers.includes("public"),
-          package: this.currentPackage
-        }
+          package: this.currentPackage,
+        },
       };
 
       entities.push(entity);
@@ -368,29 +411,28 @@ export class JavaAnalyzer {
       // Extract extended interfaces
       const extendsList = node.childForFieldName("extends");
       if (extendsList) {
-        const interfaces = extendsList.namedChildren.filter(c => c.type === "type_identifier");
+        const interfaces = extendsList.namedChildren.filter((c) => c.type === "type_identifier");
         for (const iface of interfaces) {
           relationships.push({
-            from: entity.id,
+            from: interfaceId,
             to: `${filePath}:interface:${iface.text}`,
             type: "inherits",
             metadata: {
-              inheritanceType: "extends"
-            }
+              inheritanceType: "extends",
+            },
           });
         }
       }
 
       // Store current class context and process interface body
-      const previousClass = this.currentClass;
-      this.currentClass = interfaceName;
+      this.currentClass = fullInterfaceName;
 
       const body = node.childForFieldName("body");
       if (body) {
         for (let i = 0; i < body.childCount; i++) {
           const child = body.child(i);
           if (child) {
-            this.extractEntities(child, filePath, entities, relationships, interfaceName);
+            this.extractEntities(child, filePath, entities, relationships, fullInterfaceName);
           }
         }
       }
@@ -402,76 +444,107 @@ export class JavaAnalyzer {
   /**
    * Extract enum declaration
    */
-  private extractEnum(node: TreeSitterNode, filePath: string, entities: ParsedEntity[], relationships: EntityRelationship[]): void {
+  private extractEnum(
+    node: TreeSitterNode,
+    filePath: string,
+    entities: ParsedEntity[],
+    relationships: EntityRelationship[],
+  ): void {
     const nameNode = node.childForFieldName("name");
     const enumName = nameNode?.text;
 
     if (enumName) {
       const modifiers = this.extractModifiers(node);
+      const previousClass = this.currentClass;
+      const fullEnumName = previousClass ? `${previousClass}.${enumName}` : enumName;
+      const enumId = `${filePath}:enum:${fullEnumName}`;
 
       const entity: ParsedEntity = {
-        id: `${filePath}:enum:${enumName}`,
-        name: enumName,
+        id: enumId,
+        name: fullEnumName,
         type: "enum",
         filePath,
         location: this.getNodeLocation(node),
         modifiers,
         metadata: {
           isPublic: modifiers.includes("public"),
-          package: this.currentPackage
-        }
+          package: this.currentPackage,
+        },
       };
 
       entities.push(entity);
 
+      
+      this.currentClass = fullEnumName;
+
       // Extract enum constants
       const body = node.childForFieldName("body");
       if (body) {
-        const enumConstants = body.namedChildren.filter(c => c.type === "enum_constant");
+        const enumConstants = body.namedChildren.filter((c) => c.type === "enum_constant");
         for (const constant of enumConstants) {
           const constantName = constant.childForFieldName("name")?.text;
           if (constantName) {
+            const constantId = `${enumId}:constant:${constantName}`;
             const constantEntity: ParsedEntity = {
-              id: `${entity.id}:constant:${constantName}`,
+              id: constantId,
               name: constantName,
               type: "constant",
               filePath,
               location: this.getNodeLocation(constant),
               metadata: {
-                parent: entity.id,
-                enumValue: true
-              }
+                parent: enumId,
+                enumValue: true,
+              },
             };
 
             entities.push(constantEntity);
 
             relationships.push({
-              from: constantEntity.id,
-              to: entity.id,
+              from: constantId,
+              to: enumId,
               type: "member_of",
               metadata: {
-                memberType: "enum_constant"
-              }
+                memberType: "enum_constant",
+              },
             });
           }
         }
+
+        
+        for (let i = 0; i < body.childCount; i++) {
+          const child = body.child(i);
+          if (child && child.type !== "enum_constant") {
+            this.extractEntities(child, filePath, entities, relationships, fullEnumName);
+          }
+        }
       }
+
+      // Restore previous class context
+      this.currentClass = previousClass;
     }
   }
 
   /**
    * Extract record declaration (Java 14+)
    */
-  private extractRecord(node: TreeSitterNode, filePath: string, entities: ParsedEntity[], relationships: EntityRelationship[]): void {
+  private extractRecord(
+    node: TreeSitterNode,
+    filePath: string,
+    entities: ParsedEntity[],
+    relationships: EntityRelationship[],
+  ): void {
     const nameNode = node.childForFieldName("name");
     const recordName = nameNode?.text;
 
     if (recordName) {
       const modifiers = this.extractModifiers(node);
+      const previousClass = this.currentClass;
+      const fullRecordName = previousClass ? `${previousClass}.${recordName}` : recordName;
+      const recordId = `${filePath}:record:${fullRecordName}`;
 
       const entity: ParsedEntity = {
-        id: `${filePath}:record:${recordName}`,
-        name: recordName,
+        id: recordId,
+        name: fullRecordName,
         type: "class", // Records are special classes
         filePath,
         location: this.getNodeLocation(node),
@@ -480,63 +553,82 @@ export class JavaAnalyzer {
           isRecord: true,
           isPublic: modifiers.includes("public"),
           isFinal: true, // Records are implicitly final
-          package: this.currentPackage
-        }
+          package: this.currentPackage,
+        },
       };
 
       entities.push(entity);
 
+      this.currentClass = fullRecordName;
+
       // Extract record components
       const parameters = node.childForFieldName("parameters");
       if (parameters) {
-        const components = parameters.namedChildren.filter(c => c.type === "record_component");
+        const components = parameters.namedChildren.filter((c) => c.type === "record_component");
         for (const component of components) {
           const componentName = component.childForFieldName("name")?.text;
           const componentType = component.childForFieldName("type")?.text;
 
           if (componentName) {
+            const componentId = `${recordId}:component:${componentName}`;
             const componentEntity: ParsedEntity = {
-              id: `${entity.id}:component:${componentName}`,
+              id: componentId,
               name: componentName,
               type: "property",
               filePath,
               location: this.getNodeLocation(component),
               metadata: {
-                parent: entity.id,
+                parent: recordId,
                 fieldType: componentType,
-                isRecordComponent: true
-              }
+                isRecordComponent: true,
+              },
             };
 
             entities.push(componentEntity);
 
             relationships.push({
-              from: componentEntity.id,
-              to: entity.id,
+              from: componentId,
+              to: recordId,
               type: "member_of",
               metadata: {
-                memberType: "record_component"
-              }
+                memberType: "record_component",
+              },
             });
           }
         }
       }
+
+      
+      const body = node.childForFieldName("body");
+      if (body) {
+        for (let i = 0; i < body.childCount; i++) {
+          const child = body.child(i);
+          if (child) {
+            this.extractEntities(child, filePath, entities, relationships, fullRecordName);
+          }
+        }
+      }
+
+      this.currentClass = previousClass;
     }
   }
 
   /**
    * Extract annotation declaration
    */
-  private extractAnnotation(node: TreeSitterNode, filePath: string, entities: ParsedEntity[], relationships: EntityRelationship[]): void {
+  private extractAnnotation(node: TreeSitterNode, filePath: string, entities: ParsedEntity[]): void {
     const nameNode = node.childForFieldName("name");
     const annotationName = nameNode?.text;
 
     if (annotationName) {
       const modifiers = this.extractModifiers(node);
+      const previousClass = this.currentClass;
+      const fullAnnotationName = previousClass ? `${previousClass}.${annotationName}` : annotationName;
+      const annotationId = `${filePath}:annotation:${fullAnnotationName}`;
 
       const entity: ParsedEntity = {
-        id: `${filePath}:annotation:${annotationName}`,
-        name: `@${annotationName}`,
+        id: annotationId,
+        name: `@${fullAnnotationName}`,
         type: "interface", // Annotations are special interfaces
         filePath,
         location: this.getNodeLocation(node),
@@ -544,8 +636,8 @@ export class JavaAnalyzer {
         metadata: {
           isAnnotation: true,
           isPublic: modifiers.includes("public"),
-          package: this.currentPackage
-        }
+          package: this.currentPackage,
+        },
       };
 
       entities.push(entity);
@@ -555,16 +647,23 @@ export class JavaAnalyzer {
   /**
    * Extract method declaration
    */
-  private extractMethod(node: TreeSitterNode, filePath: string, entities: ParsedEntity[], relationships: EntityRelationship[], parentClass: string): void {
+  private extractMethod(
+    node: TreeSitterNode,
+    filePath: string,
+    entities: ParsedEntity[],
+    relationships: EntityRelationship[],
+    parentClass: string,
+  ): void {
     const nameNode = node.childForFieldName("name");
     const methodName = nameNode?.text;
 
     if (methodName) {
       const modifiers = this.extractModifiers(node);
       const returnType = node.childForFieldName("type")?.text;
+      const methodId = `${filePath}:class:${parentClass}:method:${methodName}`;
 
       const entity: ParsedEntity = {
-        id: `${filePath}:class:${parentClass}:method:${methodName}`,
+        id: methodId,
         name: methodName,
         type: "method",
         filePath,
@@ -579,8 +678,8 @@ export class JavaAnalyzer {
           isFinal: modifiers.includes("final"),
           isAbstract: modifiers.includes("abstract"),
           isSynchronized: modifiers.includes("synchronized"),
-          parent: parentClass
-        }
+          parent: parentClass,
+        },
       };
 
       // Extract parameters
@@ -592,25 +691,26 @@ export class JavaAnalyzer {
       // Extract annotations
       const annotations = this.extractAnnotations(node);
       if (annotations.length > 0) {
-        entity.metadata.annotations = annotations;
+        entity.metadata ??= {};
+        (entity.metadata as any).annotations = annotations;
       }
 
       entities.push(entity);
 
       // Create relationship to parent class
       relationships.push({
-        from: entity.id,
+        from: methodId,
         to: `${filePath}:class:${parentClass}`,
         type: "member_of",
         metadata: {
-          memberType: "method"
-        }
+          memberType: "method",
+        },
       });
 
       // Extract method calls within body
       const body = node.childForFieldName("body");
       if (body) {
-        this.extractMethodCalls(body, entity.id, filePath, relationships);
+        this.extractMethodCalls(body, methodId, filePath, relationships);
       }
     }
   }
@@ -618,15 +718,22 @@ export class JavaAnalyzer {
   /**
    * Extract constructor declaration
    */
-  private extractConstructor(node: TreeSitterNode, filePath: string, entities: ParsedEntity[], relationships: EntityRelationship[], parentClass: string): void {
+  private extractConstructor(
+    node: TreeSitterNode,
+    filePath: string,
+    entities: ParsedEntity[],
+    relationships: EntityRelationship[],
+    parentClass: string,
+  ): void {
     const nameNode = node.childForFieldName("name");
-    const constructorName = nameNode?.text || parentClass.split('.').pop();
+    const constructorName = nameNode?.text || parentClass.split(".").pop();
 
     if (constructorName) {
       const modifiers = this.extractModifiers(node);
+      const constructorId = `${filePath}:class:${parentClass}:constructor:${constructorName}`;
 
       const entity: ParsedEntity = {
-        id: `${filePath}:class:${parentClass}:constructor:${constructorName}`,
+        id: constructorId,
         name: constructorName,
         type: "method",
         filePath,
@@ -637,8 +744,8 @@ export class JavaAnalyzer {
           isPublic: modifiers.includes("public"),
           isPrivate: modifiers.includes("private"),
           isProtected: modifiers.includes("protected"),
-          parent: parentClass
-        }
+          parent: parentClass,
+        },
       };
 
       // Extract parameters
@@ -651,12 +758,12 @@ export class JavaAnalyzer {
 
       // Create relationship to parent class
       relationships.push({
-        from: entity.id,
+        from: constructorId,
         to: `${filePath}:class:${parentClass}`,
         type: "member_of",
         metadata: {
-          memberType: "constructor"
-        }
+          memberType: "constructor",
+        },
       });
     }
   }
@@ -664,12 +771,18 @@ export class JavaAnalyzer {
   /**
    * Extract field declaration
    */
-  private extractField(node: TreeSitterNode, filePath: string, entities: ParsedEntity[], relationships: EntityRelationship[], parentClass: string): void {
+  private extractField(
+    node: TreeSitterNode,
+    filePath: string,
+    entities: ParsedEntity[],
+    relationships: EntityRelationship[],
+    parentClass: string,
+  ): void {
     const typeNode = node.childForFieldName("type");
     const fieldType = typeNode?.text;
 
     // Extract all variable declarators
-    const declarators = node.namedChildren.filter(c => c.type === "variable_declarator");
+    const declarators = node.namedChildren.filter((c) => c.type === "variable_declarator");
 
     for (const declarator of declarators) {
       const nameNode = declarator.childForFieldName("name");
@@ -678,9 +791,10 @@ export class JavaAnalyzer {
       if (fieldName) {
         const modifiers = this.extractModifiers(node);
         const valueNode = declarator.childForFieldName("value");
+        const fieldId = `${filePath}:class:${parentClass}:field:${fieldName}`;
 
         const entity: ParsedEntity = {
-          id: `${filePath}:class:${parentClass}:field:${fieldName}`,
+          id: fieldId,
           name: fieldName,
           type: modifiers.includes("final") ? "constant" : "property",
           filePath,
@@ -696,20 +810,20 @@ export class JavaAnalyzer {
             isVolatile: modifiers.includes("volatile"),
             isTransient: modifiers.includes("transient"),
             initialValue: valueNode?.text,
-            parent: parentClass
-          }
+            parent: parentClass,
+          },
         };
 
         entities.push(entity);
 
         // Create relationship to parent class
         relationships.push({
-          from: entity.id,
+          from: fieldId,
           to: `${filePath}:class:${parentClass}`,
           type: "member_of",
           metadata: {
-            memberType: "field"
-          }
+            memberType: "field",
+          },
         });
       }
     }
@@ -742,7 +856,9 @@ export class JavaAnalyzer {
     const modifiersNode = node.childForFieldName("modifiers");
 
     if (modifiersNode) {
-      const annotationNodes = modifiersNode.namedChildren.filter(c => c.type === "annotation" || c.type === "marker_annotation");
+      const annotationNodes = modifiersNode.namedChildren.filter(
+        (c) => c.type === "annotation" || c.type === "marker_annotation",
+      );
       for (const annotation of annotationNodes) {
         annotations.push(annotation.text);
       }
@@ -756,7 +872,9 @@ export class JavaAnalyzer {
    */
   private extractParameters(parametersNode: TreeSitterNode): Array<{ name: string; type?: string }> {
     const params: Array<{ name: string; type?: string }> = [];
-    const formalParams = parametersNode.namedChildren.filter(c => c.type === "formal_parameter" || c.type === "spread_parameter");
+    const formalParams = parametersNode.namedChildren.filter(
+      (c) => c.type === "formal_parameter" || c.type === "spread_parameter",
+    );
 
     for (const param of formalParams) {
       const nameNode = param.childForFieldName("name");
@@ -765,7 +883,7 @@ export class JavaAnalyzer {
       if (nameNode) {
         params.push({
           name: nameNode.text,
-          type: typeNode?.text
+          type: typeNode?.text,
         });
       }
     }
@@ -776,7 +894,12 @@ export class JavaAnalyzer {
   /**
    * Extract method calls to create relationships
    */
-  private extractMethodCalls(node: TreeSitterNode, callerId: string, filePath: string, relationships: EntityRelationship[]): void {
+  private extractMethodCalls(
+    node: TreeSitterNode,
+    callerId: string,
+    filePath: string,
+    relationships: EntityRelationship[],
+  ): void {
     this.recursionDepth++;
     this.checkCircuitBreakers();
 
@@ -790,8 +913,8 @@ export class JavaAnalyzer {
             to: methodName,
             type: "calls",
             metadata: {
-              callType: "method"
-            }
+              callType: "method",
+            },
           });
         }
       }

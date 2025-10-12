@@ -18,10 +18,10 @@ function createSafeEnvironment() {
   const safeEnv = {
     ...process.env,
     // Ensure these are defined to prevent "env is not defined" errors
-    NODE_ENV: process.env.NODE_ENV || 'development',
-    MCP_EMBEDDING_ENABLED: process.env.MCP_EMBEDDING_ENABLED || 'true',
-    MCP_EMBEDDING_PROVIDER: process.env.MCP_EMBEDDING_PROVIDER || 'transformers',
-    MCP_EMBEDDING_FALLBACK: process.env.MCP_EMBEDDING_FALLBACK || 'true',
+    NODE_ENV: process.env.NODE_ENV || "development",
+    MCP_EMBEDDING_ENABLED: process.env.MCP_EMBEDDING_ENABLED || "true",
+    MCP_EMBEDDING_PROVIDER: process.env.MCP_EMBEDDING_PROVIDER || "transformers",
+    MCP_EMBEDDING_FALLBACK: process.env.MCP_EMBEDDING_FALLBACK || "true",
   };
 
   // Make env globally available for embedding models
@@ -32,9 +32,9 @@ function createSafeEnvironment() {
 // Initialize safe environment BEFORE any imports that might use embedding generator
 createSafeEnvironment();
 
-import { homedir } from "node:os";
-import { join, normalize, resolve, dirname } from "node:path";
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 // Consolidated MCP SDK imports
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -43,16 +43,20 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 // Schema and Node.js built-ins
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-
-// TASK-001: Import new YAML configuration system
-import { initializeConfig, validateConfig } from "./config/yaml-config.js";
-
 // Import our multi-agent components
 import { ConductorOrchestrator } from "./agents/conductor-orchestrator.js";
+// TASK-001: Import new YAML configuration system
+import { initializeConfig, validateConfig } from "./config/yaml-config.js";
 import { knowledgeBus } from "./core/knowledge-bus.js";
 import { resourceManager } from "./core/resource-manager.js";
+import { getGraphStorage, initializeGraphStorage } from "./storage/graph-storage-factory.js";
+import { getSQLiteManager } from "./storage/sqlite-manager.js";
+// Import graph query functions
+import { getGraphStats, queryGraphEntities } from "./tools/graph-query.js";
 import type { AgentTask } from "./types/agent.js";
 import { AgentType } from "./types/agent.js";
+import type { Entity, Relationship } from "./types/storage.js";
+import { EntityType } from "./types/storage.js";
 import { createRequestId, logger } from "./utils/logger.js";
 
 // Parse command line arguments
@@ -124,6 +128,15 @@ if (!validation.valid) {
   process.exit(1);
 }
 
+// Initialize global SQLiteManager with database configuration
+console.log("[Main] Initializing global SQLiteManager with config:", config.database.path);
+const globalSQLiteManager = getSQLiteManager(config.database);
+globalSQLiteManager.initialize();
+
+// Initialize global GraphStorage
+console.log("[Main] Initializing global GraphStorage");
+await initializeGraphStorage(globalSQLiteManager);
+
 // Initialize logging system with config
 logger.systemEvent("MCP Server Starting", {
   directory,
@@ -166,63 +179,247 @@ function getConductor(): ConductorOrchestrator {
   return conductor;
 }
 
-// Helper functions for agent access - TASK-002
-async function getQueryAgent(): Promise<any> {
-  const cond = getConductor();
-  await cond.initialize();
-  // Reuse existing by type to avoid duplicate registrations
-  let agent = cond.getAgentsByType(AgentType.QUERY)[0];
-  if (!agent) {
-    const { QueryAgent } = await import("./agents/query-agent.js");
-    agent = new QueryAgent();
-    await agent.initialize();
-    cond.register(agent);
-  }
-  return agent;
-}
+let semanticAgentInstance: any | null = null;
+let semanticAgentInitPromise: Promise<any> | null = null;
 
 async function getSemanticAgent(): Promise<any> {
   const cond = getConductor();
   await cond.initialize();
-  let agent = cond.getAgentsByType(AgentType.SEMANTIC)[0];
-  if (!agent) {
-    const { SemanticAgent } = await import("./agents/semantic-agent.js");
-    agent = new SemanticAgent();
-    await agent.initialize();
-    cond.register(agent);
-  }
-  return agent;
+
+  if (semanticAgentInstance) return semanticAgentInstance;
+  if (semanticAgentInitPromise) return semanticAgentInitPromise;
+
+  semanticAgentInitPromise = (async () => {
+    let agent = cond.getAgentsByType(AgentType.SEMANTIC)[0];
+    if (!agent) {
+      const { SemanticAgent } = await import("./agents/semantic-agent.js");
+      agent = new SemanticAgent();
+      await agent.initialize();
+      cond.register(agent);
+    }
+    semanticAgentInstance = agent;
+    return agent;
+  })().finally(() => {
+    semanticAgentInitPromise = null;
+  });
+
+  return semanticAgentInitPromise;
 }
+
+let devAgentInstance: any | null = null;
+let devAgentInitPromise: Promise<any> | null = null;
 
 async function getDevAgent(): Promise<any> {
   const cond = getConductor();
   await cond.initialize();
-  let agent = cond.getAgentsByType(AgentType.DEV)[0];
-  if (!agent) {
-    const { DevAgent } = await import("./agents/dev-agent.js");
-    agent = new DevAgent();
-    await agent.initialize();
-    cond.register(agent);
-  }
-  return agent;
+
+  if (devAgentInstance) return devAgentInstance;
+  if (devAgentInitPromise) return devAgentInitPromise;
+
+  devAgentInitPromise = (async () => {
+    let agent = cond.getAgentsByType(AgentType.DEV)[0];
+    if (!agent) {
+      const { DevAgent } = await import("./agents/dev-agent.js");
+      agent = new DevAgent();
+      await agent.initialize();
+      cond.register(agent);
+    }
+    devAgentInstance = agent;
+    return agent;
+  })().finally(() => {
+    devAgentInitPromise = null;
+  });
+
+  return devAgentInitPromise;
 }
+
+let doraAgentInstance: any | null = null;
+let doraAgentInitPromise: Promise<any> | null = null;
 
 async function getDoraAgent(): Promise<any> {
   const cond = getConductor();
   await cond.initialize();
-  let agent = cond.getAgentsByType(AgentType.DORA)[0];
-  if (!agent) {
-    const { DoraAgent } = await import("./agents/dora-agent.js");
-    agent = new DoraAgent();
-    await agent.initialize();
-    cond.register(agent);
-  }
-  return agent;
+
+  if (doraAgentInstance) return doraAgentInstance;
+  if (doraAgentInitPromise) return doraAgentInitPromise;
+
+  doraAgentInitPromise = (async () => {
+    let agent = cond.getAgentsByType(AgentType.DORA)[0];
+    if (!agent) {
+      const { DoraAgent } = await import("./agents/dora-agent.js");
+      agent = new DoraAgent();
+      await agent.initialize();
+      cond.register(agent);
+    }
+    doraAgentInstance = agent;
+    return agent;
+  })().finally(() => {
+    doraAgentInitPromise = null;
+  });
+
+  return doraAgentInitPromise;
 }
 
-// Import graph query functions
-import { queryGraphEntities, getGraphStats } from "./tools/graph-query.js";
-import { getGraphStorage } from "./storage/graph-storage-factory.js";
+async function ensureSemanticsReady(minVectors = 1, timeoutMs = 15000): Promise<boolean> {
+  const agent = await getSemanticAgent();
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const metrics = typeof agent.getSemanticMetrics === "function" ? agent.getSemanticMetrics() : undefined;
+      if (metrics && metrics.vectorsStored >= minVectors) return true;
+    } catch {}
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return false;
+}
+
+function toPosixPath(p?: string): string {
+  return (p || "").replace(/\\/g, "/");
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function resolveEntity(
+  storage: Awaited<ReturnType<typeof getGraphStorage>>,
+  identifier: string,
+): Promise<Entity | null> {
+  const direct = await storage.getEntity(identifier);
+  if (direct) return direct;
+
+  const query = await storage.executeQuery({
+    type: "entity",
+    filters: { name: new RegExp(escapeRegExp(identifier), "i") },
+    limit: 5,
+  });
+  if (query.entities.length > 0) {
+    return query.entities[0]!;
+  }
+
+  const fallback = await storage.executeQuery({ type: "entity", limit: 1 });
+  return fallback.entities[0] ?? null;
+}
+
+async function resolveEntityWithHint(
+  storage: Awaited<ReturnType<typeof getGraphStorage>>,
+  name: string,
+  hintFilePath?: string,
+): Promise<Entity | null> {
+  const esc = (s: string) => escapeRegExp(s);
+
+  if (hintFilePath) {
+    const hintLower = toPosixPath(hintFilePath).toLowerCase();
+
+    const exact = await storage.executeQuery({
+      type: "entity",
+      filters: {
+        filePath: hintFilePath,
+        name: new RegExp(`^${esc(name)}$`, "i"),
+      },
+      limit: 5,
+    });
+    if (exact.entities.length > 0) {
+      exact.entities.sort((a, b) => (a.filePath?.length ?? 0) - (b.filePath?.length ?? 0));
+      return exact.entities[0]!;
+    }
+
+    const fuzzy = await storage.executeQuery({
+      type: "entity",
+      filters: { name: new RegExp(`^${esc(name)}$`, "i") },
+      limit: 30,
+    });
+
+    const badPaths = ["/dist/", "/build/", "/out/", "/.next/", "/.nuxt/", "/coverage/", "/node_modules/"];
+
+    const ranked = fuzzy.entities
+      .map((e) => {
+        const p = toPosixPath(e.filePath).toLowerCase();
+        let score = 0;
+        if (p === hintLower) score += 5;
+        else if (p.endsWith(hintLower)) score += 4;
+        else if (p.includes(hintLower)) score += 3;
+
+        if (badPaths.some((b) => p.includes(b))) score -= 2;
+        else score += 1;
+
+        return { e, score };
+      })
+      .sort((a, b) => b.score - a.score || (a.e.filePath?.length ?? 0) - (b.e.filePath?.length ?? 0));
+
+    if (ranked.length > 0 && ranked[0]!.score > 0) {
+      return ranked[0]!.e;
+    }
+  }
+
+  const query = await storage.executeQuery({
+    type: "entity",
+    filters: { name: new RegExp(esc(name), "i") },
+    limit: 20,
+  });
+  if (query.entities.length === 0) {
+    const fb = await storage.executeQuery({ type: "entity", limit: 1 });
+    return fb.entities[0] ?? null;
+  }
+
+  const badPaths = ["/dist/", "/build/", "/out/", "/.next/", "/.nuxt/", "/coverage/", "/node_modules/"];
+
+  const ranked = query.entities
+    .map((e) => {
+      const p = toPosixPath(e.filePath).toLowerCase();
+      let score = 0;
+      if (e.name?.toLowerCase() === name.toLowerCase()) score += 1;
+      if (badPaths.some((b) => p.includes(b))) score -= 2;
+      else score += 1;
+      return { e, score };
+    })
+    .sort((a, b) => b.score - a.score || (a.e.filePath?.length ?? 0) - (b.e.filePath?.length ?? 0));
+
+  return ranked[0]!.e;
+}
+
+function mapEntitySummary(entity: Entity) {
+  return {
+    id: entity.id,
+    name: entity.name,
+    type: entity.type,
+    filePath: entity.filePath,
+    location: entity.location,
+    metadata: entity.metadata,
+  };
+}
+
+function summarizeRelationships(relationships: Relationship[], neighbors: Map<string, Entity>) {
+  return relationships.map((rel) => ({
+    id: rel.id,
+    type: rel.type,
+    from: {
+      id: rel.fromId,
+      name: neighbors.get(rel.fromId)?.name ?? null,
+    },
+    to: {
+      id: rel.toId,
+      name: neighbors.get(rel.toId)?.name ?? null,
+    },
+    metadata: rel.metadata,
+  }));
+}
+
+function normalizeEntityTypes(types?: string[]): EntityType[] | undefined {
+  if (!types?.length) return undefined;
+
+  const allowed = new Set<string>(Object.values(EntityType));
+  const normalized: EntityType[] = [];
+
+  for (const value of types) {
+    const lower = value.toLowerCase();
+    if (allowed.has(lower)) {
+      normalized.push(lower as EntityType);
+    }
+  }
+
+  return normalized.length > 0 ? normalized : undefined;
+}
 
 // GraphStorage singleton is now managed by graph-storage-factory.ts
 
@@ -258,8 +455,9 @@ const IndexToolSchema = z.object({
     "*.tmp",
     "*.cache",
     ".DS_Store",
-    "Thumbs.db"
+    "Thumbs.db",
   ]),
+  fullScan: z.boolean().optional().default(false),
 });
 
 const ListEntitiesToolSchema = z.object({
@@ -269,8 +467,9 @@ const ListEntitiesToolSchema = z.object({
 
 const ListRelationshipsToolSchema = z.object({
   entityName: z.string().describe("Name of the entity to find relationships for"),
-  depth: z.number().describe("Depth of relationship traversal").optional().default(1),
-  relationshipTypes: z.array(z.string()).describe("Types of relationships to include").optional(),
+  filePath: z.string().optional().describe("Optional file path hint to disambiguate entity"),
+  depth: z.number().optional().default(1).describe("Depth of relationship traversal"),
+  relationshipTypes: z.array(z.string()).optional().describe("Types of relationships to include"),
 });
 
 const QueryToolSchema = z.object({
@@ -291,7 +490,8 @@ const FindSimilarCodeSchema = z.object({
 });
 
 const AnalyzeCodeImpactSchema = z.object({
-  entityId: z.string().describe("Entity ID to analyze impact for"),
+  entityId: z.string().describe("Entity ID or name to analyze impact for"),
+  filePath: z.string().optional().describe("Optional file path hint to disambiguate entity"),
   depth: z.number().optional().default(2).describe("Depth of impact analysis"),
 });
 
@@ -300,10 +500,23 @@ const DetectCodeClonesSchema = z.object({
   scope: z.string().optional().default("all").describe("Scope: all, file, or module"),
 });
 
-const SuggestRefactoringSchema = z.object({
-  filePath: z.string().describe("File to analyze for refactoring"),
-  focusArea: z.string().optional().describe("Specific area to focus on"),
-});
+const SuggestRefactoringSchema = z
+  .object({
+    filePath: z.string().describe("File to analyze for refactoring"),
+    focusArea: z.string().optional().describe("Specific entity name to focus on"),
+    entityId: z.string().optional().describe("Exact entity ID to analyze"),
+    startLine: z.number().int().min(1).optional().describe("1-based start line for manual selection"),
+    endLine: z.number().int().min(1).optional().describe("1-based end line (exclusive)"),
+  })
+  .refine(
+    (v) =>
+      (v.startLine == null && v.endLine == null) ||
+      (v.startLine != null && v.endLine != null && v.startLine < v.endLine),
+    {
+      message: "startLine and endLine must both be provided and startLine < endLine",
+      path: ["startLine"],
+    },
+  );
 
 const CrossLanguageSearchSchema = z.object({
   query: z.string().describe("Search query"),
@@ -329,17 +542,14 @@ const GetGraphStatsSchema = z.object({});
 const GetGraphHealthSchema = z.object({
   minEntities: z.number().optional().default(1).describe("Minimum entity count for healthy status"),
   minRelationships: z.number().optional().default(0).describe("Minimum relationship count for healthy status"),
-  sample: z.number().optional().default(1).describe("Sample size to fetch for verification")
+  sample: z.number().optional().default(1).describe("Sample size to fetch for verification"),
 });
 
 // Convenience tool: clean index (reset + index)
 const CleanIndexSchema = z.object({
   directory: z.string().describe("Directory to index after reset").optional(),
-  excludePatterns: z
-    .array(z.string())
-    .describe("Patterns to exclude during indexing")
-    .optional()
-    .default([]),
+  excludePatterns: z.array(z.string()).describe("Patterns to exclude during indexing").optional().default([]),
+  fullScan: z.boolean().optional().default(false),
 });
 
 // Create MCP server
@@ -490,58 +700,105 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     switch (name) {
       case "index": {
-        const { directory: indexDir, incremental, excludePatterns, reset } = IndexToolSchema.parse(args);
+        const { directory: indexDir, incremental, excludePatterns, reset, fullScan } = IndexToolSchema.parse(args);
         const targetDir = indexDir || directory;
 
         // Optional reset
         if (reset) {
-          const storage = await getGraphStorage();
+          const storage = await getGraphStorage(globalSQLiteManager);
           await storage.clear();
           logger.systemEvent("Graph storage cleared before indexing", { directory: targetDir });
         }
+
+        await getSemanticAgent();
 
         // Enhanced exclude patterns for large codebases
         const enhancedExcludePatterns = [...excludePatterns];
 
         // Check codebase size and add adaptive patterns
         try {
-          const { execSync } = await import('child_process');
-          const fileCount = execSync(`find "${targetDir}" -type f \\( -name "*.js" -o -name "*.ts" -o -name "*.py" -o -name "*.java" -o -name "*.cpp" -o -name "*.c" -o -name "*.go" -o -name "*.rs" \\) | wc -l`, { encoding: 'utf8' }).trim();
+          const { execSync } = await import("child_process");
+          const fileCount = execSync(
+            `find "${targetDir}" -type f \\( -name "*.js" -o -name "*.ts" -o -name "*.py" -o -name "*.java" -o -name "*.cpp" -o -name "*.c" -o -name "*.go" -o -name "*.rs" \\) | wc -l`,
+            { encoding: "utf8" },
+          ).trim();
           const numFiles = parseInt(fileCount);
 
-          logger.info("INDEXING", `Detected ${numFiles} source files in codebase`, { directory: targetDir, fileCount: numFiles }, requestId);
+          logger.info(
+            "INDEXING",
+            `Detected ${numFiles} source files in codebase`,
+            { directory: targetDir, fileCount: numFiles },
+            requestId,
+          );
 
           // Adjust resource allocation based on codebase size
-          const { execSync: execSync2 } = await import('child_process');
-          const projectSizeBytes = execSync2(`du -sb "${targetDir}" | cut -f1`, { encoding: 'utf8' }).trim();
+          const { execSync: execSync2 } = await import("child_process");
+          const projectSizeBytes = execSync2(`du -sb "${targetDir}" | cut -f1`, { encoding: "utf8" }).trim();
           const projectSizeMB = Math.floor(parseInt(projectSizeBytes) / (1024 * 1024));
           resourceManager.adjustForCodebaseSize(numFiles, projectSizeMB);
 
           // For very large codebases (>2000 files), add more aggressive patterns
           if (numFiles > 2000) {
-            logger.info("INDEXING", "Large codebase detected, adding additional exclude patterns", { fileCount: numFiles }, requestId);
+            logger.info(
+              "INDEXING",
+              "Large codebase detected, adding additional exclude patterns",
+              { fileCount: numFiles },
+              requestId,
+            );
             enhancedExcludePatterns.push(
-              "**/test/**", "**/tests/**", "**/*_test.*", "**/*_spec.*", "**/*.test.*", "**/*.spec.*",
-              "**/docs/**", "**/doc/**", "**/documentation/**",
-              "**/examples/**", "**/example/**", "**/demo/**", "**/demos/**",
-              "**/migrations/**", "**/scripts/**", "**/tools/**",
-              "**/*.min.js", "**/*.min.css", "**/bundle.*", "**/vendor.*"
+              "**/test/**",
+              "**/tests/**",
+              "**/*_test.*",
+              "**/*_spec.*",
+              "**/*.test.*",
+              "**/*.spec.*",
+              "**/docs/**",
+              "**/doc/**",
+              "**/documentation/**",
+              "**/examples/**",
+              "**/example/**",
+              "**/demo/**",
+              "**/demos/**",
+              "**/migrations/**",
+              "**/scripts/**",
+              "**/tools/**",
+              "**/*.min.js",
+              "**/*.min.css",
+              "**/bundle.*",
+              "**/vendor.*",
             );
           }
 
           // For extremely large codebases (>5000 files), enable incremental by default
           if (numFiles > 5000 && !incremental) {
-            logger.info("INDEXING", "Extremely large codebase detected, recommending incremental mode", { fileCount: numFiles }, requestId);
+            logger.info(
+              "INDEXING",
+              "Extremely large codebase detected, recommending incremental mode",
+              { fileCount: numFiles },
+              requestId,
+            );
           }
 
-          // For very large codebases (>2000 files), enable batch processing
-          if (numFiles > 2000) {
-            logger.info("INDEXING", "Large codebase detected, enabling batch processing", { fileCount: numFiles }, requestId);
-            // Set batch processing metadata
-            enhancedExcludePatterns.push("__batch_processing_enabled__"); // Special marker for batch processing
+          if (!fullScan) {
+            if (numFiles > 2000) {
+              logger.info(
+                "INDEXING",
+                "Large codebase detected, enabling batch processing",
+                { fileCount: numFiles },
+                requestId,
+              );
+              enhancedExcludePatterns.push("__batch_processing_enabled__"); // Special marker for batch processing
+            }
+          } else {
+            logger.info("INDEXING", "Full scan requested, batch mode disabled", { fileCount: numFiles }, requestId);
           }
         } catch (error) {
-          logger.warn("INDEXING", "Could not detect codebase size, using default patterns", { error: (error as Error).message }, requestId);
+          logger.warn(
+            "INDEXING",
+            "Could not detect codebase size, using default patterns",
+            { error: (error as Error).message },
+            requestId,
+          );
         }
 
         // Create indexing task with enhanced exclude patterns
@@ -562,6 +819,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         await cond.initialize();
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
         const result = await withTimeout(cond.process(task), timeoutMs, "index", requestId);
+
+        await ensureSemanticsReady(1, 5000);
 
         // Log indexing activity
         logger.agentActivity(
@@ -601,7 +860,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "reset_graph": {
-        const storage = await getGraphStorage();
+        const storage = await getGraphStorage(globalSQLiteManager);
         await storage.clear();
         logger.systemEvent("Graph storage cleared via tool");
         return {
@@ -615,21 +874,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "clean_index": {
-        const { directory: indexDir, excludePatterns } = CleanIndexSchema.parse(args);
+        const { directory: indexDir, excludePatterns, fullScan } = CleanIndexSchema.parse(args);
         const targetDir = indexDir || directory;
 
         // Reset graph first
-        const storage = await getGraphStorage();
+        const storage = await getGraphStorage(globalSQLiteManager);
         await storage.clear();
         logger.systemEvent("Graph storage cleared before clean index", { directory: targetDir });
+
+        await getSemanticAgent();
 
         // Perform index with reset semantics (already cleared), non-incremental
         const enhancedExcludePatterns = [...(excludePatterns || [])];
 
         // Adaptive patterns as in index tool
         try {
-          const { execSync } = await import('child_process');
-          const fileCount = execSync(`find "${targetDir}" -type f \\( -name "*.js" -o -name "*.ts" -o -name "*.py" -o -name "*.java" -o -name "*.cpp" -o -name "*.c" -o -name "*.go" -o -name "*.rs" \\) | wc -l`, { encoding: 'utf8' }).trim();
+          const { execSync } = await import("child_process");
+          const fileCount = execSync(
+            `find "${targetDir}" -type f \\( -name "*.js" -o -name "*.ts" -o -name "*.py" -o -name "*.java" -o -name "*.cpp" -o -name "*.c" -o -name "*.go" -o -name "*.rs" \\) | wc -l`,
+            { encoding: "utf8" },
+          ).trim();
           const numFiles = parseInt(fileCount);
           logger.info(
             "INDEXING",
@@ -637,22 +901,60 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             { directory: targetDir, fileCount: numFiles },
             requestId,
           );
-          const { execSync: execSync2 } = await import('child_process');
-          const projectSizeBytes = execSync2(`du -sb "${targetDir}" | cut -f1`, { encoding: 'utf8' }).trim();
+          const { execSync: execSync2 } = await import("child_process");
+          const projectSizeBytes = execSync2(`du -sb "${targetDir}" | cut -f1`, { encoding: "utf8" }).trim();
           const projectSizeMB = Math.floor(parseInt(projectSizeBytes) / (1024 * 1024));
           resourceManager.adjustForCodebaseSize(numFiles, projectSizeMB);
           if (numFiles > 2000) {
             enhancedExcludePatterns.push(
-              "**/test/**", "**/tests/**", "**/*_test.*", "**/*_spec.*", "**/*.test.*", "**/*.spec.*",
-              "**/docs/**", "**/doc/**", "**/documentation/**",
-              "**/examples/**", "**/example/**", "**/demo/**", "**/demos/**",
-              "**/migrations/**", "**/scripts/**", "**/tools/**",
-              "**/*.min.js", "**/*.min.css", "**/bundle.*", "**/vendor.*"
+              "**/test/**",
+              "**/tests/**",
+              "**/*_test.*",
+              "**/*_spec.*",
+              "**/*.test.*",
+              "**/*.spec.*",
+              "**/docs/**",
+              "**/doc/**",
+              "**/documentation/**",
+              "**/examples/**",
+              "**/example/**",
+              "**/demo/**",
+              "**/demos/**",
+              "**/migrations/**",
+              "**/scripts/**",
+              "**/tools/**",
+              "**/*.min.js",
+              "**/*.min.css",
+              "**/bundle.*",
+              "**/vendor.*",
             );
-            enhancedExcludePatterns.push("__batch_processing_enabled__");
+          }
+
+          if (!fullScan) {
+            if (numFiles > 2000) {
+              logger.info(
+                "INDEXING",
+                "Large codebase detected, enabling batch processing (clean_index)",
+                { fileCount: numFiles },
+                requestId,
+              );
+              enhancedExcludePatterns.push("__batch_processing_enabled__");
+            }
+          } else {
+            logger.info(
+              "INDEXING",
+              "Full scan requested, batch mode disabled (clean_index)",
+              { fileCount: numFiles },
+              requestId,
+            );
           }
         } catch (error) {
-          logger.warn("INDEXING", "Could not detect codebase size (clean_index), using default patterns", { error: (error as Error).message }, requestId);
+          logger.warn(
+            "INDEXING",
+            "Could not detect codebase size (clean_index), using default patterns",
+            { error: (error as Error).message },
+            requestId,
+          );
         }
 
         const task: AgentTask = {
@@ -671,6 +973,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         await cond.initialize();
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
         const result = await withTimeout(cond.process(task), timeoutMs, "clean_index", requestId);
+
+        await ensureSemanticsReady(1, 5000);
 
         knowledgeBus.publish("index:completed", result, "mcp-server");
         const duration = Date.now() - startTime;
@@ -697,96 +1001,154 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "list_file_entities": {
         const { filePath, entityTypes } = ListEntitiesToolSchema.parse(args);
 
-        // Query knowledge bus for cached results
         const cached = knowledgeBus.query(`entities:${filePath}`, 1);
         if (cached.length > 0) {
-          const firstCache = cached[0];
-          if (firstCache && Date.now() - firstCache.timestamp < 60000) {
+          const entry = cached[0];
+          if (entry && Date.now() - entry.timestamp < 60000) {
             return {
               content: [
                 {
                   type: "text",
-                  text: JSON.stringify(firstCache.data, null, 2),
+                  text: JSON.stringify(entry.data, null, 2),
                 },
               ],
             };
           }
         }
 
-        // Create query task
-        const task: AgentTask = {
-          id: `list-entities-${Date.now()}`,
-          type: "query",
-          priority: 5,
-          payload: {
-            operation: "list_entities",
+        const storage = await getGraphStorage(globalSQLiteManager);
+        const normalizedEntityTypes = normalizeEntityTypes(entityTypes);
+        const query = await storage.executeQuery({
+          type: "entity",
+          filters: {
             filePath,
-            entityTypes,
+            ...(normalizedEntityTypes ? { entityType: normalizedEntityTypes } : {}),
           },
-          createdAt: Date.now(),
+          limit: 500,
+        });
+
+        const entities = query.entities
+          .slice()
+          .sort((a, b) => (a.location.start.index ?? 0) - (b.location.start.index ?? 0))
+          .map((entity) => mapEntitySummary(entity));
+
+        const response = {
+          filePath,
+          total: entities.length,
+          entities,
+          stats: query.stats,
         };
 
-        const cond = getConductor();
-        const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
-        const result = await withTimeout(cond.process(task), timeoutMs, "list_file_entities", requestId);
-
-        // Cache result
-        knowledgeBus.publish(`entities:${filePath}`, result, "mcp-server", 60000);
+        knowledgeBus.publish(`entities:${filePath}`, response, "mcp-server", 60000);
 
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(result, null, 2),
+              text: JSON.stringify(response, null, 2),
             },
           ],
         };
       }
-
       case "list_entity_relationships": {
-        const { entityName, relationshipTypes } = ListRelationshipsToolSchema.parse(args);
-        const queryAgent = await getQueryAgent();
-        const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
-        // Find entity by name (first match)
-        const matches = await withTimeout(
-          queryAgent.listEntities({ name: entityName }),
-          timeoutMs,
-          "list_entity_relationships:lookup",
-          requestId,
-        );
-        if (!Array.isArray(matches) || matches.length === 0) {
-          return { content: [{ type: "text", text: JSON.stringify({ success: false, error: `Entity not found: ${entityName}` }, null, 2) }] };
+        const { entityName, relationshipTypes, filePath: hintFilePath } = ListRelationshipsToolSchema.parse(args);
+        const storage = await getGraphStorage(globalSQLiteManager);
+
+        const entity = await resolveEntityWithHint(storage, entityName, hintFilePath);
+        if (!entity) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ success: false, error: `Entity not found: ${entityName}` }, null, 2),
+              },
+            ],
+          };
         }
-        const entity = matches[0];
-        let rels: any = await withTimeout(
-          queryAgent.getRelationships(entity.id),
-          timeoutMs,
-          "list_entity_relationships:get",
-          requestId,
-        );
-        if (Array.isArray(relationshipTypes) && relationshipTypes.length > 0) {
-          rels = rels.filter((r: any) => relationshipTypes.includes(r.type));
+
+        const relationships = await storage.getRelationshipsForEntity(entity.id);
+        const filtered =
+          Array.isArray(relationshipTypes) && relationshipTypes.length > 0
+            ? relationships.filter((rel) => relationshipTypes.includes(rel.type))
+            : relationships;
+
+        const neighborIds = new Set<string>();
+        for (const rel of filtered) {
+          neighborIds.add(rel.fromId);
+          neighborIds.add(rel.toId);
         }
+
+        const neighborMap = new Map<string, Entity>();
+        neighborMap.set(entity.id, entity);
+        for (const id of neighborIds) {
+          if (neighborMap.has(id)) continue;
+          const neighbor = await storage.getEntity(id);
+          if (neighbor) {
+            neighborMap.set(id, neighbor);
+          }
+        }
+
         return {
           content: [
-            { type: "text", text: JSON.stringify({ entity: { id: entity.id, name: entity.name, filePath: entity.filePath }, relationships: rels }, null, 2) },
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  entity: mapEntitySummary(entity),
+                  relationships: summarizeRelationships(filtered, neighborMap),
+                },
+                null,
+                2,
+              ),
+            },
           ],
         };
       }
 
       case "query": {
         const { query, limit } = QueryToolSchema.parse(args);
-        const semanticAgent = await getSemanticAgent();
+        await ensureSemanticsReady(1, 20000);
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
-        const result = await withTimeout(
-          semanticAgent.semanticSearch(query, limit),
-          timeoutMs,
-          "query:semantic_search",
-          requestId,
-        );
+        let semanticResult: unknown = [];
+
+        try {
+          const semanticAgent = await getSemanticAgent();
+          semanticResult = await withTimeout(
+            semanticAgent.semanticSearch(query, limit),
+            timeoutMs,
+            "query:semantic_search",
+            requestId,
+          );
+        } catch (error) {
+          logger.warn(
+            "SEMANTIC_QUERY",
+            "Semantic search fallback engaged",
+            { query, error: (error as Error).message },
+            requestId,
+          );
+          semanticResult = [];
+        }
+
+        const storage = await getGraphStorage(globalSQLiteManager);
+        const structural = await queryGraphEntities(storage, query, limit ?? 10);
+
         return {
           content: [
-            { type: "text", text: JSON.stringify(result, null, 2) },
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  semantic: semanticResult,
+                  structural: {
+                    entities: structural.entities.map((entity) => mapEntitySummary(entity)),
+                    relationships: structural.relationships.length,
+                    stats: structural.stats,
+                  },
+                },
+                null,
+                2,
+              ),
+            },
           ],
         };
       }
@@ -871,6 +1233,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // New semantic tool handlers - TASK-002
       case "semantic_search": {
         const { query, limit } = SemanticSearchSchema.parse(args);
+        await ensureSemanticsReady(1, 20000);
 
         // Check cache first
         const cacheKey = `semantic:search:${query}:${limit}`;
@@ -914,7 +1277,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "find_similar_code": {
         const { code, threshold, limit } = FindSimilarCodeSchema.parse(args);
-
+        await ensureSemanticsReady(1, 20000);
         const semanticAgent = await getSemanticAgent();
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
         const sim = await withTimeout(
@@ -939,7 +1302,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "detect_code_clones": {
         const { minSimilarity } = DetectCodeClonesSchema.parse(args);
-
+        await ensureSemanticsReady(1, 20000);
         const semanticAgent = await getSemanticAgent();
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
         const result = await withTimeout(
@@ -960,26 +1323,187 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "suggest_refactoring": {
-        const { filePath } = SuggestRefactoringSchema.parse(args);
+        const { filePath, focusArea, entityId, startLine, endLine } = SuggestRefactoringSchema.parse(args);
 
         const semanticAgent = await getSemanticAgent();
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
-        // For now, read file content and pass to suggestRefactoring (optional if focusArea provided)
-        const fs = await import('node:fs/promises');
-        let code = '';
-        try { code = await fs.readFile(filePath, 'utf8'); } catch {}
-        const result = await withTimeout(
-          semanticAgent.suggestRefactoring(code),
-          timeoutMs,
-          "suggest_refactoring",
-          requestId,
-        );
+
+        const fs = await import("node:fs/promises");
+        const storage = await getGraphStorage(globalSQLiteManager);
+
+        const MAX_SNIPPET = 10000;
+
+        const readFileSafe = async (p: string) => {
+          try {
+            return await fs.readFile(p, "utf8");
+          } catch {
+            return "";
+          }
+        };
+
+        const sliceByLines = (text: string, sLine: number, eLine: number) => {
+          const lines = text.split(/\r?\n/);
+          const startIdx = Math.max(1, Math.min(sLine, lines.length));
+          const endIdx = Math.max(startIdx + 1, Math.min(eLine, lines.length + 1)); // end exclusive
+          const snippet = lines.slice(startIdx - 1, endIdx - 1).join("\n");
+          return { snippet, range: { startLine: startIdx, endLine: endIdx } };
+        };
+
+        const sliceByEntity = (text: string, e: Entity) => {
+          const loc: any = (e as any).location ?? {};
+          let snippet = "";
+          let range: { startIndex?: number; endIndex?: number; startLine?: number; endLine?: number } | undefined;
+
+          if (typeof loc.start?.index === "number" && typeof loc.end?.index === "number") {
+            const start = Math.max(0, Math.min(loc.start.index, text.length));
+            const end = Math.max(start, Math.min(loc.end.index, text.length));
+            snippet = text.slice(start, end);
+            range = { startIndex: start, endIndex: end };
+          } else if (typeof loc.start?.line === "number" && typeof loc.end?.line === "number") {
+            const res = sliceByLines(text, loc.start.line, loc.end.line);
+            snippet = res.snippet;
+            range = { startLine: res.range.startLine, endLine: res.range.endLine };
+          } else {
+            snippet = text;
+          }
+          return { snippet, range };
+        };
+
+        const runSuggest = async (snippet: string) => {
+          const limited = snippet.length > MAX_SNIPPET ? snippet.slice(0, MAX_SNIPPET) : snippet;
+          return await withTimeout(
+            semanticAgent.suggestRefactoring(limited),
+            timeoutMs,
+            "suggest_refactoring",
+            requestId,
+          );
+        };
+
+        const analyzed: Array<{
+          entity?: ReturnType<typeof mapEntitySummary>;
+          range?: { startLine?: number; endLine?: number; startIndex?: number; endIndex?: number };
+          suggestions: unknown;
+        }> = [];
+
+        const fileText = await readFileSafe(filePath);
+
+        if (!fileText) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ success: false, error: `Cannot read file: ${filePath}` }, null, 2),
+              },
+            ],
+          };
+        }
+
+        if (startLine != null && endLine != null) {
+          const { snippet, range } = sliceByLines(fileText, startLine, endLine);
+          const suggestions = await runSuggest(snippet);
+          analyzed.push({ range, suggestions });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ filePath, focus: { mode: "range", range }, analyzed }, null, 2),
+              },
+            ],
+          };
+        }
+
+        if (entityId) {
+          const ent = await storage.getEntity(entityId);
+          if (!ent) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({ success: false, error: `Entity not found by id: ${entityId}` }, null, 2),
+                },
+              ],
+            };
+          }
+
+          const { snippet, range } = sliceByEntity(fileText, ent);
+          const suggestions = await runSuggest(snippet);
+          analyzed.push({ entity: mapEntitySummary(ent), range, suggestions });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ filePath, focus: { mode: "entityId", entityId: ent.id }, analyzed }, null, 2),
+              },
+            ],
+          };
+        }
+
+        if (focusArea) {
+          const ent = await resolveEntityWithHint(storage, focusArea, filePath);
+          if (ent) {
+            const { snippet, range } = sliceByEntity(fileText, ent);
+            const suggestions = await runSuggest(snippet);
+            analyzed.push({ entity: mapEntitySummary(ent), range, suggestions });
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({ filePath, focus: { mode: "focusArea", focusArea }, analyzed }, null, 2),
+                },
+              ],
+            };
+          }
+        }
+
+        const query = await storage.executeQuery({
+          type: "entity",
+          filters: { filePath },
+          limit: 500,
+        });
+
+        const sorted = query.entities
+          .filter((e) => (e as any).location?.start != null && (e as any).location?.end != null)
+          .map((e) => {
+            const s = (e as any).location?.start?.index ?? 0;
+            const ed = (e as any).location?.end?.index ?? 0;
+            return { e, len: Math.max(0, ed - s) };
+          })
+          .sort((a, b) => b.len - a.len)
+          .slice(0, 3)
+          .map((x) => x.e);
+
+        if (sorted.length === 0) {
+          const suggestions = await runSuggest(fileText);
+          analyzed.push({ range: { startIndex: 0, endIndex: Math.min(fileText.length, MAX_SNIPPET) }, suggestions });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ filePath, focus: { mode: "file" }, analyzed }, null, 2),
+              },
+            ],
+          };
+        }
+
+        for (const ent of sorted) {
+          const { snippet, range } = sliceByEntity(fileText, ent);
+          const suggestions = await runSuggest(snippet);
+          analyzed.push({ entity: mapEntitySummary(ent), range, suggestions });
+        }
 
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(result, null, 2),
+              text: JSON.stringify(
+                { filePath, focus: { mode: "auto-top-entities", count: analyzed.length }, analyzed },
+                null,
+                2,
+              ),
             },
           ],
         };
@@ -987,7 +1511,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "cross_language_search": {
         const { query, languages } = CrossLanguageSearchSchema.parse(args);
-
+        await ensureSemanticsReady(1, 20000);
         const semanticAgent = await getSemanticAgent();
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
         const result = await withTimeout(
@@ -1009,38 +1533,58 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "analyze_hotspots": {
         const { metric, limit } = AnalyzeHotspotsSchema.parse(args);
-        const queryAgent = await getQueryAgent();
-        const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
-        // Direct call to get hotspots array, with task fallback when missing
-        let rawHotspots: any;
-        if (typeof (queryAgent as any).analyzeHotspots === 'function') {
-          rawHotspots = await withTimeout((queryAgent as any).analyzeHotspots(), timeoutMs, "analyze_hotspots:query", requestId);
-        } else {
-          const task: AgentTask = {
-            id: `hotspots-${Date.now()}`,
-            type: "query:analysis",
-            priority: 7,
-            payload: { type: "hotspots", params: {} },
-            createdAt: Date.now(),
-          };
-          rawHotspots = await withTimeout((queryAgent as any).process(task), timeoutMs, "analyze_hotspots:query", requestId);
-        }
-        const hotspots = Array.isArray(rawHotspots) && typeof limit === 'number' ? rawHotspots.slice(0, limit) : rawHotspots;
+        const storage = await getGraphStorage(globalSQLiteManager);
+        const relationshipSample = await storage.executeQuery({ type: "relationship", limit: 10000 });
 
-        // Semantic enrichment over hotspot entities/snippets
-        const semanticAgent = await getSemanticAgent();
-        const enriched = await withTimeout(
-          semanticAgent.analyzeHotspots(hotspots, metric),
-          timeoutMs,
-          "analyze_hotspots:semantic",
-          requestId,
-        );
+        const counts = new Map<string, { incoming: number; outgoing: number }>();
+        for (const rel of relationshipSample.relationships) {
+          const from = counts.get(rel.fromId) ?? { incoming: 0, outgoing: 0 };
+          from.outgoing += 1;
+          counts.set(rel.fromId, from);
+
+          const to = counts.get(rel.toId) ?? { incoming: 0, outgoing: 0 };
+          to.incoming += 1;
+          counts.set(rel.toId, to);
+        }
+
+        const ranked = Array.from(counts.entries())
+          .map(([id, data]) => ({ id, ...data, total: data.incoming + data.outgoing }))
+          .sort((a, b) => b.total - a.total)
+          .slice(0, limit ?? 10);
+
+        const hotspots = [] as Array<{
+          entity: ReturnType<typeof mapEntitySummary>;
+          metrics: { incoming: number; outgoing: number; total: number };
+          score: number;
+        }>;
+
+        for (const entry of ranked) {
+          const entity = await storage.getEntity(entry.id);
+          if (!entity) continue;
+          const baseScore = entry.total * 10 + entry.incoming * 5;
+          const metricScore =
+            metric === "complexity" ? entry.total * 2 : metric === "coupling" ? entry.incoming * 3 : entry.outgoing * 3;
+          hotspots.push({
+            entity: mapEntitySummary(entity),
+            metrics: { incoming: entry.incoming, outgoing: entry.outgoing, total: entry.total },
+            score: Math.round(baseScore + metricScore),
+          });
+        }
 
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(enriched, null, 2),
+              text: JSON.stringify(
+                {
+                  metric,
+                  limit: limit ?? 10,
+                  hotspots,
+                  sampleSize: relationshipSample.relationships.length,
+                },
+                null,
+                2,
+              ),
             },
           ],
         };
@@ -1048,35 +1592,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "find_related_concepts": {
         const { entityId, limit } = FindRelatedConceptsSchema.parse(args);
-        const storage = await getGraphStorage();
-        let entity = await storage.getEntity(entityId);
-
-        // If entity not found by ID, try searching by name
+        await ensureSemanticsReady(1, 20000);
+        const storage = await getGraphStorage(globalSQLiteManager);
+        const entity = await resolveEntity(storage, entityId);
         if (!entity) {
-          const queryByName: import("./types/storage.js").GraphQuery = {
-            type: "entity",
-            filters: { name: entityId },
-            limit: 10
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ success: false, error: `Entity not found: ${entityId}` }, null, 2),
+              },
+            ],
           };
-          const entitiesByName = await storage.findEntities(queryByName);
-          entity = entitiesByName.find((e: import("./types/storage.js").Entity) =>
-            e.name === entityId ||
-            e.name.toLowerCase() === entityId.toLowerCase() ||
-            e.id === entityId
-          ) || null;
-        }
-
-        if (!entity) {
-          return { content: [ { type: "text", text: JSON.stringify({ success: false, error: `Entity not found: ${entityId}. Try using the exact entity ID from list_entities or get_graph.` }, null, 2) } ] };
         }
 
         // Read code snippet for this entity using stored location
-        const fs = await import('node:fs/promises');
-        let snippet = '';
+        const fs = await import("node:fs/promises");
+        let snippet = "";
         try {
-          const full = await fs.readFile(entity.filePath, 'utf8');
-          const startIdx = typeof (entity as any).location?.start?.index === 'number' ? (entity as any).location.start.index : 0;
-          const endIdx = typeof (entity as any).location?.end?.index === 'number' ? (entity as any).location.end.index : full.length;
+          const full = await fs.readFile(entity.filePath, "utf8");
+          const startIdx =
+            typeof (entity as any).location?.start?.index === "number" ? (entity as any).location.start.index : 0;
+          const endIdx =
+            typeof (entity as any).location?.end?.index === "number" ? (entity as any).location.end.index : full.length;
           if (endIdx > startIdx && endIdx - startIdx < 10000) {
             snippet = full.slice(startIdx, endIdx);
           } else {
@@ -1084,25 +1622,46 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const sLine = (entity as any).location?.start?.line ? (entity as any).location.start.line - 1 : 0;
             const eLine = (entity as any).location?.end?.line ? (entity as any).location.end.line : sLine + 10;
             const lines = full.split(/\r?\n/);
-            snippet = lines.slice(Math.max(0, sLine), Math.min(lines.length, eLine)).join('\n');
+            snippet = lines.slice(Math.max(0, sLine), Math.min(lines.length, eLine)).join("\n");
             if (snippet.length > 10000) snippet = snippet.slice(0, 10000);
           }
         } catch {
           // If read fails, return empty
-          snippet = '';
+          snippet = "";
         }
 
-        const semanticAgent = await getSemanticAgent();
-        const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
-        const sim = await withTimeout(
-          semanticAgent.findSimilarCode(snippet, 0.65),
-          timeoutMs,
-          "find_related_concepts",
-          requestId,
-        );
-        const results = Array.isArray(sim) && limit ? sim.slice(0, limit) : sim;
+        let results: unknown = [];
+        try {
+          const semanticAgent = await getSemanticAgent();
+          const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
+          const sim = await withTimeout(
+            semanticAgent.findSimilarCode(snippet, 0.65),
+            timeoutMs,
+            "find_related_concepts",
+            requestId,
+          );
+          results = Array.isArray(sim) && limit ? sim.slice(0, limit) : sim;
+        } catch (error) {
+          logger.warn(
+            "SEMANTIC_RELATED",
+            "Related concepts fallback",
+            { entityId, error: (error as Error).message },
+            requestId,
+          );
+          results = [];
+        }
+
         return {
-          content: [ { type: "text", text: JSON.stringify({ entity: { id: entity.id, name: entity.name, filePath: entity.filePath }, related: results }, null, 2) } ],
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                { entity: { id: entity.id, name: entity.name, filePath: entity.filePath }, related: results },
+                null,
+                2,
+              ),
+            },
+          ],
         };
       }
 
@@ -1110,54 +1669,176 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const { query, limit } = GetGraphSchema.parse(args);
 
         // Use direct database query instead of going through agents
-        const storage = await getGraphStorage();
+        const storage = await getGraphStorage(globalSQLiteManager);
         const result = await queryGraphEntities(storage, query, limit);
 
-        logger.info("GRAPH_QUERY", `Retrieved graph with ${result.entities.length} entities and ${result.relationships.length} relationships`, {
-          query,
-          limit,
-          stats: result.stats,
-        }, requestId);
+        logger.info(
+          "GRAPH_QUERY",
+          `Retrieved graph with ${result.entities.length} entities and ${result.relationships.length} relationships`,
+          {
+            query,
+            limit,
+            stats: result.stats,
+          },
+          requestId,
+        );
 
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify({
-                entities: result.entities,
-                relations: result.relationships,
-                stats: {
-                  totalNodes: result.stats.totalEntities,
-                  totalRelations: result.stats.totalRelationships,
+              text: JSON.stringify(
+                {
+                  entities: result.entities,
+                  relations: result.relationships,
+                  stats: {
+                    totalNodes: result.stats.totalEntities,
+                    totalRelations: result.stats.totalRelationships,
+                  },
                 },
-              }, null, 2),
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+
+      case "get_graph": {
+        const { query, limit } = GetGraphSchema.parse(args);
+
+        // Use direct database query instead of going through agents
+        const storage = await getGraphStorage(globalSQLiteManager);
+        const result = await queryGraphEntities(storage, query, limit);
+
+        logger.info(
+          "GRAPH_QUERY",
+          `Retrieved graph with ${result.entities.length} entities and ${result.relationships.length} relationships`,
+          {
+            query,
+            limit,
+            stats: result.stats,
+          },
+          requestId,
+        );
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  entities: result.entities,
+                  relations: result.relationships,
+                  stats: {
+                    totalNodes: result.stats.totalEntities,
+                    totalRelations: result.stats.totalRelationships,
+                  },
+                },
+                null,
+                2,
+              ),
             },
           ],
         };
       }
 
       case "analyze_code_impact": {
-        const { entityId } = AnalyzeCodeImpactSchema.parse(args);
-        const queryAgent = await getQueryAgent();
-        const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
-        let impact: any;
-        if (typeof (queryAgent as any).getImpactedEntities === 'function') {
-          impact = await withTimeout((queryAgent as any).getImpactedEntities(entityId), timeoutMs, "analyze_code_impact", requestId);
-        } else {
-          const task: AgentTask = {
-            id: `impact-${Date.now()}`,
-            type: "query:analysis",
-            priority: 8,
-            payload: { type: "impact", params: { entityId } },
-            createdAt: Date.now(),
-          };
-          impact = await withTimeout((queryAgent as any).process(task), timeoutMs, "analyze_code_impact", requestId);
+        const { entityId, filePath: hintFilePath } = AnalyzeCodeImpactSchema.parse(args);
+        const storage = await getGraphStorage(globalSQLiteManager);
+
+        let entity = await storage.getEntity(entityId);
+        if (!entity) {
+          entity = await resolveEntityWithHint(storage, entityId, hintFilePath);
         }
-        return { content: [ { type: "text", text: JSON.stringify(impact, null, 2) } ] };
+
+        if (!entity) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ success: false, error: `Entity not found: ${entityId}` }, null, 2),
+              },
+            ],
+          };
+        }
+
+        const relationships = await storage.getRelationshipsForEntity(entity.id);
+        const directIds = new Set<string>();
+        const outboundIds = new Set<string>();
+
+        for (const rel of relationships) {
+          if (rel.toId === entity.id) {
+            directIds.add(rel.fromId);
+          }
+          if (rel.fromId === entity.id) {
+            outboundIds.add(rel.toId);
+          }
+        }
+
+        const directEntities = (await Promise.all(Array.from(directIds).map((id) => storage.getEntity(id)))).filter(
+          (e): e is Entity => Boolean(e),
+        );
+
+        const indirectIds = new Set<string>();
+        for (const direct of directEntities) {
+          const rels = await storage.getRelationshipsForEntity(direct.id);
+          for (const rel of rels) {
+            const candidate = rel.fromId === direct.id ? rel.toId : rel.fromId;
+            if (candidate !== entity.id && !directIds.has(candidate)) {
+              indirectIds.add(candidate);
+            }
+          }
+        }
+
+        const indirectEntities = (await Promise.all(Array.from(indirectIds).map((id) => storage.getEntity(id)))).filter(
+          (e): e is Entity => Boolean(e),
+        );
+
+        const affectedFiles = new Set<string>();
+        for (const sample of [...directEntities, ...indirectEntities]) {
+          affectedFiles.add(sample.filePath);
+        }
+
+        const totalImpact = directEntities.length + indirectEntities.length;
+        const riskLevel =
+          totalImpact > 50 ? "critical" : totalImpact > 20 ? "high" : totalImpact > 5 ? "medium" : "low";
+
+        const outboundSummaries = (
+          await Promise.all(
+            Array.from(outboundIds).map(async (id) => {
+              const dep = await storage.getEntity(id);
+              return dep ? mapEntitySummary(dep) : null;
+            }),
+          )
+        ).filter((item): item is ReturnType<typeof mapEntitySummary> => Boolean(item));
+
+        const impact = {
+          source: mapEntitySummary(entity),
+          directImpacts: directEntities.map((item) => mapEntitySummary(item)),
+          indirectImpacts: indirectEntities.map((item) => mapEntitySummary(item)),
+          outboundDependencies: outboundSummaries,
+          affectedFiles: Array.from(affectedFiles),
+          riskLevel,
+          totals: {
+            direct: directEntities.length,
+            indirect: indirectEntities.length,
+            outbound: outboundIds.size,
+          },
+        };
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(impact, null, 2),
+            },
+          ],
+        };
       }
 
       case "get_graph_stats": {
-        const storage = await getGraphStorage();
+        const storage = await getGraphStorage(globalSQLiteManager);
         const stats = await getGraphStats(storage);
 
         logger.info("GRAPH_STATS", "Retrieved graph statistics", stats, requestId);
@@ -1174,7 +1855,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "get_graph_health": {
         const { minEntities, minRelationships, sample } = GetGraphHealthSchema.parse(args ?? {});
-        const storage = await getGraphStorage();
+        const storage = await getGraphStorage(globalSQLiteManager);
         const metrics = await storage.getMetrics();
 
         // Try a tiny sample query to ensure read path is functional

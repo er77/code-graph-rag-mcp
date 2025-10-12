@@ -26,6 +26,7 @@ import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { ConnectionPool } from "../query/connection-pool.js";
 import { GraphQueryProcessor } from "../query/graph-query-processor.js";
 import { QueryCache } from "../query/query-cache.js";
+import { getSQLiteManager } from "../storage/sqlite-manager.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
 import type {
   Change,
@@ -92,12 +93,14 @@ export class QueryAgent extends BaseAgent implements QueryOperations {
     console.log(`[${this.id}] Initializing QueryAgent...`);
 
     // Initialize components
+    const sqliteManager = getSQLiteManager();
     this.connectionPool = new ConnectionPool({
       maxConnections: 4,
       minConnections: 1,
       acquireTimeout: 5000,
       idleTimeout: 30000,
       connectionTestInterval: 60000,
+      sqliteManager,
     });
     await this.connectionPool.initialize();
 
@@ -105,7 +108,6 @@ export class QueryAgent extends BaseAgent implements QueryOperations {
     await this.cache.initialize();
 
     this.queryProcessor = new GraphQueryProcessor(this.connectionPool, this.cache);
-
 
     // Subscribe to knowledge bus events
     this.subscribeToKnowledgeBus();
@@ -507,18 +509,14 @@ export class QueryAgent extends BaseAgent implements QueryOperations {
     cacheHitRate: number;
   } {
     const cacheStats = this.cache.getStats();
-    
+
     const totalCacheRequests = cacheStats.totalHits + cacheStats.totalMisses;
-    const cacheHitRate = totalCacheRequests > 0 
-      ? cacheStats.totalHits / totalCacheRequests 
-      : 0;
-    
+    const cacheHitRate = totalCacheRequests > 0 ? cacheStats.totalHits / totalCacheRequests : 0;
+
     return {
       totalQueries: this.queryMetrics.totalQueries,
       averageResponseTime:
-        this.queryMetrics.totalQueries > 0 
-          ? this.queryMetrics.totalTime / this.queryMetrics.totalQueries 
-          : 0,
+        this.queryMetrics.totalQueries > 0 ? this.queryMetrics.totalTime / this.queryMetrics.totalQueries : 0,
       cacheHitRate,
     };
   }
