@@ -174,20 +174,34 @@ list_entity_relationships (entityName: "YourEntity", relationshipTypes: ["import
 
 ## 📋 **Changelog**
 
+### 🚀 Version 2.6.0 (2025-10-12) - **Major Architecture Upgrade**
+
+**Breaking Changes & Major Improvements** ⚡
+
+- 🔄 **Provider-based embeddings**: New architecture supporting memory/transformers/ollama/openai/cloudru providers
+- 🎯 **Deterministic graph IDs**: SHA256-based stable IDs for entities and relationships
+- ✨ **Enhanced vector store**: Renamed tables (`doc_embeddings`, `vec_doc_embeddings`) with improved sqlite-vec integration
+- 🔧 **YAML-driven configuration**: Unified configuration across parser/indexer/embedding agents
+- 📊 **Improved parser**: Re-enabled tree-sitter ParserAgent with incremental parsing and richer metadata
+- 🛡️ **Hardened MCP tools**: Better entity resolution, structural+semantic responses, improved graph operations
+- 🔁 **Idempotent operations**: Local de-duplication and ON CONFLICT upserts for consistent graph writes
+
+**Technical Details:**
+- Dynamic dimension detection at runtime with safe fallbacks
+- Batch deduplication by ID with transactional updates
+- Enhanced language analyzers with structured pattern data
+- SQLiteManager + GraphStorage singleton for consistency
+
 ### 🎉 Version 2.5.9 (2025-10-06) - **100% Success Rate**
 
-**All 17 MCP methods working perfectly!** ✅
-
-- ✅ **Complete vector schema fix**: Fixed `fallbackSearchWithFilters()` to handle both sqlite-vec and fallback schemas
-- ✅ **4 semantic methods now fully functional**: `find_similar_code`, `suggest_refactoring`, `cross_language_search`, `find_related_concepts`
-- ✅ **Verified 100% success**: All 17/17 MCP codegraph methods tested without errors
+- ✅ **Complete vector schema fix**: Dual-schema support for sqlite-vec and fallback modes
+- ✅ **All 17 MCP methods working**: Verified 100% success rate
 - 📈 **Success rate**: 33% (v2.5.7) → 61% (v2.5.8) → **100% (v2.5.9)**
 
 ### Version 2.5.8 (2025-10-06) - Critical Infrastructure Fixes
 
-- ✅ **Fixed agent concurrency limit**: 3 → 10 concurrent agents (fixes 4 methods)
+- ✅ **Fixed agent concurrency limit**: 3 → 10 concurrent agents
 - ✅ **Fixed vector database schema**: Dual-schema support for sqlite-vec extension
-- 📈 **Success rate improvement**: 33% → 61%+
 
 ### Previous Versions
 

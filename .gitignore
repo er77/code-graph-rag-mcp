@@ -193,3 +193,11 @@ AGENTS.md
 /.memory_bank
 /.memory_bank
 data/*
+vectors.db-shm
+vectors.db-wal
+data/query_cache.db-wal
+data/query_cache.db-shm
+*.db-shm
+*.db-wal
+*.db-shm
+*.db-wal
