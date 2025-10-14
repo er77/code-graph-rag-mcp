@@ -3,6 +3,7 @@
  * Implements task distribution, load balancing, and resource management
  */
 
+import { getConfig } from "../config/yaml-config.js";
 import {
   type Agent,
   type AgentMessage,
@@ -28,20 +29,59 @@ interface CoordinatorConfig {
   loadBalancingStrategy: "round-robin" | "least-loaded" | "priority";
 }
 
+function getCoordinatorAgentDefaults(): {
+  capabilities: { maxConcurrency: number; memoryLimit: number; priority: number };
+  config: CoordinatorConfig;
+} {
+  const appConfig = getConfig();
+  const coordinatorConfig = appConfig.coordinator ?? {};
+
+  const resourceConstraints: ResourceConstraints = {
+    maxMemoryMB: coordinatorConfig.resourceConstraints?.maxMemoryMB ?? 1024,
+    maxCpuPercent: coordinatorConfig.resourceConstraints?.maxCpuPercent ?? 80,
+    maxConcurrentAgents:
+      coordinatorConfig.resourceConstraints?.maxConcurrentAgents ?? appConfig.mcp.agents?.maxConcurrent ?? 10,
+    maxTaskQueueSize: coordinatorConfig.resourceConstraints?.maxTaskQueueSize ?? 100,
+  };
+
+  return {
+    capabilities: {
+      maxConcurrency: coordinatorConfig.maxConcurrency ?? 100,
+      memoryLimit: coordinatorConfig.memoryLimit ?? 128,
+      priority: coordinatorConfig.priority ?? 10,
+    },
+    config: {
+      resourceConstraints,
+      taskQueueLimit: coordinatorConfig.taskQueueLimit ?? 100,
+      loadBalancingStrategy: coordinatorConfig.loadBalancingStrategy ?? "least-loaded",
+    },
+  };
+}
+
 export class CoordinatorAgent extends BaseAgent implements AgentPool {
   public agents: Map<string, Agent> = new Map();
   private config: CoordinatorConfig;
   private roundRobinIndex: Map<AgentType, number> = new Map();
   private pendingTasks: Map<string, AgentTask> = new Map();
 
-  constructor(config: CoordinatorConfig) {
-    super(AgentType.COORDINATOR, {
-      maxConcurrency: 100, // Can coordinate many tasks
-      memoryLimit: 128, // MB - lightweight coordinator
-      priority: 10, // Highest priority
-    });
+  constructor(config: Partial<CoordinatorConfig> = {}) {
+    const defaults = getCoordinatorAgentDefaults();
+    super(AgentType.COORDINATOR, defaults.capabilities);
 
-    this.config = config;
+    const resourceConstraints: ResourceConstraints = {
+      maxMemoryMB: config.resourceConstraints?.maxMemoryMB ?? defaults.config.resourceConstraints.maxMemoryMB,
+      maxCpuPercent: config.resourceConstraints?.maxCpuPercent ?? defaults.config.resourceConstraints.maxCpuPercent,
+      maxConcurrentAgents:
+        config.resourceConstraints?.maxConcurrentAgents ?? defaults.config.resourceConstraints.maxConcurrentAgents,
+      maxTaskQueueSize:
+        config.resourceConstraints?.maxTaskQueueSize ?? defaults.config.resourceConstraints.maxTaskQueueSize,
+    };
+
+    this.config = {
+      resourceConstraints,
+      taskQueueLimit: config.taskQueueLimit ?? defaults.config.taskQueueLimit,
+      loadBalancingStrategy: config.loadBalancingStrategy ?? defaults.config.loadBalancingStrategy,
+    };
   }
 
   protected async onInitialize(): Promise<void> {
