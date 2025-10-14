@@ -4,9 +4,10 @@
  * that are delegated by the Conductor orchestrator
  */
 
-import { readdirSync, statSync } from "node:fs";
-import { extname, join } from "node:path";
-import { ConfigLoader } from "../config/yaml-config.js";
+
+import { readdirSync, statSync } from "fs";
+import { extname, join } from "path";
+import { ConfigLoader, getConfig } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { getSQLiteManager } from "../storage/sqlite-manager.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
@@ -14,6 +15,15 @@ import { BaseAgent } from "./base.js";
 import { IndexerAgent } from "./indexer-agent.js";
 // Temporarily disable ParserAgent due to web-tree-sitter ESM issues
 import { ParserAgent } from "./parser-agent.js";
+
+function getDevAgentConfig() {
+  const config = getConfig();
+  return {
+    maxConcurrency: config.devAgent?.maxConcurrency ?? 3,
+    memoryLimit: config.devAgent?.memoryLimit ?? 256,
+    priority: config.devAgent?.priority ?? 7,
+  };
+}
 
 export class DevAgent extends BaseAgent {
   private parserAgent: ParserAgent | null = null;
@@ -24,11 +34,12 @@ export class DevAgent extends BaseAgent {
   private readonly defaultMemoryLimit: number;
 
   constructor(_agentId?: string) {
+    const agentConfig = getDevAgentConfig();
     super(AgentType.DEV, {
-      maxConcurrency: 3,
-      memoryLimit: 256, // MB
+      maxConcurrency: agentConfig.maxConcurrency,
+      memoryLimit: agentConfig.memoryLimit,
       cpuAffinity: undefined,
-      priority: 7,
+      priority: agentConfig.priority,
     });
 
     this.defaultMaxConcurrency = this.capabilities.maxConcurrency;

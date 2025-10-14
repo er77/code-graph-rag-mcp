@@ -153,12 +153,56 @@ export interface IndexerConfig {
   cacheTTL?: number;
 }
 
+export interface AgentRuntimeConfig {
+  maxConcurrency?: number;
+  memoryLimit?: number;
+  priority?: number;
+}
+
+export type DevAgentConfig = AgentRuntimeConfig;
+export type DoraAgentConfig = AgentRuntimeConfig;
+
+export interface QueryAgentConfig extends AgentRuntimeConfig {
+  simpleQueryTimeout?: number;
+  complexQueryTimeout?: number;
+  cacheWarmupSize?: number;
+}
+
+export interface SemanticAgentConfig extends AgentRuntimeConfig {
+  batchSize?: number;
+  modelPath?: string;
+}
+
+export interface AgentResourceConstraints {
+  maxMemoryMB: number;
+  maxCpuPercent: number;
+  maxConcurrentAgents: number;
+  maxTaskQueueSize: number;
+}
+
+export interface CoordinatorConfig extends AgentRuntimeConfig {
+  taskQueueLimit?: number;
+  loadBalancingStrategy?: "round-robin" | "least-loaded" | "priority";
+  resourceConstraints: AgentResourceConstraints;
+}
+
+export interface ConductorConfig extends CoordinatorConfig {
+  complexityThreshold?: number;
+  mandatoryDelegation?: boolean;
+}
+
 export interface AppConfig {
   mcp: MCPConfig;
   database: DatabaseConfig;
   logging: LoggingConfig;
   parser: ParserConfig;
   indexer: IndexerConfig;
+  devAgent: DevAgentConfig;
+  doraAgent: DoraAgentConfig;
+  queryAgent: QueryAgentConfig;
+  semanticAgent: SemanticAgentConfig;
+  coordinator: CoordinatorConfig;
+  conductor: ConductorConfig;
   environment: string;
   debug: boolean;
 }
@@ -237,6 +281,59 @@ const DEFAULT_CONFIG: AppConfig = {
     cacheSize: 52428800, // 50MB
     cacheTTL: 300000, // 5 minutes
   },
+  devAgent: {
+    maxConcurrency: 3,
+    memoryLimit: 256,
+    priority: 7,
+  },
+  doraAgent: {
+    maxConcurrency: 2,
+    memoryLimit: 128,
+    priority: 6,
+  },
+  queryAgent: {
+    maxConcurrency: 10,
+    memoryLimit: 112,
+    priority: 9,
+    simpleQueryTimeout: 100,
+    complexQueryTimeout: 1000,
+    cacheWarmupSize: 100,
+  },
+  semanticAgent: {
+    maxConcurrency: 5,
+    memoryLimit: 240,
+    priority: 8,
+    batchSize: 8,
+    modelPath: "./models",
+  },
+  coordinator: {
+    maxConcurrency: 100,
+    memoryLimit: 128,
+    priority: 10,
+    taskQueueLimit: 100,
+    loadBalancingStrategy: "least-loaded",
+    resourceConstraints: {
+      maxMemoryMB: 1024,
+      maxCpuPercent: 80,
+      maxConcurrentAgents: 10,
+      maxTaskQueueSize: 100,
+    },
+  },
+  conductor: {
+    maxConcurrency: 100,
+    memoryLimit: 128,
+    priority: 10,
+    taskQueueLimit: 100,
+    loadBalancingStrategy: "least-loaded",
+    resourceConstraints: {
+      maxMemoryMB: 1024,
+      maxCpuPercent: 80,
+      maxConcurrentAgents: 10,
+      maxTaskQueueSize: 100,
+    },
+    complexityThreshold: 8,
+    mandatoryDelegation: true,
+  },
   environment: "development",
   debug: false,
 };
@@ -247,6 +344,7 @@ const DEFAULT_CONFIG: AppConfig = {
 
 export class ConfigLoader {
   private static instance: ConfigLoader;
+  private static overridePath: string | undefined;
   private config: AppConfig;
   private configPath: string;
 
@@ -263,6 +361,14 @@ export class ConfigLoader {
       ConfigLoader.instance = new ConfigLoader();
     }
     return ConfigLoader.instance;
+  }
+
+  public static setOverridePath(path?: string): void {
+    ConfigLoader.overridePath = path ? resolve(process.cwd(), path) : undefined;
+    if (ConfigLoader.instance) {
+      ConfigLoader.instance.configPath = ConfigLoader.instance.resolveConfigPath();
+      ConfigLoader.instance.reload();
+    }
   }
 
   /**
@@ -353,6 +459,14 @@ export class ConfigLoader {
    * Resolve configuration file path based on environment
    */
   private resolveConfigPath(): string {
+    if (ConfigLoader.overridePath) {
+      if (!existsSync(ConfigLoader.overridePath)) {
+        console.error(`[Config] Override config file not found: ${ConfigLoader.overridePath}`);
+        process.exit(1);
+      }
+      return ConfigLoader.overridePath;
+    }
+
     const env = process.env.NODE_ENV || "development";
     const configDir = resolve(process.cwd(), "config");
 
@@ -619,6 +733,171 @@ export class ConfigLoader {
           yamlConfig.indexer?.cacheTTL ||
           Number(process.env.INDEXER_AGENT_CACHE_TTL) ||
           DEFAULT_CONFIG.indexer?.cacheTTL,
+      },
+      devAgent: {
+        maxConcurrency:
+          yamlConfig.devAgent?.maxConcurrency ||
+          Number(process.env.DEV_AGENT_MAX_CONCURRENCY) ||
+          DEFAULT_CONFIG.devAgent.maxConcurrency,
+        memoryLimit:
+          yamlConfig.devAgent?.memoryLimit ||
+          Number(process.env.DEV_AGENT_MEMORY_LIMIT) ||
+          DEFAULT_CONFIG.devAgent.memoryLimit,
+        priority:
+          yamlConfig.devAgent?.priority || Number(process.env.DEV_AGENT_PRIORITY) || DEFAULT_CONFIG.devAgent.priority,
+      },
+      doraAgent: {
+        maxConcurrency:
+          yamlConfig.doraAgent?.maxConcurrency ||
+          Number(process.env.DORA_AGENT_MAX_CONCURRENCY) ||
+          DEFAULT_CONFIG.doraAgent.maxConcurrency,
+        memoryLimit:
+          yamlConfig.doraAgent?.memoryLimit ||
+          Number(process.env.DORA_AGENT_MEMORY_LIMIT) ||
+          DEFAULT_CONFIG.doraAgent.memoryLimit,
+        priority:
+          yamlConfig.doraAgent?.priority ||
+          Number(process.env.DORA_AGENT_PRIORITY) ||
+          DEFAULT_CONFIG.doraAgent.priority,
+      },
+      queryAgent: {
+        maxConcurrency:
+          yamlConfig.queryAgent?.maxConcurrency ||
+          Number(process.env.QUERY_AGENT_MAX_CONCURRENCY) ||
+          DEFAULT_CONFIG.queryAgent.maxConcurrency,
+        memoryLimit:
+          yamlConfig.queryAgent?.memoryLimit ||
+          Number(process.env.QUERY_AGENT_MEMORY_LIMIT) ||
+          DEFAULT_CONFIG.queryAgent.memoryLimit,
+        priority:
+          yamlConfig.queryAgent?.priority ||
+          Number(process.env.QUERY_AGENT_PRIORITY) ||
+          DEFAULT_CONFIG.queryAgent.priority,
+        simpleQueryTimeout:
+          yamlConfig.queryAgent?.simpleQueryTimeout ||
+          Number(process.env.QUERY_AGENT_SIMPLE_TIMEOUT) ||
+          DEFAULT_CONFIG.queryAgent.simpleQueryTimeout,
+        complexQueryTimeout:
+          yamlConfig.queryAgent?.complexQueryTimeout ||
+          Number(process.env.QUERY_AGENT_COMPLEX_TIMEOUT) ||
+          DEFAULT_CONFIG.queryAgent.complexQueryTimeout,
+        cacheWarmupSize:
+          yamlConfig.queryAgent?.cacheWarmupSize ||
+          Number(process.env.QUERY_AGENT_CACHE_WARMUP) ||
+          DEFAULT_CONFIG.queryAgent.cacheWarmupSize,
+      },
+      semanticAgent: {
+        maxConcurrency:
+          yamlConfig.semanticAgent?.maxConcurrency ||
+          Number(process.env.SEMANTIC_AGENT_MAX_CONCURRENCY) ||
+          DEFAULT_CONFIG.semanticAgent.maxConcurrency,
+        memoryLimit:
+          yamlConfig.semanticAgent?.memoryLimit ||
+          Number(process.env.SEMANTIC_AGENT_MEMORY_LIMIT) ||
+          DEFAULT_CONFIG.semanticAgent.memoryLimit,
+        priority:
+          yamlConfig.semanticAgent?.priority ||
+          Number(process.env.SEMANTIC_AGENT_PRIORITY) ||
+          DEFAULT_CONFIG.semanticAgent.priority,
+        batchSize:
+          yamlConfig.semanticAgent?.batchSize ||
+          Number(process.env.SEMANTIC_AGENT_BATCH_SIZE) ||
+          DEFAULT_CONFIG.semanticAgent.batchSize,
+        modelPath:
+          yamlConfig.semanticAgent?.modelPath ||
+          process.env.SEMANTIC_AGENT_MODEL_PATH ||
+          DEFAULT_CONFIG.semanticAgent.modelPath,
+      },
+      coordinator: {
+        maxConcurrency:
+          yamlConfig.coordinator?.maxConcurrency ||
+          Number(process.env.COORDINATOR_MAX_CONCURRENCY) ||
+          DEFAULT_CONFIG.coordinator.maxConcurrency,
+        memoryLimit:
+          yamlConfig.coordinator?.memoryLimit ||
+          Number(process.env.COORDINATOR_MEMORY_LIMIT) ||
+          DEFAULT_CONFIG.coordinator.memoryLimit,
+        priority:
+          yamlConfig.coordinator?.priority ||
+          Number(process.env.COORDINATOR_PRIORITY) ||
+          DEFAULT_CONFIG.coordinator.priority,
+        taskQueueLimit:
+          yamlConfig.coordinator?.taskQueueLimit ||
+          Number(process.env.COORDINATOR_TASK_QUEUE_LIMIT) ||
+          DEFAULT_CONFIG.coordinator.taskQueueLimit,
+        loadBalancingStrategy:
+          (yamlConfig.coordinator?.loadBalancingStrategy as any) ||
+          (process.env.COORDINATOR_LOAD_BALANCING_STRATEGY as any) ||
+          DEFAULT_CONFIG.coordinator.loadBalancingStrategy,
+        resourceConstraints: {
+          maxMemoryMB:
+            yamlConfig.coordinator?.resourceConstraints?.maxMemoryMB ||
+            Number(process.env.COORDINATOR_MAX_MEMORY_MB) ||
+            DEFAULT_CONFIG.coordinator.resourceConstraints?.maxMemoryMB,
+          maxCpuPercent:
+            yamlConfig.coordinator?.resourceConstraints?.maxCpuPercent ||
+            Number(process.env.COORDINATOR_MAX_CPU_PERCENT) ||
+            DEFAULT_CONFIG.coordinator.resourceConstraints?.maxCpuPercent,
+          maxConcurrentAgents:
+            yamlConfig.coordinator?.resourceConstraints?.maxConcurrentAgents ||
+            Number(process.env.COORDINATOR_MAX_CONCURRENT_AGENTS) ||
+            yamlConfig.mcp?.agents?.maxConcurrent ||
+            Number(process.env.MCP_MAX_CONCURRENT_AGENTS) ||
+            DEFAULT_CONFIG.coordinator.resourceConstraints?.maxConcurrentAgents,
+          maxTaskQueueSize:
+            yamlConfig.coordinator?.resourceConstraints?.maxTaskQueueSize ||
+            Number(process.env.COORDINATOR_MAX_TASK_QUEUE_SIZE) ||
+            DEFAULT_CONFIG.coordinator.resourceConstraints?.maxTaskQueueSize,
+        },
+      },
+      conductor: {
+        maxConcurrency:
+          yamlConfig.conductor?.maxConcurrency ||
+          Number(process.env.CONDUCTOR_MAX_CONCURRENCY) ||
+          DEFAULT_CONFIG.conductor.maxConcurrency,
+        memoryLimit:
+          yamlConfig.conductor?.memoryLimit ||
+          Number(process.env.CONDUCTOR_MEMORY_LIMIT) ||
+          DEFAULT_CONFIG.conductor.memoryLimit,
+        priority:
+          yamlConfig.conductor?.priority || Number(process.env.CONDUCTOR_PRIORITY) || DEFAULT_CONFIG.conductor.priority,
+        taskQueueLimit:
+          yamlConfig.conductor?.taskQueueLimit ||
+          Number(process.env.CONDUCTOR_TASK_QUEUE_LIMIT) ||
+          DEFAULT_CONFIG.conductor.taskQueueLimit,
+        loadBalancingStrategy:
+          (yamlConfig.conductor?.loadBalancingStrategy as any) ||
+          (process.env.CONDUCTOR_LOAD_BALANCING_STRATEGY as any) ||
+          DEFAULT_CONFIG.conductor.loadBalancingStrategy,
+        resourceConstraints: {
+          maxMemoryMB:
+            yamlConfig.conductor?.resourceConstraints?.maxMemoryMB ||
+            Number(process.env.CONDUCTOR_MAX_MEMORY_MB) ||
+            DEFAULT_CONFIG.conductor.resourceConstraints?.maxMemoryMB,
+          maxCpuPercent:
+            yamlConfig.conductor?.resourceConstraints?.maxCpuPercent ||
+            Number(process.env.CONDUCTOR_MAX_CPU_PERCENT) ||
+            DEFAULT_CONFIG.conductor.resourceConstraints?.maxCpuPercent,
+          maxConcurrentAgents:
+            yamlConfig.conductor?.resourceConstraints?.maxConcurrentAgents ||
+            Number(process.env.CONDUCTOR_MAX_CONCURRENT_AGENTS) ||
+            yamlConfig.mcp?.agents?.maxConcurrent ||
+            Number(process.env.MCP_MAX_CONCURRENT_AGENTS) ||
+            DEFAULT_CONFIG.conductor.resourceConstraints?.maxConcurrentAgents,
+          maxTaskQueueSize:
+            yamlConfig.conductor?.resourceConstraints?.maxTaskQueueSize ||
+            Number(process.env.CONDUCTOR_MAX_TASK_QUEUE_SIZE) ||
+            DEFAULT_CONFIG.conductor.resourceConstraints?.maxTaskQueueSize,
+        },
+        complexityThreshold:
+          yamlConfig.conductor?.complexityThreshold ||
+          Number(process.env.CONDUCTOR_COMPLEXITY_THRESHOLD) ||
+          DEFAULT_CONFIG.conductor.complexityThreshold,
+        mandatoryDelegation:
+          yamlConfig.conductor?.mandatoryDelegation !== undefined
+            ? yamlConfig.conductor?.mandatoryDelegation
+            : process.env.CONDUCTOR_MANDATORY_DELEGATION !== "false" &&
+              (process.env.CONDUCTOR_MANDATORY_DELEGATION === "true" || DEFAULT_CONFIG.conductor.mandatoryDelegation),
       },
       environment: yamlConfig.environment || process.env.NODE_ENV || DEFAULT_CONFIG.environment,
       debug: yamlConfig.debug !== undefined ? yamlConfig.debug : process.env.DEBUG === "true" || DEFAULT_CONFIG.debug,

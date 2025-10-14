@@ -17,6 +17,7 @@
  * - Task Completion Checklist: At the end of each task, always proceed with checklist: what was required vs what was done, do you follow requirements.
  */
 
+import { getConfig } from "../config/yaml-config.js";
 import {
   type Agent,
   type AgentMessage,
@@ -66,6 +67,38 @@ interface MethodProposal {
   recommended: boolean;
 }
 
+function getConductorAgentDefaults(): {
+  capabilities: { maxConcurrency: number; memoryLimit: number; priority: number };
+  config: ConductorConfig;
+} {
+  const appConfig = getConfig();
+  const conductorConfig = appConfig.conductor ?? {};
+
+  const resourceConstraints: ResourceConstraints = {
+    maxMemoryMB: conductorConfig.resourceConstraints?.maxMemoryMB ?? 1024,
+    maxCpuPercent: conductorConfig.resourceConstraints?.maxCpuPercent ?? 80,
+    maxConcurrentAgents:
+      conductorConfig.resourceConstraints?.maxConcurrentAgents ?? appConfig.mcp.agents?.maxConcurrent ?? 10,
+    maxTaskQueueSize: conductorConfig.resourceConstraints?.maxTaskQueueSize ?? 100,
+  };
+
+  return {
+    capabilities: {
+      maxConcurrency: conductorConfig.maxConcurrency ?? 100,
+      memoryLimit: conductorConfig.memoryLimit ?? 128,
+      priority: conductorConfig.priority ?? 10,
+    },
+    config: {
+      resourceConstraints,
+      taskQueueLimit: conductorConfig.taskQueueLimit ?? 100,
+      loadBalancingStrategy: conductorConfig.loadBalancingStrategy ?? "least-loaded",
+      complexityThreshold: conductorConfig.complexityThreshold ?? 8,
+      mandatoryDelegation:
+        conductorConfig.mandatoryDelegation !== undefined ? conductorConfig.mandatoryDelegation : true,
+    },
+  };
+}
+
 export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   public agents: Map<string, Agent> = new Map();
   private config: ConductorConfig;
@@ -97,23 +130,25 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   private agentLastSeen: Map<string, number> = new Map();
 
   constructor(config: Partial<ConductorConfig> = {}) {
-    super(AgentType.COORDINATOR, {
-      maxConcurrency: 100,
-      memoryLimit: 128,
-      priority: 10,
-    });
+    const defaults = getConductorAgentDefaults();
+    super(AgentType.COORDINATOR, defaults.capabilities);
+
+    const resourceConstraints: ResourceConstraints = {
+      maxMemoryMB: config.resourceConstraints?.maxMemoryMB ?? defaults.config.resourceConstraints.maxMemoryMB,
+      maxCpuPercent: config.resourceConstraints?.maxCpuPercent ?? defaults.config.resourceConstraints.maxCpuPercent,
+      maxConcurrentAgents:
+        config.resourceConstraints?.maxConcurrentAgents ?? defaults.config.resourceConstraints.maxConcurrentAgents,
+      maxTaskQueueSize:
+        config.resourceConstraints?.maxTaskQueueSize ?? defaults.config.resourceConstraints.maxTaskQueueSize,
+    };
 
     this.config = {
-      resourceConstraints: config.resourceConstraints || {
-        maxMemoryMB: 1024,
-        maxCpuPercent: 80,
-        maxConcurrentAgents: 10,
-        maxTaskQueueSize: 100,
-      },
-      taskQueueLimit: config.taskQueueLimit || 100,
-      loadBalancingStrategy: config.loadBalancingStrategy || "least-loaded",
-      complexityThreshold: config.complexityThreshold || 5,
-      mandatoryDelegation: config.mandatoryDelegation !== false, // Default true
+      resourceConstraints,
+      taskQueueLimit: config.taskQueueLimit ?? defaults.config.taskQueueLimit,
+      loadBalancingStrategy: config.loadBalancingStrategy ?? defaults.config.loadBalancingStrategy,
+      complexityThreshold: config.complexityThreshold ?? defaults.config.complexityThreshold,
+      mandatoryDelegation:
+        config.mandatoryDelegation !== undefined ? config.mandatoryDelegation : defaults.config.mandatoryDelegation,
     };
   }
 
