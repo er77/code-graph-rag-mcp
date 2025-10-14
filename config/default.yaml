@@ -84,6 +84,63 @@ indexer:
   cacheSize: 52428800     # 50MB cache (in bytes)
   cacheTTL: 300000        # 5 minutes (in ms)
 
+# Dev Agent Configuration
+devAgent:
+  maxConcurrency: 3
+  memoryLimit: 256
+  priority: 7
+
+# Dora Agent Configuration
+doraAgent:
+  maxConcurrency: 2
+  memoryLimit: 128
+  priority: 6
+
+# Query Agent Configuration
+queryAgent:
+  maxConcurrency: 10
+  memoryLimit: 112
+  priority: 9
+  simpleQueryTimeout: 100   # ms
+  complexQueryTimeout: 1000  # ms
+  cacheWarmupSize: 100
+
+# Semantic Agent Configuration
+semanticAgent:
+  maxConcurrency: 5
+  memoryLimit: 240
+  priority: 8
+  batchSize: 8
+  modelPath: "./models"
+
+# Coordinator Agent Configuration
+coordinator:
+  maxConcurrency: 100
+  memoryLimit: 128
+  priority: 10
+  taskQueueLimit: 100
+  loadBalancingStrategy: "least-loaded"
+  resourceConstraints:
+    maxMemoryMB: 1024
+    maxCpuPercent: 80
+    maxConcurrentAgents: 10
+    maxTaskQueueSize: 100
+
+# Conductor Orchestrator Configuration
+conductor:
+  maxConcurrency: 100
+  memoryLimit: 128
+  priority: 10
+  taskQueueLimit: 100
+  loadBalancingStrategy: "least-loaded"
+  resourceConstraints:
+    maxMemoryMB: 1024
+    maxCpuPercent: 80
+    maxConcurrentAgents: 10
+    maxTaskQueueSize: 100
+  complexityThreshold: 8
+  mandatoryDelegation: true
+
 # Performance Configuration
 performance:
   monitoring:

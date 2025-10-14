@@ -4,18 +4,29 @@
  * and discovering relationships that are delegated by the Conductor
  */
 
+import { getConfig } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
 import { BaseAgent } from "./base.js";
 
+function getDoraAgentConfig() {
+  const config = getConfig();
+  return {
+    maxConcurrency: config.doraAgent?.maxConcurrency ?? 2,
+    memoryLimit: config.doraAgent?.memoryLimit ?? 128,
+    priority: config.doraAgent?.priority ?? 6,
+  };
+}
+
 export class DoraAgent extends BaseAgent {
   constructor(_agentId?: string) {
+    const agentConfig = getDoraAgentConfig();
     super(AgentType.DORA, {
       // Use DORA type for research/exploration agent
-      maxConcurrency: 2,
-      memoryLimit: 128, // MB
+      maxConcurrency: agentConfig.maxConcurrency,
+      memoryLimit: agentConfig.memoryLimit,
       cpuAffinity: undefined,
-      priority: 6,
+      priority: agentConfig.priority,
     });
   }
 
