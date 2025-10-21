@@ -130,11 +130,11 @@ export class QueryOptimizer {
 
     // Apply WHERE clause
     if (conditions.length > 0) {
-      sql += " WHERE " + conditions.join(" AND ");
+      sql += ` WHERE ${conditions.join(" AND ")}`;
     }
 
     // Apply ordering and limits
-    sql += " ORDER BY name ASC LIMIT " + DEFAULT_LIMIT;
+    sql += ` ORDER BY name ASC LIMIT ${DEFAULT_LIMIT}`;
 
     return {
       sql,
@@ -189,8 +189,8 @@ export class QueryOptimizer {
       }
     }
 
-    sql += " WHERE " + conditions.join(" AND ");
-    sql += " LIMIT " + MAX_LIMIT;
+    sql += ` WHERE ${conditions.join(" AND ")}`;
+    sql += ` LIMIT ${MAX_LIMIT}`;
 
     return {
       sql,
@@ -426,8 +426,8 @@ export class QueryOptimizer {
     pattern = pattern.replace(/\\b/g, "");
 
     // Add wildcards if not present
-    if (!pattern.startsWith("%")) pattern = "%" + pattern;
-    if (!pattern.endsWith("%")) pattern = pattern + "%";
+    if (!pattern.startsWith("%")) pattern = `%${pattern}`;
+    if (!pattern.endsWith("%")) pattern = `${pattern}%`;
 
     return pattern;
   }

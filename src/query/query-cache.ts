@@ -247,7 +247,7 @@ export class QueryCache {
     // Check L1 and L2 caches
     const checkEntry = (entry: CacheEntry) => {
       const value = entry.value as any;
-      if (value && value.data) {
+      if (value?.data) {
         // Simple check: if the data contains the changed entity ID
         if (changeData.entityId && JSON.stringify(value.data).includes(changeData.entityId)) {
           affected.push(entry.key);

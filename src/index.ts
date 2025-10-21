@@ -51,10 +51,12 @@ import { knowledgeBus } from "./core/knowledge-bus.js";
 import { resourceManager } from "./core/resource-manager.js";
 import { getGraphStorage, initializeGraphStorage } from "./storage/graph-storage-factory.js";
 import { getSQLiteManager } from "./storage/sqlite-manager.js";
+import { collectAgentMetrics } from "./tools/agent-metrics.js";
 // Import graph query functions
 import { getGraphStats, queryGraphEntities } from "./tools/graph-query.js";
 import type { AgentTask } from "./types/agent.js";
 import { AgentType } from "./types/agent.js";
+import { AgentBusyError } from "./types/errors.js";
 import type { Entity, Relationship } from "./types/storage.js";
 import { EntityType } from "./types/storage.js";
 import { createRequestId, logger } from "./utils/logger.js";
@@ -347,8 +349,8 @@ async function resolveEntityWithHint(
       })
       .sort((a, b) => b.score - a.score || (a.e.filePath?.length ?? 0) - (b.e.filePath?.length ?? 0));
 
-    if (ranked.length > 0 && ranked[0]!.score > 0) {
-      return ranked[0]!.e;
+    if (ranked.length > 0 && ranked[0]?.score > 0) {
+      return ranked[0]?.e;
     }
   }
 
@@ -375,7 +377,7 @@ async function resolveEntityWithHint(
     })
     .sort((a, b) => b.score - a.score || (a.e.filePath?.length ?? 0) - (b.e.filePath?.length ?? 0));
 
-  return ranked[0]!.e;
+  return ranked[0]?.e;
 }
 
 function mapEntitySummary(entity: Entity) {
@@ -545,12 +547,22 @@ const GetGraphHealthSchema = z.object({
   sample: z.number().optional().default(1).describe("Sample size to fetch for verification"),
 });
 
+const GetBusStatsSchema = z.object({});
+const ClearBusTopicSchema = z.object({
+  topic: z
+    .string()
+    .min(1)
+    .describe("Exact knowledge bus topic to clear (use wildcards via knowledgeBus.query for inspection)"),
+});
+
 // Convenience tool: clean index (reset + index)
 const CleanIndexSchema = z.object({
   directory: z.string().describe("Directory to index after reset").optional(),
   excludePatterns: z.array(z.string()).describe("Patterns to exclude during indexing").optional().default([]),
   fullScan: z.boolean().optional().default(false),
 });
+
+const GetAgentMetricsSchema = z.object({});
 
 // Create MCP server
 const server = new Server(
@@ -685,6 +697,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         description: "Health check for graph storage (totals + sample)",
         inputSchema: zodToJsonSchema(GetGraphHealthSchema) as any,
       },
+      {
+        name: "get_agent_metrics",
+        description: "Collect runtime telemetry for conductor and registered agents",
+        inputSchema: zodToJsonSchema(GetAgentMetricsSchema) as any,
+      },
+      {
+        name: "get_bus_stats",
+        description: "Inspect knowledge bus statistics (topics, entries, subscriptions)",
+        inputSchema: zodToJsonSchema(GetBusStatsSchema) as any,
+      },
+      {
+        name: "clear_bus_topic",
+        description: "Remove cached knowledge entries for a specific topic",
+        inputSchema: zodToJsonSchema(ClearBusTopicSchema) as any,
+      },
     ],
   };
 });
@@ -717,12 +744,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         // Check codebase size and add adaptive patterns
         try {
-          const { execSync } = await import("child_process");
+          const { execSync } = await import("node:child_process");
           const fileCount = execSync(
             `find "${targetDir}" -type f \\( -name "*.js" -o -name "*.ts" -o -name "*.py" -o -name "*.java" -o -name "*.cpp" -o -name "*.c" -o -name "*.go" -o -name "*.rs" \\) | wc -l`,
             { encoding: "utf8" },
           ).trim();
-          const numFiles = parseInt(fileCount);
+          const numFiles = parseInt(fileCount, 10);
 
           logger.info(
             "INDEXING",
@@ -732,9 +759,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           );
 
           // Adjust resource allocation based on codebase size
-          const { execSync: execSync2 } = await import("child_process");
+          const { execSync: execSync2 } = await import("node:child_process");
           const projectSizeBytes = execSync2(`du -sb "${targetDir}" | cut -f1`, { encoding: "utf8" }).trim();
-          const projectSizeMB = Math.floor(parseInt(projectSizeBytes) / (1024 * 1024));
+          const projectSizeMB = Math.floor(parseInt(projectSizeBytes, 10) / (1024 * 1024));
           resourceManager.adjustForCodebaseSize(numFiles, projectSizeMB);
 
           // For very large codebases (>2000 files), add more aggressive patterns
@@ -889,21 +916,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         // Adaptive patterns as in index tool
         try {
-          const { execSync } = await import("child_process");
+          const { execSync } = await import("node:child_process");
           const fileCount = execSync(
             `find "${targetDir}" -type f \\( -name "*.js" -o -name "*.ts" -o -name "*.py" -o -name "*.java" -o -name "*.cpp" -o -name "*.c" -o -name "*.go" -o -name "*.rs" \\) | wc -l`,
             { encoding: "utf8" },
           ).trim();
-          const numFiles = parseInt(fileCount);
+          const numFiles = parseInt(fileCount, 10);
           logger.info(
             "INDEXING",
             `Detected ${numFiles} source files in codebase (clean_index)`,
             { directory: targetDir, fileCount: numFiles },
             requestId,
           );
-          const { execSync: execSync2 } = await import("child_process");
+          const { execSync: execSync2 } = await import("node:child_process");
           const projectSizeBytes = execSync2(`du -sb "${targetDir}" | cut -f1`, { encoding: "utf8" }).trim();
-          const projectSizeMB = Math.floor(parseInt(projectSizeBytes) / (1024 * 1024));
+          const projectSizeMB = Math.floor(parseInt(projectSizeBytes, 10) / (1024 * 1024));
           resourceManager.adjustForCodebaseSize(numFiles, projectSizeMB);
           if (numFiles > 2000) {
             enhancedExcludePatterns.push(
@@ -1909,11 +1936,99 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case "get_agent_metrics": {
+        GetAgentMetricsSchema.parse(args ?? {});
+
+        const cond = getConductor();
+        await cond.initialize();
+
+        const snapshot = await collectAgentMetrics({
+          conductor: cond,
+          resourceManager,
+          knowledgeBus,
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(snapshot, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "get_bus_stats": {
+        GetBusStatsSchema.parse(args ?? {});
+
+        const stats = knowledgeBus.getStats();
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(stats, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "clear_bus_topic": {
+        const { topic } = ClearBusTopicSchema.parse(args ?? {});
+
+        knowledgeBus.clearTopic(topic);
+        const stats = knowledgeBus.getStats();
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  success: true,
+                  topicCleared: topic,
+                  stats,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
+
+    if (error instanceof AgentBusyError) {
+      logger.info(
+        "AGENT_BUSY",
+        `Agent ${error.details.agentId} busy while handling ${name}`,
+        { details: error.details },
+        requestId,
+      );
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                success: false,
+                errorType: "agent_busy",
+                error: errorMessage,
+                details: error.details,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    }
 
     logger.mcpError(name, error instanceof Error ? error : new Error(errorMessage), requestId);
 

@@ -83,7 +83,7 @@ export class KnowledgeBus extends EventEmitter {
       this.subscriptions.set(topicKey, []);
     }
 
-    this.subscriptions.get(topicKey)!.push(subscription);
+    this.subscriptions.get(topicKey)?.push(subscription);
 
     this.emit("subscription:created", subscription);
 
@@ -186,7 +186,7 @@ export class KnowledgeBus extends EventEmitter {
     if (typeof pattern === "string") {
       // Support wildcards in string patterns
       if (pattern.includes("*")) {
-        const regex = new RegExp("^" + pattern.replace(/\*/g, ".*") + "$");
+        const regex = new RegExp(`^${pattern.replace(/\*/g, ".*")}$`);
         return regex.test(storedTopic);
       }
       return storedTopic === pattern;

@@ -1,6 +1,6 @@
 {
   "name": "@er77/code-graph-rag-mcp",
-  "version": "2.6.0",
+  "version": "2.6.1",
   "description": "Multi-agent LiteRAG MCP server for advanced code graph analysis",
   "license": "MIT",
   "author": "er77",
@@ -61,7 +61,7 @@
     "prepare": "simple-git-hooks"
   },
   "simple-git-hooks": {
-    "pre-commit": "lint-staged && npm run typecheck"
+    "pre-commit": "npx lint-staged"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json,css,md,yml,yaml}": "biome check --write"

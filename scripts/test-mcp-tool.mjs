@@ -14,15 +14,15 @@ import { fileURLToPath } from "node:url";
 
 // -------- Config --------
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const defaultProjectDir = process.env.PROJECT_DIR
-  || (path.basename(scriptDir) === "scripts" ? path.resolve(scriptDir, "..") : process.cwd());
+const defaultProjectDir =
+  process.env.PROJECT_DIR || (path.basename(scriptDir) === "scripts" ? path.resolve(scriptDir, "..") : process.cwd());
 const PROJECT_DIR = defaultProjectDir;
 const DIST_JS = process.env.DIST_JS || path.join(PROJECT_DIR, "dist", "index.js");
 const TARGET_DIR = process.env.TARGET_DIR || PROJECT_DIR;
 const LOG_DIR = process.env.LOG_DIR || path.join(PROJECT_DIR, "logs_llm");
 const TOTAL_TIMEOUT_SEC = parseInt(process.env.TOTAL_TIMEOUT || "300", 10);
 const DRAIN_AFTER_ALL_MS = parseInt(process.env.DRAIN_AFTER_ALL_MS || "800", 10);
-const SEND_AFTER_INDEX_MS = parseInt(process.env.SEND_AFTER_INDEX_MS || "600", 10); 
+const SEND_AFTER_INDEX_MS = parseInt(process.env.SEND_AFTER_INDEX_MS || "600", 10);
 
 const dateStr = new Date().toISOString().slice(0, 10);
 fs.mkdirSync(LOG_DIR, { recursive: true });
@@ -272,7 +272,7 @@ function logAppend(text) {
   pending.set("1", { label: "Index Codebase (full)", name: "index" });
   let failed = false;
   let indexDone = false;
-  let restSending = false; 
+  let restSending = false;
   let restSent = false;
   let exitScheduled = false;
   let drainTimer = null;
@@ -307,7 +307,6 @@ function logAppend(text) {
     if (!verdict.ok) failed = true;
     pending.delete(idKey);
 
-    
     if (idKey === "1" && !indexDone) {
       indexDone = true;
 
@@ -322,7 +321,6 @@ function logAppend(text) {
           restSent = true;
           restSending = false;
 
-          
           if (pending.size === 0) scheduleEarlyExit("no-more-after-sending");
         };
 
@@ -332,19 +330,14 @@ function logAppend(text) {
         restSent = true;
       }
 
-      
       return;
     }
 
-    
-    
-    
     if (!restSending && (restSent || afterIndex.length === 0) && pending.size === 0) {
       scheduleEarlyExit("all-responses");
     }
   }
 
-  
   let multilineAssembly = "";
   function processLine(line) {
     logAppend(line + os.EOL);
@@ -388,7 +381,6 @@ function logAppend(text) {
     logAppend(`child error: ${String(err)}${os.EOL}`);
   });
 
-  
   child.stdin.write(JSON.stringify(indexReq) + "\n");
 
   let hardTimedOut = false;

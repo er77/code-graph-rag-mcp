@@ -713,19 +713,19 @@ export class CSharpAnalyzer {
 
     // Identify Repository pattern
     const repositoryPattern = this.identifyRepositoryPattern(entities);
-    if (repositoryPattern) result.otherPatterns!.push(repositoryPattern);
+    if (repositoryPattern) result.otherPatterns?.push(repositoryPattern);
 
     // Identify Async/Await patterns
     const asyncPatterns = this.identifyAsyncPatterns(node);
-    result.otherPatterns!.push(...asyncPatterns);
+    result.otherPatterns?.push(...asyncPatterns);
 
     // Identify LINQ usage
     const linqPatterns = this.identifyLINQPatterns(node);
-    result.otherPatterns!.push(...linqPatterns);
+    result.otherPatterns?.push(...linqPatterns);
 
     // Identify Dependency Injection patterns
     const diPatterns = this.identifyDependencyInjectionPatterns(entities);
-    result.otherPatterns!.push(...diPatterns);
+    result.otherPatterns?.push(...diPatterns);
 
     return result;
   }

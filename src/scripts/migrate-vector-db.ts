@@ -111,7 +111,7 @@ class VectorDatabaseMigrator {
       console.log(`🔗 Foreign key constraint exists: ${hasForeignKey}`);
 
       return hasForeignKey;
-    } catch (error) {
+    } catch (_error) {
       console.log("⚠️ Error checking schema, assuming migration needed");
       return true;
     }
@@ -188,7 +188,7 @@ class VectorDatabaseMigrator {
           );
         `);
         console.log("✅ vec_embeddings virtual table ensured");
-      } catch (error) {
+      } catch (_error) {
         console.log("⚠️ sqlite-vec extension not available, using fallback structure");
       }
     } finally {

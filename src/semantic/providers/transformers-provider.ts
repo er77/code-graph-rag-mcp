@@ -51,7 +51,7 @@ export class TransformersProvider implements EmbeddingProvider {
     this.log?.debug("embed()", { len: text?.length }, opts?.requestId);
 
     if (!this.pipeline) await this.initialize();
-    const out = await this.pipeline!(text, { pooling: "mean", normalize: true });
+    const out = await this.pipeline?.(text, { pooling: "mean", normalize: true });
     const arr = new Float32Array(out.data);
     this.info.dimension = this.info.dimension ?? arr.length;
     return arr;
@@ -61,7 +61,7 @@ export class TransformersProvider implements EmbeddingProvider {
     this.log?.debug("embedBatch()", { count: texts.length }, opts?.requestId);
 
     if (!this.pipeline) await this.initialize();
-    const outs = await Promise.all(texts.map((t) => this.pipeline!(t, { pooling: "mean", normalize: true })));
+    const outs = await Promise.all(texts.map((t) => this.pipeline?.(t, { pooling: "mean", normalize: true })));
     return outs.map((o) => new Float32Array(o.data));
   }
 

@@ -14,6 +14,7 @@ import {
   type AgentTask,
   type AgentType,
 } from "../types/agent.js";
+import { type AgentBusyDetails, AgentBusyError } from "../types/errors.js";
 
 export abstract class BaseAgent extends EventEmitter implements Agent {
   public readonly id: string;
@@ -26,6 +27,7 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
   protected metrics: AgentMetrics;
   protected memoryUsage = 0;
   protected cpuUsage = 0;
+  private lastRejection: AgentBusyDetails | undefined;
 
   constructor(type: AgentType, capabilities: AgentCapabilities) {
     super();
@@ -68,6 +70,7 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
   }
 
   canHandle(task: AgentTask): boolean {
+    this.lastRejection = undefined;
     // Debug logging for indexer agent issues
     if (this.type === "indexer") {
       console.log(`[${this.id}] canHandle check:`, {
@@ -86,12 +89,28 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
       if (this.type === "indexer") {
         console.log(`[${this.id}] Rejected: not idle (status: ${this.status})`);
       }
+      this.lastRejection = {
+        agentId: this.id,
+        status: this.status,
+        reason: "not_idle",
+        queueLength: this.taskQueue.length,
+        maxQueue: this.capabilities.maxConcurrency,
+        retryAfterMs: 200,
+      };
       return false;
     }
     if (this.taskQueue.length >= this.capabilities.maxConcurrency) {
       if (this.type === "indexer") {
         console.log(`[${this.id}] Rejected: queue full (${this.taskQueue.length}/${this.capabilities.maxConcurrency})`);
       }
+      this.lastRejection = {
+        agentId: this.id,
+        status: this.status,
+        reason: "queue_full",
+        queueLength: this.taskQueue.length,
+        maxQueue: this.capabilities.maxConcurrency,
+        retryAfterMs: 250,
+      };
       return false;
     }
     if (this.memoryUsage > this.capabilities.memoryLimit * 0.9) {
@@ -100,6 +119,14 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
           `[${this.id}] Rejected: memory limit (${this.memoryUsage}MB > ${this.capabilities.memoryLimit * 0.9}MB)`,
         );
       }
+      this.lastRejection = {
+        agentId: this.id,
+        status: this.status,
+        reason: "memory_limit",
+        memoryUsageMB: this.memoryUsage,
+        memoryLimitMB: this.capabilities.memoryLimit,
+        retryAfterMs: 500,
+      };
       return false;
     }
 
@@ -108,12 +135,34 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
       console.log(`[${this.id}] Rejected: canProcessTask returned false`);
     }
 
+    if (!canProcess) {
+      this.lastRejection = {
+        agentId: this.id,
+        status: this.status,
+        reason: "unsupported_task",
+        queueLength: this.taskQueue.length,
+        maxQueue: this.capabilities.maxConcurrency,
+      };
+    }
+
     return canProcess;
   }
 
   async process(task: AgentTask): Promise<unknown> {
     if (!this.canHandle(task)) {
-      throw new Error(`Agent ${this.id} cannot handle task ${task.id}`);
+      const details: AgentBusyDetails = {
+        agentId: this.id,
+        status: this.status,
+        reason: this.lastRejection?.reason ?? "unknown",
+        queueLength: this.lastRejection?.queueLength,
+        maxQueue: this.lastRejection?.maxQueue,
+        retryAfterMs: this.lastRejection?.retryAfterMs ?? 300,
+        taskId: task.id,
+        memoryUsageMB: this.lastRejection?.memoryUsageMB ?? this.memoryUsage,
+        memoryLimitMB: this.lastRejection?.memoryLimitMB ?? this.capabilities.memoryLimit,
+      };
+
+      throw new AgentBusyError(details);
     }
 
     this.taskQueue.push(task);
@@ -150,6 +199,7 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
       }
 
       this.metrics.lastActivity = Date.now();
+      this.lastRejection = undefined;
     }
   }
 

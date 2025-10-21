@@ -5,8 +5,8 @@
  * Tests all available tools through the MCP stdio interface
  */
 
-import { spawn } from "child_process";
-import { resolve } from "path";
+import { spawn } from "node:child_process";
+import { resolve } from "node:path";
 
 // Test directory path
 const TEST_DIR =
@@ -77,7 +77,7 @@ class MCPTester {
       params,
     };
 
-    const message = JSON.stringify(request) + "\n";
+    const message = `${JSON.stringify(request)}\n`;
     console.log(`\n📤 Sending: ${method}`);
     console.log("   Params:", JSON.stringify(params, null, 2));
 
@@ -92,7 +92,7 @@ class MCPTester {
 
     for (let i = 0; i < lines.length - 1; i++) {
       const line = lines[i].trim();
-      if (line && line.startsWith("{")) {
+      if (line?.startsWith("{")) {
         try {
           const response = JSON.parse(line);
           if (response.result !== undefined) {
@@ -101,7 +101,7 @@ class MCPTester {
           } else if (response.error) {
             console.error(`❌ Error:`, response.error);
           }
-        } catch (e) {
+        } catch (_e) {
           // Not JSON, skip
         }
       }
@@ -115,7 +115,7 @@ class MCPTester {
    * Run all tests
    */
   async runTests() {
-    console.log("\n" + "=".repeat(60));
+    console.log(`\n${"=".repeat(60)}`);
     console.log("🧪 TESTING MCP PROTOCOL METHODS");
     console.log("=".repeat(60));
 
@@ -277,7 +277,7 @@ class MCPTester {
     });
     await this.sleep(2000);
 
-    console.log("\n" + "=".repeat(60));
+    console.log(`\n${"=".repeat(60)}`);
     console.log("✅ ALL TESTS COMPLETED");
     console.log("=".repeat(60));
   }

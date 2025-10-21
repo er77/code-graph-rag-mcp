@@ -29,7 +29,7 @@ export class CloudRUProvider implements EmbeddingProvider {
     };
 
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (this.opts.apiKey) headers["Authorization"] = `Bearer ${this.opts.apiKey}`;
+    if (this.opts.apiKey) headers.Authorization = `Bearer ${this.opts.apiKey}`;
 
     this.engine = new HttpEngine({
       baseUrl: this.opts.baseUrl ?? "https://foundation-models.api.cloud.ru",

@@ -180,7 +180,7 @@ export class GraphStorageImpl implements GraphStorage {
         const language = entity.language ?? this.detectLanguage(entity.filePath);
         const sizeBytes = entity.sizeBytes ?? 0;
 
-        this.statements.insertEntity!.run(
+        this.statements.insertEntity?.run(
           id,
           entity.name,
           entity.type,
@@ -229,7 +229,7 @@ export class GraphStorageImpl implements GraphStorage {
               const language = entity.language ?? this.detectLanguage(entity.filePath);
               const sizeBytes = entity.sizeBytes ?? 0;
 
-              this.statements.insertEntity!.run(
+              this.statements.insertEntity?.run(
                 id,
                 entity.name,
                 entity.type,
@@ -285,7 +285,7 @@ export class GraphStorageImpl implements GraphStorage {
     const language = updated.language ?? this.detectLanguage(updated.filePath);
     const sizeBytes = updated.sizeBytes ?? 0;
 
-    this.statements.updateEntity!.run(
+    this.statements.updateEntity?.run(
       updated.name,
       updated.type,
       JSON.stringify(updated.location),
@@ -301,12 +301,12 @@ export class GraphStorageImpl implements GraphStorage {
 
   async deleteEntity(id: string): Promise<void> {
     this.ensureReady();
-    this.statements.deleteEntity!.run(id);
+    this.statements.deleteEntity?.run(id);
   }
 
   async getEntity(id: string): Promise<Entity | null> {
     this.ensureReady();
-    const row = this.statements.getEntity!.get(id) as any;
+    const row = this.statements.getEntity?.get(id) as any;
     return row ? this.rowToEntity(row) : null;
   }
 
@@ -360,7 +360,7 @@ export class GraphStorageImpl implements GraphStorage {
     const id = this.stableRelationshipId(relationship);
     const now = Date.now();
 
-    this.statements.insertRelationship!.run(
+    this.statements.insertRelationship?.run(
       id,
       relationship.fromId,
       relationship.toId,
@@ -392,7 +392,7 @@ export class GraphStorageImpl implements GraphStorage {
         try {
           const id = this.stableRelationshipId(r);
           const now = Date.now();
-          this.statements.insertRelationship!.run(
+          this.statements.insertRelationship?.run(
             id,
             r.fromId,
             r.toId,
@@ -424,7 +424,7 @@ export class GraphStorageImpl implements GraphStorage {
 
   async deleteRelationship(id: string): Promise<void> {
     this.ensureReady();
-    this.statements.deleteRelationship!.run(id);
+    this.statements.deleteRelationship?.run(id);
   }
 
   async getRelationshipsForEntity(entityId: string, type?: RelationType): Promise<Relationship[]> {
@@ -475,12 +475,12 @@ export class GraphStorageImpl implements GraphStorage {
 
   async updateFileInfo(info: FileInfo): Promise<void> {
     this.ensureReady();
-    this.statements.updateFile!.run(info.path, info.hash, info.lastIndexed, info.entityCount);
+    this.statements.updateFile?.run(info.path, info.hash, info.lastIndexed, info.entityCount);
   }
 
   async getFileInfo(path: string): Promise<FileInfo | null> {
     this.ensureReady();
-    const row = this.statements.getFile!.get(path) as any;
+    const row = this.statements.getFile?.get(path) as any;
 
     return row
       ? {

@@ -4,18 +4,17 @@
  * Test suite for C language analyzer functionality
  */
 
-import path from "path";
 import { CAnalyzer } from "../../src/parsers/c-analyzer";
 import { TreeSitterParser } from "../../src/parsers/tree-sitter-parser";
 
 describe("CAnalyzer", () => {
   let parser: TreeSitterParser;
-  let analyzer: CAnalyzer;
+  let _analyzer: CAnalyzer;
 
   beforeAll(async () => {
     parser = new TreeSitterParser();
     await parser.initialize();
-    analyzer = new CAnalyzer();
+    _analyzer = new CAnalyzer();
   });
 
   it("should parse basic C functions", async () => {

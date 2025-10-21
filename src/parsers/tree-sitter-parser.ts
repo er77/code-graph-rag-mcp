@@ -9,10 +9,10 @@
  * - Performance Target: 100+ files/second
  */
 
+import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import { LRUCache } from "lru-cache";
 import Parser from "tree-sitter";
-import { createRequire } from "module";
-import { createHash } from "crypto";
 import { ConfigLoader } from "../config/yaml-config.js";
 import type { ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 import { CAnalyzer } from "./c-analyzer.js";
@@ -30,7 +30,6 @@ type TreeSitterEdit = Parser.Edit;
 
 const CACHE_MAX_SIZE = 100 * 1024 * 1024; // 100MB
 const CACHE_TTL = 1000 * 60 * 60; // 1h
-
 
 const requireModule = createRequire(import.meta.url);
 
@@ -145,7 +144,7 @@ function detectLanguage(filePath: string): SupportedLanguage {
       return "cpp";
     case "rs":
       return "rust";
-    
+
     case "vba":
     case "bas":
     case "cls":
@@ -170,7 +169,6 @@ export class TreeSitterParser {
   private initialized = false;
   private disableCache: boolean;
 
-  
   private pythonAnalyzer = createPythonAnalyzer();
   private csharpAnalyzer = new CSharpAnalyzer();
   private rustAnalyzer = new RustAnalyzer();
@@ -185,7 +183,6 @@ export class TreeSitterParser {
   private bufferSize: number;
 
   constructor() {
-    
     const config = ConfigLoader.getInstance();
     this.bufferSize = config.getParserConfig().treeSitter?.bufferSize || 1024 * 1024;
     this.disableCache = process.env.PARSER_DISABLE_CACHE === "1" || process.env.NODE_ENV === "test";
@@ -211,7 +208,7 @@ export class TreeSitterParser {
     if (this.disableCache) return undefined;
     return this.cache.get(key);
   }
-  
+
   private setCache(key: string, entry: ParseCacheEntry): void {
     if (this.disableCache) return;
     this.cache.set(key, entry);
@@ -220,12 +217,12 @@ export class TreeSitterParser {
   private async ensureLanguage(language: SupportedLanguage): Promise<any> {
     const cached = this.languages.get(language);
     if (cached) return cached;
-  
+
     const loader = LANGUAGE_LOADERS[language];
     if (!loader) {
       throw new Error(`Unsupported language: ${language}`);
     }
-  
+
     try {
       const lang = await loader();
       if (!lang) throw new Error(`Language loader returned empty result for ${language}`);
@@ -239,10 +236,10 @@ export class TreeSitterParser {
 
   async parse(filePath: string, content: string, contentHash: string, oldTree?: TreeSitterTree): Promise<ParseResult> {
     if (!this.initialized || !this.parser) throw new Error("Parser not initialized");
-  
+
     const startTime = Date.now();
     const language = detectLanguage(filePath);
-  
+
     const internalHash = createHash("sha1").update(content).digest("hex");
     const cacheKey = `${filePath}:${internalHash}`;
     const cached = this.getFromCache(cacheKey);
@@ -257,27 +254,27 @@ export class TreeSitterParser {
         parseTimeMs: 0,
         fromCache: true,
       };
-      if (cached.relationships && cached.relationships.length) {
+      if (cached.relationships?.length) {
         (result as any).relationships = cached.relationships;
       }
       return result;
     }
-  
-    
+
     if (language === "vba") {
       const vbaAnalysis = await this.vbaAnalyzer.analyze(content, filePath);
       let entities = vbaAnalysis.entities || [];
       const relationships = vbaAnalysis.relationships || [];
-  
-      
+
       entities = entities.map((e) => ({ ...e, language }));
-  
+
       this.cacheMisses++;
       this.setCache(cacheKey, { tree: null, entities, hash: internalHash, timestamp: Date.now(), relationships });
-  
+
       const parseTimeMs = Date.now() - startTime;
-      console.log(`[TreeSitterParser] VBA analysis: ${entities.length} entities, ${relationships.length} relationships`);
-  
+      console.log(
+        `[TreeSitterParser] VBA analysis: ${entities.length} entities, ${relationships.length} relationships`,
+      );
+
       const result: ParseResult = {
         filePath,
         language,
@@ -292,24 +289,25 @@ export class TreeSitterParser {
       }
       return result;
     }
-  
-    
+
     const lang = await this.ensureLanguage(language);
     this.parser.setLanguage(lang);
-  
+
     const options = { bufferSize: this.bufferSize };
     const tree: TreeSitterTree = oldTree
       ? (this.parser.parse(content, oldTree, options) as TreeSitterTree)
       : (this.parser.parse(content, undefined, options) as TreeSitterTree);
-  
+
     let entities: ParsedEntity[] = [];
     let relationships: any[] = [];
-  
+
     if (language === "python") {
       const py = await this.pythonAnalyzer.analyzePythonCode(filePath, tree.rootNode as any, content);
       entities = py.entities;
       relationships = py.relationships || [];
-      console.log(`[TreeSitterParser] Python analysis: ${entities.length} entities, ${relationships.length} relationships`);
+      console.log(
+        `[TreeSitterParser] Python analysis: ${entities.length} entities, ${relationships.length} relationships`,
+      );
     } else if (language === "csharp") {
       const cs = await this.csharpAnalyzer.analyze(tree.rootNode as any, filePath);
       entities = cs.entities || [];
@@ -333,7 +331,9 @@ export class TreeSitterParser {
       const cp = await this.cppAnalyzer.analyze(tree.rootNode as any, filePath);
       entities = cp.entities || [];
       relationships = cp.relationships || [];
-      console.log(`[TreeSitterParser] C++ analysis: ${entities.length} entities, ${relationships.length} relationships`);
+      console.log(
+        `[TreeSitterParser] C++ analysis: ${entities.length} entities, ${relationships.length} relationships`,
+      );
     } else if (language === "go") {
       const ga = await this.goAnalyzer.analyze(tree.rootNode as any, filePath);
       entities = ga.entities || [];
@@ -343,26 +343,27 @@ export class TreeSitterParser {
       const ja = await this.javaAnalyzer.analyze(tree.rootNode as any, filePath);
       entities = ja.entities || [];
       relationships = ja.relationships || [];
-      console.log(`[TreeSitterParser] Java analysis: ${entities.length} entities, ${relationships.length} relationships`);
+      console.log(
+        `[TreeSitterParser] Java analysis: ${entities.length} entities, ${relationships.length} relationships`,
+      );
     } else {
       // Default parser for JS/TS/etc
       entities = await this.extractEntities(tree.rootNode as any, content);
     }
-  
-    
+
     entities = entities.map((entity) => ({
       ...entity,
       language,
     }));
-  
+
     this.cacheMisses++;
     this.setCache(cacheKey, { tree, entities, hash: internalHash, timestamp: Date.now(), relationships });
-  
+
     const result: ParseResult = {
       filePath,
       language,
       entities,
-      contentHash, 
+      contentHash,
       timestamp: Date.now(),
       parseTimeMs: Date.now() - startTime,
       fromCache: false,
@@ -382,22 +383,22 @@ export class TreeSitterParser {
     if (this.disableCache) {
       return this.parse(filePath, newContent, contentHash, undefined);
     }
-  
+
     let oldTree: TreeSitterTree | undefined;
     let newestTs = -1;
     const prefix = `${filePath}:`;
-  
+
     for (const [key, entry] of this.cache.entries()) {
       if (key.startsWith(prefix) && entry.tree && entry.timestamp > newestTs) {
         newestTs = entry.timestamp;
         oldTree = entry.tree;
       }
     }
-  
+
     if (oldTree && edits?.length) {
       for (const edit of edits) oldTree.edit(edit);
     }
-  
+
     return this.parse(filePath, newContent, contentHash, oldTree);
   }
 

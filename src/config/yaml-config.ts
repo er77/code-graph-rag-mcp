@@ -63,6 +63,10 @@ export interface MCPConfig {
     useParser?: boolean; // MCP_USE_PARSER
     devIndexBatch?: number; // MCP_DEV_INDEX_BATCH
   };
+  semantic?: {
+    cacheWarmupLimit?: number;
+    popularEntitiesTopic?: string;
+  };
 }
 
 // Resolved embedding configuration returned to callers
@@ -182,6 +186,10 @@ const DEFAULT_CONFIG: AppConfig = {
       defaultTimeout: 15000,
       useParser: true, // MCP_USE_PARSER: Enable ParserAgent by default
       devIndexBatch: 100, // MCP_DEV_INDEX_BATCH: Default batch size for indexing
+    },
+    semantic: {
+      cacheWarmupLimit: 50,
+      popularEntitiesTopic: "semantic:warmup:entities",
     },
   },
   database: {
@@ -477,6 +485,18 @@ export class ConfigLoader {
             yamlConfig.mcp?.agents?.devIndexBatch ||
             Number(process.env.MCP_DEV_INDEX_BATCH) ||
             DEFAULT_CONFIG.mcp.agents?.devIndexBatch,
+        },
+        semantic: {
+          cacheWarmupLimit:
+            yamlConfig.mcp?.semantic?.cacheWarmupLimit !== undefined
+              ? yamlConfig.mcp.semantic.cacheWarmupLimit
+              : process.env.MCP_SEMANTIC_WARMUP_LIMIT !== undefined
+                ? Number(process.env.MCP_SEMANTIC_WARMUP_LIMIT)
+                : DEFAULT_CONFIG.mcp.semantic?.cacheWarmupLimit,
+          popularEntitiesTopic:
+            yamlConfig.mcp?.semantic?.popularEntitiesTopic ||
+            process.env.MCP_SEMANTIC_WARMUP_TOPIC ||
+            DEFAULT_CONFIG.mcp.semantic?.popularEntitiesTopic,
         },
       },
       database: {

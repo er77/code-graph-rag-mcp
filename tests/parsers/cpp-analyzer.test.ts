@@ -14,11 +14,11 @@ import { CppAnalyzer } from "../../src/parsers/cpp-analyzer";
 import { TreeSitterParser } from "../../src/parsers/tree-sitter-parser";
 
 describe("CppAnalyzer", () => {
-  let analyzer: CppAnalyzer;
+  let _analyzer: CppAnalyzer;
   let parser: TreeSitterParser;
 
   beforeEach(async () => {
-    analyzer = new CppAnalyzer();
+    _analyzer = new CppAnalyzer();
     parser = new TreeSitterParser();
     await parser.initialize();
   });
@@ -45,9 +45,9 @@ protected:
       expect(classEntity).toBeDefined();
       expect(classEntity?.type).toBe("class");
 
-      const constructor = result.entities.find((e) => e.name === "MyClass::MyClass");
-      expect(constructor).toBeDefined();
-      expect(constructor?.type).toBe("method"); // No specific constructor type
+      const constructorMethod = result.entities.find((e) => e.name === "MyClass::MyClass");
+      expect(constructorMethod).toBeDefined();
+      expect(constructorMethod?.type).toBe("method"); // No specific constructor type
 
       const destructor = result.entities.find((e) => e.name === "MyClass::~MyClass");
       expect(destructor).toBeDefined();

@@ -913,15 +913,15 @@ export class RustAnalyzer {
 
     // Identify Error handling patterns
     const errorPatterns = this.identifyErrorHandlingPatterns(node);
-    result.otherPatterns!.push(...errorPatterns);
+    result.otherPatterns?.push(...errorPatterns);
 
     // Identify Ownership patterns
     const ownershipPatterns = this.identifyOwnershipPatterns(node);
-    result.otherPatterns!.push(...ownershipPatterns);
+    result.otherPatterns?.push(...ownershipPatterns);
 
     // Identify unsafe code blocks
     const unsafePatterns = this.identifyUnsafePatterns(node);
-    result.otherPatterns!.push(...unsafePatterns);
+    result.otherPatterns?.push(...unsafePatterns);
 
     return result;
   }

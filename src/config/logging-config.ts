@@ -4,7 +4,7 @@
  * Provides configuration for the rotated logging system
  */
 
-import { resolve } from "path";
+import { resolve } from "node:path";
 import { type LoggerConfig, LogLevel } from "../utils/logger-types.js";
 
 // Get the root directory of the project

@@ -290,7 +290,7 @@ export class IndexerAgent extends BaseAgent {
         const hasName = typeof (parsed as any).name === "string" && (parsed as any).name.trim().length > 0;
 
         const normalizedParsed =
-          !hasName && isImport ? { ...(parsed as any), name: `import:${parsed.importData!.source}` } : parsed;
+          !hasName && isImport ? { ...(parsed as any), name: `import:${parsed.importData?.source}` } : parsed;
 
         const base = parsedEntityToEntity(normalizedParsed, filePath, fileHash);
         const entity: Entity = {
@@ -328,7 +328,7 @@ export class IndexerAgent extends BaseAgent {
         const candidates = byName.get(name);
         if (!candidates || candidates.length === 0) return undefined;
 
-        if (line == null) return candidates[0]!.id;
+        if (line == null) return candidates[0]?.id;
 
         let best: Entity | undefined;
         let bestDelta = Infinity;
@@ -738,10 +738,8 @@ export class IndexerAgent extends BaseAgent {
     // Run final maintenance only if agent was initialized and DB is open
     if (this.ready) {
       try {
-        try {
-          this.sqliteManager.getConnection();
-          await this.graphStorage.analyze();
-        } catch {}
+        this.sqliteManager.getConnection();
+        await this.graphStorage.analyze();
       } catch (e) {
         console.warn(`[${this.id}] Analyze on shutdown skipped: ${(e as Error).message}`);
       }

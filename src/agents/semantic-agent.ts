@@ -49,6 +49,7 @@ import {
   type SimilarCode,
   type VectorEmbedding,
 } from "../types/semantic.js";
+import { type Entity, EntityType } from "../types/storage.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
@@ -113,6 +114,10 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
   private cache: SemanticCache;
   private codeAnalyzer!: CodeAnalyzer;
   private embeddingDim = 384;
+  private embeddingBatchSize = AGENT_CONFIG.batchSize;
+  private readonly defaultMaxConcurrency: number;
+  private readonly defaultMemoryLimit: number;
+  private readonly defaultBatchSize: number = AGENT_CONFIG.batchSize;
 
   // TASK-004B: Circuit breaker implementation
   private circuitBreakerState = CircuitBreakerState.CLOSED;
@@ -160,6 +165,10 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
       maxSize: 5000,
       ttl: 3600000, // 1 hour
     });
+
+    this.defaultMaxConcurrency = this.capabilities.maxConcurrency;
+    this.defaultMemoryLimit = this.capabilities.memoryLimit;
+    this.embeddingBatchSize = this.defaultBatchSize;
   }
 
   private async setupComponents(): Promise<void> {
@@ -169,12 +178,21 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
     );
     console.log(`[${this.id}] Embedding model: ${config.mcp?.embedding?.model || "Xenova/all-MiniLM-L6-v2"}`);
     console.log(`[${this.id}] Database path from config: ${config.database?.path || "undefined"}`);
+
+    const warmupSettings = config.mcp?.semantic;
+    if (warmupSettings?.cacheWarmupLimit && warmupSettings.cacheWarmupLimit > 0) {
+      this.embeddingBatchSize = Math.min(
+        this.defaultBatchSize,
+        Math.max(1, Math.floor(warmupSettings.cacheWarmupLimit)),
+      );
+    }
+
     this.embeddingGen = new EmbeddingGenerator({
       provider: config.mcp?.embedding?.provider || "memory",
       modelName: config.mcp?.embedding?.model || "Xenova/all-MiniLM-L6-v2",
       quantized: true,
       localPath: AGENT_CONFIG.modelPath,
-      batchSize: AGENT_CONFIG.batchSize,
+      batchSize: this.embeddingBatchSize,
       ollama: config.mcp?.embedding?.ollama
         ? {
             baseUrl: config.mcp.embedding.ollama.baseUrl,
@@ -246,9 +264,12 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
     console.log(`[${this.id}] Initializing semantic components...`);
 
     await this.embeddingGen.initialize();
+    this.embeddingGen.setBatchSize(this.embeddingBatchSize);
 
     // Update initial metrics
     this.semanticMetrics.vectorsStored = await this.vectorStore.count();
+
+    await this.warmupSemanticCache();
 
     console.log(`[${this.id}] Semantic agent initialized with ${this.semanticMetrics.vectorsStored} vectors`);
   }
@@ -588,8 +609,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
             try {
               const stored = await storage.getEntity(entity.id);
               if (
-                stored &&
-                stored.location &&
+                stored?.location &&
                 typeof stored.location.start?.index === "number" &&
                 typeof stored.location.end?.index === "number"
               ) {
@@ -608,8 +628,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
                   code = full;
                 }
               } else if (
-                stored &&
-                stored.location &&
+                stored?.location &&
                 typeof stored.location.start?.line === "number" &&
                 typeof stored.location.end?.line === "number"
               ) {
@@ -690,6 +709,8 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
         if (this.debugMode) console.warn(`[${this.id}] semantic:new_entities failed:`, (e as Error).message);
       }
     });
+
+    knowledgeBus.subscribe(this.id, "resources:adjusted", this.handleResourceAdjustment.bind(this));
 
     console.log(`[${this.id}] Subscribed to knowledge bus events`);
   }
@@ -820,6 +841,201 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
     this.semanticMetrics.vectorsStored = await this.vectorStore.count();
     knowledgeBus.publish("semantic:embeddings:complete", { count: embeddings.length }, this.id);
     console.log(`[${this.id}] Stored ${embeddings.length} new embeddings`);
+  }
+
+  private async warmupSemanticCache(): Promise<void> {
+    const config = getConfig();
+    const warmupLimit = config.mcp.semantic?.cacheWarmupLimit ?? 0;
+
+    if (warmupLimit <= 0) {
+      if (this.debugMode) {
+        console.log(`[${this.id}] Semantic cache warmup disabled by configuration`);
+      }
+      return;
+    }
+
+    try {
+      const candidates = new Map<string, Partial<Entity>>();
+      const warmupTopic = config.mcp.semantic?.popularEntitiesTopic;
+
+      if (warmupTopic) {
+        const entries = knowledgeBus.query(warmupTopic, warmupLimit);
+        for (const entry of entries) {
+          const data = entry.data as any;
+          let id: string | undefined;
+          let candidate: Partial<Entity> | undefined;
+
+          if (typeof data === "string") {
+            id = data;
+            candidate = { id, name: data };
+          } else if (data && typeof data === "object") {
+            id = data.id ?? data.entityId ?? data.name;
+            candidate = {
+              id,
+              name: data.name,
+              type: data.type,
+              filePath: data.filePath ?? data.path,
+              metadata: data.metadata,
+            };
+          }
+
+          if (id && candidate && !candidates.has(id)) {
+            candidates.set(id, candidate);
+          }
+
+          if (candidates.size >= warmupLimit) {
+            break;
+          }
+        }
+      }
+
+      let storage: Awaited<ReturnType<typeof getGraphStorage>> | null = null;
+      try {
+        storage = await getGraphStorage();
+      } catch (error) {
+        if (this.debugMode) {
+          console.warn(
+            `[${this.id}] Unable to access graph storage during warmup:`,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      }
+
+      if (storage && candidates.size < warmupLimit) {
+        const fallbackLimit = warmupLimit - candidates.size;
+        const fallbackQuery = await storage.executeQuery({
+          type: "entity",
+          limit: fallbackLimit,
+          filters: { entityType: [EntityType.FUNCTION, EntityType.CLASS, EntityType.TYPE] },
+        });
+
+        for (const entity of fallbackQuery.entities ?? []) {
+          if (!entity?.id || candidates.has(entity.id)) continue;
+          candidates.set(entity.id, entity);
+          if (candidates.size >= warmupLimit) break;
+        }
+      }
+
+      if (candidates.size === 0) {
+        if (this.debugMode) {
+          console.log(`[${this.id}] No semantic warmup candidates discovered`);
+        }
+        return;
+      }
+
+      const ids: string[] = [];
+      const texts: string[] = [];
+
+      for (const candidate of candidates.values()) {
+        let resolved = candidate;
+        if (storage && candidate.id && (!candidate.name || !candidate.type || !candidate.filePath)) {
+          try {
+            const entity = await storage.getEntity(candidate.id);
+            if (entity) {
+              resolved = entity;
+            }
+          } catch {
+            // ignore lookup failures; fallback to candidate data
+          }
+        }
+
+        const text = this.buildWarmupText(resolved);
+        const id = resolved.id ?? candidate.id;
+        if (!text || !id) continue;
+        ids.push(id);
+        texts.push(text);
+      }
+
+      if (texts.length === 0) {
+        if (this.debugMode) {
+          console.log(`[${this.id}] Warmup candidates lacked textual content`);
+        }
+        return;
+      }
+
+      const embeddings = await this.embeddingGen.generateBatch(texts);
+      const warmupMap = new Map<string, Float32Array>();
+      embeddings.forEach((embedding, index) => {
+        const id = ids[index];
+        if (id) {
+          warmupMap.set(id, embedding);
+        }
+      });
+
+      if (warmupMap.size === 0) {
+        return;
+      }
+
+      await this.cache.warmup(warmupMap);
+      const cacheStats = this.cache.getStats();
+      this.semanticMetrics.cacheHitRate = cacheStats.hitRate;
+      this.semanticMetrics.embeddingsGenerated += warmupMap.size;
+
+      knowledgeBus.publish("semantic:warmup:complete", { warmed: warmupMap.size, limit: warmupLimit }, this.id, 60000);
+
+      if (this.debugMode) {
+        console.log(`[${this.id}] Warmed semantic cache with ${warmupMap.size} embeddings`);
+      }
+    } catch (error) {
+      console.warn(
+        `[${this.id}] Semantic cache warmup failed:`,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
+  private buildWarmupText(entity: Partial<Entity>): string | null {
+    if (!entity) return null;
+
+    const parts: string[] = [];
+    if (entity.type) parts.push(`type: ${entity.type}`);
+    if (entity.name) parts.push(`name: ${entity.name}`);
+    if (entity.filePath) parts.push(`file: ${entity.filePath}`);
+    if ((entity as any).language) parts.push(`language: ${(entity as any).language}`);
+    if (entity.metadata) {
+      try {
+        const metadata = JSON.stringify(entity.metadata).slice(0, 512);
+        if (metadata.length > 0) {
+          parts.push(`metadata: ${metadata}`);
+        }
+      } catch {
+        // ignore metadata serialization errors
+      }
+    }
+
+    return parts.length > 0 ? parts.join("\n") : null;
+  }
+
+  private handleResourceAdjustment(entry: KnowledgeEntry): void {
+    const data = entry.data as {
+      newMemoryLimit?: number;
+      newAgentLimit?: number;
+    };
+
+    if (typeof data.newAgentLimit === "number" && Number.isFinite(data.newAgentLimit)) {
+      const adjustedConcurrency = Math.max(1, Math.min(this.defaultMaxConcurrency * 2, Math.floor(data.newAgentLimit)));
+      if (this.capabilities.maxConcurrency !== adjustedConcurrency) {
+        console.log(
+          `[${this.id}] Adjusting concurrency from ${this.capabilities.maxConcurrency} to ${adjustedConcurrency} (resources:adjusted)`,
+        );
+        this.capabilities.maxConcurrency = adjustedConcurrency;
+      }
+    }
+
+    if (typeof data.newMemoryLimit === "number" && Number.isFinite(data.newMemoryLimit)) {
+      const ratio = Math.max(0.5, Math.min(2, data.newMemoryLimit / this.defaultMemoryLimit));
+      const newBatchSize = Math.max(1, Math.round(this.defaultBatchSize * ratio));
+      if (this.embeddingBatchSize !== newBatchSize) {
+        console.log(
+          `[${this.id}] Adjusting embedding batch size from ${this.embeddingBatchSize} to ${newBatchSize} (resources:adjusted)`,
+        );
+        this.embeddingBatchSize = newBatchSize;
+        const generator = this.embeddingGen as EmbeddingGenerator | undefined;
+        if (generator && typeof (generator as any).setBatchSize === "function") {
+          generator.setBatchSize(newBatchSize);
+        }
+      }
+    }
   }
 
   private async handleSearchRequest(message: AgentMessage): Promise<void> {

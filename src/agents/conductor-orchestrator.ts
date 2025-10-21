@@ -368,6 +368,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
 
     // Special handling for index tasks that aren't batch processing
     if (task.type === "index" && !subtasks.length) {
+      const payloadObj = task.payload && typeof task.payload === "object" ? task.payload : {};
       subtasks.push({
         id: `${task.id}-index`,
         description: "Index codebase",
@@ -376,7 +377,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
         priority: 8,
         payload: {
           type: "index",
-          ...(task.payload || {}),
+          ...payloadObj,
         },
       });
       return subtasks;
@@ -436,7 +437,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     if (!this.delegationLog.has(taskId)) {
       this.delegationLog.set(taskId, []);
     }
-    this.delegationLog.get(taskId)!.push({
+    this.delegationLog.get(taskId)?.push({
       agent: subtask.targetAgent,
       timestamp: Date.now(),
     });
@@ -640,7 +641,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
       }
 
       // Check memory usage only if capabilities are defined
-      if (agent.capabilities && agent.capabilities.memoryLimit && agent.getMemoryUsage) {
+      if (agent.capabilities?.memoryLimit && agent.getMemoryUsage) {
         const memoryUsage = agent.getMemoryUsage();
         if (memoryUsage > agent.capabilities.memoryLimit) {
           console.warn(`[CONDUCTOR] Agent ${agentId} exceeds memory limit`);

@@ -60,11 +60,11 @@ describe("PythonAnalyzer", () => {
       // Cache should contain edges A -> B
       const cache = (PythonAnalyzer as any).dependencyCache;
       expect(cache.get("A") instanceof Set).toBe(true);
-      expect(cache.get("A")!.has("B")).toBe(true);
+      expect(cache.get("A")?.has("B")).toBe(true);
 
       // Graph should also include cached edges C -> D
       expect(graphA.get("C") instanceof Set).toBe(true);
-      expect(graphA.get("C")!.has("D")).toBe(true);
+      expect(graphA.get("C")?.has("D")).toBe(true);
     });
 
     test("findAllCycles detects cycle across two files using cache (A <-> B)", () => {

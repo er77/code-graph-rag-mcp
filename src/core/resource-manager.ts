@@ -6,6 +6,7 @@
 import { EventEmitter } from "node:events";
 import os from "node:os";
 import type { ResourceConstraints } from "../types/agent.js";
+import { knowledgeBus } from "./knowledge-bus.js";
 
 export interface ResourceSnapshot {
   timestamp: number;
@@ -354,6 +355,18 @@ export class ResourceManager extends EventEmitter {
       newMemoryLimit: adjustedMemoryMB,
       newAgentLimit: adjustedConcurrentAgents,
     });
+
+    knowledgeBus.publish(
+      "resources:adjusted",
+      {
+        fileCount,
+        projectSizeMB,
+        newMemoryLimit: adjustedMemoryMB,
+        newAgentLimit: adjustedConcurrentAgents,
+      },
+      "resource-manager",
+      60000,
+    );
   }
 
   /**

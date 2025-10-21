@@ -43,7 +43,7 @@ export class VbaAnalyzer {
       },
       end: {
         line: lineNumber,
-        column: (line?.length ?? 0),
+        column: line?.length ?? 0,
         index: 0, // Approximation
       },
     };
@@ -127,18 +127,23 @@ export class VbaAnalyzer {
 
       // Subroutines and Functions
       subStart: /^\s*(Public|Private|Friend)?\s*(Static)?\s*Sub\s+(\w+)\s*KATEX_INLINE_OPEN([^)]*)KATEX_INLINE_CLOSE/i,
-      functionStart: /^\s*(Public|Private|Friend)?\s*(Static)?\s*Function\s+(\w+)\s*KATEX_INLINE_OPEN([^)]*)KATEX_INLINE_CLOSE\s*(As\s+(\w+))?/i,
+      functionStart:
+        /^\s*(Public|Private|Friend)?\s*(Static)?\s*Function\s+(\w+)\s*KATEX_INLINE_OPEN([^)]*)KATEX_INLINE_CLOSE\s*(As\s+(\w+))?/i,
       subEnd: /^\s*End\s+Sub/i,
       functionEnd: /^\s*End\s+Function/i,
 
       // Properties
-      propertyGet: /^\s*(Public|Private|Friend)?\s*Property\s+Get\s+(\w+)\s*KATEX_INLINE_OPEN([^)]*)KATEX_INLINE_CLOSE\s*(As\s+(\w+))?/i,
-      propertyLet: /^\s*(Public|Private|Friend)?\s*Property\s+Let\s+(\w+)\s*KATEX_INLINE_OPEN([^)]*)KATEX_INLINE_CLOSE/i,
-      propertySet: /^\s*(Public|Private|Friend)?\s*Property\s+Set\s+(\w+)\s*KATEX_INLINE_OPEN([^)]*)KATEX_INLINE_CLOSE/i,
+      propertyGet:
+        /^\s*(Public|Private|Friend)?\s*Property\s+Get\s+(\w+)\s*KATEX_INLINE_OPEN([^)]*)KATEX_INLINE_CLOSE\s*(As\s+(\w+))?/i,
+      propertyLet:
+        /^\s*(Public|Private|Friend)?\s*Property\s+Let\s+(\w+)\s*KATEX_INLINE_OPEN([^)]*)KATEX_INLINE_CLOSE/i,
+      propertySet:
+        /^\s*(Public|Private|Friend)?\s*Property\s+Set\s+(\w+)\s*KATEX_INLINE_OPEN([^)]*)KATEX_INLINE_CLOSE/i,
       propertyEnd: /^\s*End\s+Property/i,
 
       // Variables and Constants
-      dimStatement: /^\s*(Public|Private|Dim|Global)?\s*(Dim|Const)\s+(\w+)(?:\s*KATEX_INLINE_OPEN([^)]*)KATEX_INLINE_CLOSE)?\s*(As\s+(\w+))?/i,
+      dimStatement:
+        /^\s*(Public|Private|Dim|Global)?\s*(Dim|Const)\s+(\w+)(?:\s*KATEX_INLINE_OPEN([^)]*)KATEX_INLINE_CLOSE)?\s*(As\s+(\w+))?/i,
       constStatement: /^\s*(Public|Private)?\s*Const\s+(\w+)\s*(As\s+(\w+))?\s*=\s*(.+)/i,
 
       // User-defined types
@@ -360,7 +365,11 @@ export class VbaAnalyzer {
       }
 
       // End of procedures
-      if (patterns.subEnd.test(lineText) || patterns.functionEnd.test(lineText) || patterns.propertyEnd.test(lineText)) {
+      if (
+        patterns.subEnd.test(lineText) ||
+        patterns.functionEnd.test(lineText) ||
+        patterns.propertyEnd.test(lineText)
+      ) {
         currentScope = null;
         currentScopeType = null;
         continue;
@@ -631,7 +640,7 @@ export class VbaAnalyzer {
       // Match patterns like "ByVal name As Type" or "ByRef name As Type" or just "name As Type" or "name"
       const match = trimmed.match(/(?:(?:ByVal|ByRef)\s+)?(\w+)(?:\s+As\s+(\w+))?/i);
 
-      if (match && match[1]) {
+      if (match?.[1]) {
         const name = match[1]!;
         const type = match[2];
         params.push({ name, type });

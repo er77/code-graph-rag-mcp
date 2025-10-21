@@ -348,10 +348,10 @@ export class VectorStore {
 
       if (hasVec && this.insertVecStmt && this.deleteVecByIdStmt) {
         const tx = this.db.transaction((e: VectorEmbedding) => {
-          this.deleteVecByIdStmt!.run(e.id);
+          this.deleteVecByIdStmt?.run(e.id);
           const vectorJson = JSON.stringify(Array.from(e.vector));
-          this.insertVecStmt!.run(e.id, vectorJson);
-          this.insertStmt!.run(e.id, e.content, metadataStr, timestamp);
+          this.insertVecStmt?.run(e.id, vectorJson);
+          this.insertStmt?.run(e.id, e.content, metadataStr, timestamp);
         });
         tx(embedding);
       } else {
@@ -383,10 +383,10 @@ export class VectorStore {
           this.deleteVecByIdStmt.run(e.id);
           const vectorJson = JSON.stringify(Array.from(e.vector));
           this.insertVecStmt.run(e.id, vectorJson);
-          this.insertStmt!.run(e.id, e.content, metadataStr, timestamp);
+          this.insertStmt?.run(e.id, e.content, metadataStr, timestamp);
         } else {
           const vectorBuffer = float32ArrayToBuffer(e.vector);
-          this.insertStmt!.run(e.id, e.content, vectorBuffer, metadataStr, timestamp);
+          this.insertStmt?.run(e.id, e.content, vectorBuffer, metadataStr, timestamp);
         }
       }
     });
@@ -721,9 +721,9 @@ export class VectorStore {
 
     if (this.sqliteVecEnabled && this.insertVecStmt && this.deleteVecByIdStmt) {
       const tx = this.db.transaction(() => {
-        this.deleteVecByIdStmt!.run(id);
-        this.insertVecStmt!.run(id, JSON.stringify(Array.from(vector)));
-        this.updateStmt!.run(metadataStr, Date.now(), id);
+        this.deleteVecByIdStmt?.run(id);
+        this.insertVecStmt?.run(id, JSON.stringify(Array.from(vector)));
+        this.updateStmt?.run(metadataStr, Date.now(), id);
       });
       tx();
     } else {
@@ -742,7 +742,7 @@ export class VectorStore {
       if (this.sqliteVecEnabled && this.deleteVecByIdStmt) {
         this.deleteVecByIdStmt.run(theId);
       }
-      this.deleteStmt!.run(theId);
+      this.deleteStmt?.run(theId);
     });
 
     tx(id);
@@ -768,9 +768,9 @@ export class VectorStore {
 
     const tx = this.db.transaction(() => {
       if (this.sqliteVecEnabled) {
-        this.db!.exec("DELETE FROM vec_doc_embeddings");
+        this.db?.exec("DELETE FROM vec_doc_embeddings");
       }
-      this.db!.exec("DELETE FROM doc_embeddings");
+      this.db?.exec("DELETE FROM doc_embeddings");
     });
 
     tx();

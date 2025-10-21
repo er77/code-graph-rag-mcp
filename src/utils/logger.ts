@@ -5,8 +5,8 @@
  * Stores logs in logs_llm folder with automatic rotation based on size and time
  */
 
-import { existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "fs";
-import { join, resolve } from "path";
+import { existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import type { LoggerConfig } from "./logger-types.js";
 import { LogLevel } from "./logger-types.js";
 
@@ -136,7 +136,7 @@ export class RotatedLogger {
       parts.push(`STACK: ${entry.stackTrace}`);
     }
 
-    return parts.join(" ") + "\n";
+    return `${parts.join(" ")}\n`;
   }
 
   private writeLog(entry: LogEntry): void {

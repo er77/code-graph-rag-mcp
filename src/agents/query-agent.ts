@@ -76,6 +76,7 @@ export class QueryAgent extends BaseAgent implements QueryOperations {
     cacheHits: 0,
     cacheMisses: 0,
   };
+  private readonly defaultMaxConcurrency: number;
 
   constructor() {
     super(AgentType.QUERY, {
@@ -83,6 +84,7 @@ export class QueryAgent extends BaseAgent implements QueryOperations {
       memoryLimit: QUERY_AGENT_CONFIG.memoryLimit,
       priority: QUERY_AGENT_CONFIG.priority,
     });
+    this.defaultMaxConcurrency = QUERY_AGENT_CONFIG.maxConcurrency;
   }
 
   // =============================================================================
@@ -182,7 +184,7 @@ export class QueryAgent extends BaseAgent implements QueryOperations {
     if (message.type === "query:execute") {
       const task: AgentTask = {
         id: nanoid(),
-        type: "query:" + (message.payload as any).type,
+        type: `query:${(message.payload as any).type}`,
         priority: 9,
         payload: message.payload,
         createdAt: Date.now(),
@@ -427,6 +429,9 @@ export class QueryAgent extends BaseAgent implements QueryOperations {
 
     // Subscribe to query requests
     knowledgeBus.subscribe(this.id, /^query:request:.*/, this.handleQueryRequest.bind(this));
+
+    // Subscribe to resource adjustments
+    knowledgeBus.subscribe(this.id, "resources:adjusted", this.handleResourceAdjustment.bind(this));
   }
 
   private async handleIndexUpdate(entry: KnowledgeEntry): Promise<void> {
@@ -457,6 +462,23 @@ export class QueryAgent extends BaseAgent implements QueryOperations {
     };
 
     await this.receive(message);
+  }
+
+  private handleResourceAdjustment(entry: KnowledgeEntry): void {
+    const data = entry.data as {
+      newAgentLimit?: number;
+    };
+
+    if (typeof data.newAgentLimit === "number" && Number.isFinite(data.newAgentLimit)) {
+      const adjustedConcurrency = Math.max(1, Math.min(this.defaultMaxConcurrency * 2, Math.floor(data.newAgentLimit)));
+      if (this.capabilities.maxConcurrency !== adjustedConcurrency) {
+        console.log(
+          `[${this.id}] Adjusting concurrency from ${this.capabilities.maxConcurrency} to ${adjustedConcurrency} (resources:adjusted)`,
+        );
+        this.capabilities.maxConcurrency = adjustedConcurrency;
+        this.concurrencyLimiter = pLimit(adjustedConcurrency);
+      }
+    }
   }
 
   private async warmupCache(): Promise<void> {

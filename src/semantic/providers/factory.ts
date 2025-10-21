@@ -86,8 +86,6 @@ export function createProvider(opts: ProviderFactoryOptions): EmbeddingProvider 
         maxBatchSize: opts.cloudru?.maxBatchSize,
         logger: makeProviderLogger(appLogger, "PROVIDER_CLOUDRU"),
       });
-
-    case "memory":
     default:
       return new MemoryProvider({ dimension: opts.memory?.dimension });
   }

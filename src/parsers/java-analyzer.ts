@@ -43,7 +43,6 @@ export class JavaAnalyzer {
   private parseStartTime = 0;
   private currentPackage = "";
   private currentClass: string | null = null;
-  
 
   /**
    * Helper: Convert tree-sitter position to ParsedEntity location
@@ -70,7 +69,7 @@ export class JavaAnalyzer {
   private ensurePackageEntity(filePath: string, entities: ParsedEntity[]): string {
     const pkg = this.currentPackage || "(default)";
     const moduleId = `${filePath}:package:${pkg}`;
-    
+
     const exists = entities.some((e) => e.id === moduleId);
     if (!exists) {
       entities.push({
@@ -273,7 +272,7 @@ export class JavaAnalyzer {
     if (importPath) {
       const path = importPath.text;
       const isWildcard = !!asterisk;
-      
+
       const fromId = this.ensurePackageEntity(filePath, entities);
 
       relationships.push({
@@ -474,7 +473,6 @@ export class JavaAnalyzer {
 
       entities.push(entity);
 
-      
       this.currentClass = fullEnumName;
 
       // Extract enum constants
@@ -510,7 +508,6 @@ export class JavaAnalyzer {
           }
         }
 
-        
         for (let i = 0; i < body.childCount; i++) {
           const child = body.child(i);
           if (child && child.type !== "enum_constant") {
@@ -598,7 +595,6 @@ export class JavaAnalyzer {
         }
       }
 
-      
       const body = node.childForFieldName("body");
       if (body) {
         for (let i = 0; i < body.childCount; i++) {

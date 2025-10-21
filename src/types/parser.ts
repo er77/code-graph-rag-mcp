@@ -100,7 +100,6 @@ export interface ParsedEntity {
   /** Entity name (function name, class name, etc.) */
   name: string;
 
-  
   type:
     | "event"
     | "function"
@@ -552,7 +551,6 @@ export interface PatternAnalysis {
     severity: "warning" | "error";
   }>;
 
-  
   otherPatterns?: Array<{
     kind: string;
     entities?: string[];

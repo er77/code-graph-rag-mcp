@@ -29,7 +29,6 @@ int sub(int a, int b) { return a - b; }
     const r1 = await parser.parse(filePath, code1, extHash);
     const r2 = await parser.parse(filePath, code2, extHash);
 
-    
     const f1 = r1.entities.find((e) => e.type === "function" && e.name === "add");
     const f2 = r2.entities.find((e) => e.type === "function" && e.name === "sub");
     expect(f1).toBeDefined();

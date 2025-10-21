@@ -150,7 +150,7 @@ export class SQLiteManager {
     if (!this.config.memory && !this.config.readonly) {
       try {
         this.db.exec("ANALYZE");
-      } catch (error) {
+      } catch (_error) {
         // ANALYZE may fail on empty database, ignore
         console.debug("[SQLiteManager] ANALYZE skipped (likely empty database)");
       }
@@ -296,7 +296,7 @@ export class SQLiteManager {
    * Check if database is open
    */
   isOpen(): boolean {
-    return this.db !== null && this.db.open;
+    return this.db?.open;
   }
 
   /**

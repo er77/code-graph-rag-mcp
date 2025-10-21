@@ -41,12 +41,10 @@ export class GoAnalyzer {
   private parseStartTime = 0;
   private currentPackage = "";
 
-  
   private isExported(name?: string): boolean {
     return !!name && /^[A-Z]/.test(name);
   }
 
-  
   private collectIdentifiersFromNameField(nameField: TreeSitterNode | null): string[] {
     if (!nameField) return [];
     if (nameField.type === "identifier") return [nameField.text];
@@ -218,25 +216,21 @@ export class GoAnalyzer {
    * Extract package name from package clause
    */
   private getPackageName(node: TreeSitterNode): string | null {
-    
     const identifierNode = node.childForFieldName("name");
     if (identifierNode && typeof identifierNode.text === "string" && identifierNode.text.length) {
       return identifierNode.text;
     }
 
-    
     const candNamed = node.namedChildren.find((c) => c.type === "identifier");
     if (candNamed && typeof candNamed.text === "string" && candNamed.text.length) {
       return candNamed.text;
     }
 
-    
     const candAny = node.children.find((c) => c.type === "identifier");
     if (candAny && typeof candAny.text === "string" && candAny.text.length) {
       return candAny.text;
     }
 
-    
     const m = /\bpackage\s+([A-Za-z_]\w*)/.exec(node.text);
     if (m && m[1] !== undefined) {
       return m[1];
@@ -707,15 +701,12 @@ export class GoAnalyzer {
    * Extract variables
    */
   private extractVariable(node: TreeSitterNode, filePath: string, entities: ParsedEntity[]): void {
-    
     const varSpecs = this.findDescendantsByType(node, "var_spec");
 
     for (const varSpec of varSpecs) {
-      
       const nameField = varSpec.childForFieldName("name");
       let names = this.collectIdentifiersFromNameField(nameField);
 
-      
       if (!names.length) {
         const list = varSpec.namedChildren.find((c) => c.type === "identifier_list");
         if (list) {
@@ -723,12 +714,10 @@ export class GoAnalyzer {
         }
       }
 
-      
       if (!names.length) {
         names = varSpec.namedChildren.filter((c) => c.type === "identifier").map((c) => c.text);
       }
 
-      
       if (!names.length) {
         const typeNode = varSpec.childForFieldName("type");
         const typeIdSet = new Set<string>();

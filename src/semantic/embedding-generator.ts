@@ -170,10 +170,10 @@ export class EmbeddingGenerator {
 
     let embedding: Float32Array;
     try {
-      embedding = await this.provider!.embed(normalized);
+      embedding = await this.provider?.embed(normalized);
     } catch (e) {
       console.warn("[EmbeddingGenerator] embed failed, using fallback:", (e as Error)?.message || e);
-      embedding = await this.fallback!.embed(normalized);
+      embedding = await this.fallback?.embed(normalized);
     }
 
     // Cache with simple LRU eviction
@@ -225,22 +225,22 @@ export class EmbeddingGenerator {
       if (toProcess.length > 0) {
         let embeddings: Float32Array[] = [];
         try {
-          if (typeof this.provider!.embedBatch === "function") {
-            embeddings = await this.provider!.embedBatch!(toProcess.map((t) => t.text));
+          if (typeof this.provider?.embedBatch === "function") {
+            embeddings = await this.provider?.embedBatch?.(toProcess.map((t) => t.text));
           } else {
             // sequential fallback
             embeddings = [];
             for (const item of toProcess) {
               try {
-                embeddings.push(await this.provider!.embed(item.text));
+                embeddings.push(await this.provider?.embed(item.text));
               } catch (e) {
                 console.warn("[EmbeddingGenerator] embed failed in batch, using fallback:", (e as Error)?.message || e);
-                embeddings.push(await this.fallback!.embed(item.text));
+                embeddings.push(await this.fallback?.embed(item.text));
               }
             }
           }
-        } catch (e) {
-          embeddings = await this.fallback!.embedBatch!(toProcess.map((t) => t.text));
+        } catch (_e) {
+          embeddings = await this.fallback?.embedBatch?.(toProcess.map((t) => t.text));
         }
 
         toProcess.forEach((item, k) => {
@@ -260,6 +260,14 @@ export class EmbeddingGenerator {
     }
 
     return results;
+  }
+
+  setBatchSize(size: number): void {
+    const normalized = Number.isFinite(size) ? Math.max(1, Math.floor(size)) : (this.config.batchSize ?? 8);
+    this.config.batchSize = normalized;
+    if (this.debugMode) {
+      console.log(`[EmbeddingGenerator] Batch size updated to ${normalized}`);
+    }
   }
 
   /**

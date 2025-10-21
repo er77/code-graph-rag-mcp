@@ -397,7 +397,7 @@ function createMockGenericNode(): TreeSitterNode {
 
 function createMockDeriveNode(): TreeSitterNode {
   const node = createMockNode("struct_item", "DeriveStruct");
-  
+
   const attr = {
     ...createMockNode("attribute_item", "derive"),
     childForFieldName: (field: string) => {
@@ -414,7 +414,7 @@ function createMockDeriveNode(): TreeSitterNode {
       return null;
     },
   };
-  
+
   node.childCount = 1;
   node.children = [attr];
   node.child = (i: number) => (i === 0 ? attr : null);
@@ -510,7 +510,6 @@ function createMockUseNode(): TreeSitterNode {
 }
 
 function createMockBuilderNode(): TreeSitterNode {
-  
   const structNode = createMockNode("struct_item", "TestBuilder");
   const implNode = createMockNode("impl_item", "");
   implNode.childForFieldName = (field: string) => {

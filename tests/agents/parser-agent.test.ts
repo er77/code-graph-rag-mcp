@@ -59,7 +59,7 @@ async function createTestFiles(files: TestFile[]): Promise<void> {
 async function cleanupTestFiles(): Promise<void> {
   try {
     await fs.rm(TEMP_DIR, { recursive: true, force: true });
-  } catch (error) {
+  } catch (_error) {
     // Ignore cleanup errors
   }
 }
@@ -273,9 +273,9 @@ export class UserService {
 
       const result2 = results[0];
       expect(result2).toBeDefined();
-      expect(result2!.contentHash).not.toBe(hash1);
+      expect(result2?.contentHash).not.toBe(hash1);
 
-      const modifiedClass = result2!.entities.find((e) => e.name === "ModifiedClass1");
+      const modifiedClass = result2?.entities.find((e) => e.name === "ModifiedClass1");
       expect(modifiedClass).toBeDefined();
     });
 
@@ -476,7 +476,7 @@ export class UserService {
     test("should handle non-existent file gracefully", async () => {
       const result = await agent.parseFile("/non/existent/file.js");
       expect(result.errors).toBeDefined();
-      expect(result.errors!.length).toBeGreaterThan(0);
+      expect(result.errors?.length).toBeGreaterThan(0);
       expect(result.entities).toEqual([]);
     });
 
@@ -513,7 +513,7 @@ export class UserService {
 
       try {
         await agent.process(task);
-      } catch (error) {
+      } catch (_error) {
         // Expected to throw
       }
 

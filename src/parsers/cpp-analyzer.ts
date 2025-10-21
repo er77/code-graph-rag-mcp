@@ -288,7 +288,7 @@ export class CppAnalyzer {
       name: fullName,
       type: "class",
       location: this.getNodeLocation(node),
-      modifiers, 
+      modifiers,
     };
 
     entities.push(entity);
@@ -606,7 +606,7 @@ export class CppAnalyzer {
   /**
    * Safely mark the last entity as a template and put into cache
    */
-  
+
   private markEntityAsTemplate(
     entities: ParsedEntity[],
     targetName: string,
@@ -836,8 +836,6 @@ export class CppAnalyzer {
       } else if (nameNode) {
         return this.extractFunctionName(nameNode);
       } else {
-        
-        
         const cand = declaratorNode.children.find(
           (c) =>
             c.type === "identifier" ||
@@ -871,7 +869,6 @@ export class CppAnalyzer {
       declaratorNode.type === "parenthesized_declarator" ||
       declaratorNode.type === "array_declarator"
     ) {
-      
       const inner =
         declaratorNode.childForFieldName("declarator") ||
         declaratorNode.children.find(
@@ -914,7 +911,7 @@ export class CppAnalyzer {
         return "operator()";
       }
       const mSym = /operator\s*([^\s(]+)/.exec(text);
-      if (mSym && mSym[1]) return `operator${mSym[1].replace(/\s+/g, "")}`;
+      if (mSym?.[1]) return `operator${mSym[1].replace(/\s+/g, "")}`;
     }
     return n;
   }
@@ -989,11 +986,11 @@ export class CppAnalyzer {
    */
   private extractTemplateParameters(parametersNode: TreeSitterNode | null): string {
     if (!parametersNode) return "";
-    
+
     // - type_parameter_declaration
     // - parameter_declaration
     // - type_parameter_pack
-    
+
     const names = new Set<string>();
     const stack: TreeSitterNode[] = [...parametersNode.children];
     while (stack.length) {
@@ -1004,7 +1001,7 @@ export class CppAnalyzer {
           names.add(t);
         }
       }
-      
+
       for (const c of n.children) stack.push(c);
     }
     return Array.from(names).join(", ");

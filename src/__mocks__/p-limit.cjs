@@ -1,4 +1,4 @@
-function pLimit(concurrency) {
+function pLimit(_concurrency) {
   return async (fn, ...args) => {
     return fn(...args);
   };

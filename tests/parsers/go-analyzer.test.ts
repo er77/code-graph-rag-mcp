@@ -9,12 +9,12 @@ import { TreeSitterParser } from "../../src/parsers/tree-sitter-parser";
 
 describe("GoAnalyzer", () => {
   let parser: TreeSitterParser;
-  let analyzer: GoAnalyzer;
+  let _analyzer: GoAnalyzer;
 
   beforeAll(async () => {
     parser = new TreeSitterParser();
     await parser.initialize();
-    analyzer = new GoAnalyzer();
+    _analyzer = new GoAnalyzer();
   });
 
   it("should parse basic Go functions and packages", async () => {

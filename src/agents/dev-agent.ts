@@ -4,8 +4,8 @@
  * that are delegated by the Conductor orchestrator
  */
 
-import { readdirSync, statSync } from "fs";
-import { extname, join } from "path";
+import { readdirSync, statSync } from "node:fs";
+import { extname, join } from "node:path";
 import { ConfigLoader } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { getSQLiteManager } from "../storage/sqlite-manager.js";
@@ -18,6 +18,10 @@ import { ParserAgent } from "./parser-agent.js";
 export class DevAgent extends BaseAgent {
   private parserAgent: ParserAgent | null = null;
   private indexerAgent: IndexerAgent | null = null;
+  private indexBatchSize: number;
+  private defaultBatchSize: number;
+  private readonly defaultMaxConcurrency: number;
+  private readonly defaultMemoryLimit: number;
 
   constructor(_agentId?: string) {
     super(AgentType.DEV, {
@@ -26,11 +30,18 @@ export class DevAgent extends BaseAgent {
       cpuAffinity: undefined,
       priority: 7,
     });
+
+    this.defaultMaxConcurrency = this.capabilities.maxConcurrency;
+    this.defaultMemoryLimit = this.capabilities.memoryLimit;
+    this.defaultBatchSize = 100;
+    this.indexBatchSize = this.defaultBatchSize;
   }
 
   protected async onInitialize(): Promise<void> {
     try {
       const configLoader = ConfigLoader.getInstance();
+      this.defaultBatchSize = configLoader.getDevIndexBatchSize();
+      this.indexBatchSize = this.defaultBatchSize;
       const useParser = configLoader.shouldUseParser();
       if (useParser) {
         try {
@@ -66,6 +77,8 @@ export class DevAgent extends BaseAgent {
         await this.process(task);
       }
     });
+
+    knowledgeBus.subscribe(this.id, "resources:adjusted", (entry) => this.handleResourceAdjustment(entry));
 
     console.log(`[DevAgent ${this.id}] Initialized and ready for implementation tasks`);
   }
@@ -196,7 +209,7 @@ export class DevAgent extends BaseAgent {
     console.log(`[DevAgent ${this.id}] Found ${files.length} files to process`);
 
     const configLoader = ConfigLoader.getInstance();
-    const batchSize = configLoader.getDevIndexBatchSize();
+    const batchSize = this.indexBatchSize ?? configLoader.getDevIndexBatchSize();
     let totalEntities = 0;
     let totalRelationships = 0;
     let filesProcessed = 0;
@@ -229,7 +242,7 @@ export class DevAgent extends BaseAgent {
 
             if (Array.isArray(res.relationships)) {
               for (const r of res.relationships) {
-                if (r && r.from && r.to && r.type) {
+                if (r?.from && r.to && r.type) {
                   slot.relationships.push({
                     from: r.from,
                     to: r.to,
@@ -259,7 +272,7 @@ export class DevAgent extends BaseAgent {
             };
 
             try {
-              const indexResult = await this.indexerAgent!.process(indexTask);
+              const indexResult = await this.indexerAgent?.process(indexTask);
               const indexed = indexResult as any;
               if (indexed) {
                 totalEntities += indexed.entitiesIndexed || 0;
@@ -384,7 +397,7 @@ export class DevAgent extends BaseAgent {
               createdAt: Date.now(),
             };
             try {
-              const indexResult = await this.indexerAgent!.process(indexTask);
+              const indexResult = await this.indexerAgent?.process(indexTask);
               const indexed = indexResult as any;
               if (indexed) {
                 totalEntities += indexed.entitiesIndexed || 0;
@@ -457,6 +470,34 @@ export class DevAgent extends BaseAgent {
 
     walkDir(directory);
     return files;
+  }
+
+  private handleResourceAdjustment(entry: KnowledgeEntry): void {
+    const data = entry.data as {
+      newMemoryLimit?: number;
+      newAgentLimit?: number;
+    };
+
+    if (typeof data.newAgentLimit === "number" && Number.isFinite(data.newAgentLimit)) {
+      const adjustedConcurrency = Math.max(1, Math.min(this.defaultMaxConcurrency * 2, Math.floor(data.newAgentLimit)));
+      if (this.capabilities.maxConcurrency !== adjustedConcurrency) {
+        console.log(
+          `[DevAgent ${this.id}] Adjusting concurrency from ${this.capabilities.maxConcurrency} to ${adjustedConcurrency} (resources:adjusted)`,
+        );
+        this.capabilities.maxConcurrency = adjustedConcurrency;
+      }
+    }
+
+    if (typeof data.newMemoryLimit === "number" && Number.isFinite(data.newMemoryLimit)) {
+      const ratio = Math.max(0.5, Math.min(2, data.newMemoryLimit / this.defaultMemoryLimit));
+      const newBatchSize = Math.max(10, Math.round(this.defaultBatchSize * ratio));
+      if (this.indexBatchSize !== newBatchSize) {
+        console.log(
+          `[DevAgent ${this.id}] Adjusting batch size from ${this.indexBatchSize} to ${newBatchSize} (resources:adjusted)`,
+        );
+        this.indexBatchSize = newBatchSize;
+      }
+    }
   }
 
   protected async onShutdown(): Promise<void> {

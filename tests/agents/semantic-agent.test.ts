@@ -11,11 +11,13 @@
 
 import { afterEach, beforeEach, describe, expect, it, jest } from "@jest/globals";
 
+// Declare warmupMock before the mock so it's accessible in the test scope
+const warmupMock = jest.fn();
+
 jest.mock(
   "../../semantic/vector-store",
   () => {
     class VectorStore {
-      constructor(_: any) {}
       async initialize() {}
       async close() {}
       async count() {
@@ -33,7 +35,6 @@ jest.mock(
   "../../semantic/embedding-generator",
   () => {
     class EmbeddingGenerator {
-      constructor(_: any) {}
       async initialize() {}
       async cleanup() {}
       async generateEmbedding(_: string) {
@@ -45,6 +46,7 @@ jest.mock(
       async generateCodeEmbedding(_: string) {
         return new Float32Array(384);
       }
+      setBatchSize(_: number) {}
     }
     return { EmbeddingGenerator };
   },
@@ -55,7 +57,6 @@ jest.mock(
   "../../semantic/hybrid-search",
   () => {
     class HybridSearchEngine {
-      constructor(_: any, __: any) {}
       setQueryAgent(_: any) {}
       async semanticSearch(query: string, _limit = 10) {
         return {
@@ -79,7 +80,6 @@ jest.mock(
       private map = new Map<string, any>();
       private hits = 0;
       private reqs = 0;
-      constructor(_: any) {}
       get(key: string) {
         this.reqs++;
         const v = this.map.get(key);
@@ -98,9 +98,29 @@ jest.mock(
         const hitRate = this.reqs ? this.hits / this.reqs : 0;
         return { hitRate };
       }
+      async warmup(map: Map<string, Float32Array>) {
+        warmupMock(map);
+      }
     }
-    return { SemanticCache };
+    return { SemanticCache, warmupMock };
   },
+  { virtual: true },
+);
+
+const getGraphStorageMock = jest.fn(async () => ({
+  executeQuery: jest.fn(async () => ({
+    entities: [],
+    relationships: [],
+    stats: { totalEntities: 0, totalRelationships: 0 },
+  })),
+  getEntity: jest.fn(async (_id: string) => null),
+}));
+
+jest.mock(
+  "../../storage/graph-storage-factory",
+  () => ({
+    getGraphStorage: getGraphStorageMock,
+  }),
   { virtual: true },
 );
 
@@ -108,7 +128,6 @@ jest.mock(
   "../../semantic/code-analyzer",
   () => {
     class CodeAnalyzer {
-      constructor(_: any, __: any, ___: any) {}
       async generateCodeEmbedding(_: string) {
         return new Float32Array(384);
       }
@@ -149,6 +168,27 @@ describe("SemanticAgent", () => {
   let agent: SemanticAgent;
 
   beforeEach(async () => {
+    warmupMock.mockClear();
+    knowledgeBus.clearTopic("semantic:warmup:entities");
+    const entities = [
+      {
+        id: "warm-entity-1",
+        name: "WarmEntity",
+        type: "function",
+        filePath: "/tmp/warm.ts",
+        metadata: { complexity: 3 },
+      },
+    ];
+
+    getGraphStorageMock.mockResolvedValue({
+      executeQuery: jest.fn(async () => ({
+        entities,
+        relationships: [],
+        stats: { totalEntities: entities.length, totalRelationships: 0, queryTimeMs: 0 },
+      })),
+      getEntity: jest.fn(async (id: string) => entities.find((e) => e.id === id) ?? null),
+    });
+
     agent = new SemanticAgent();
     await agent.initialize();
   });
@@ -182,6 +222,15 @@ describe("SemanticAgent", () => {
       );
 
       await newAgent.shutdown();
+    });
+
+    it("warms semantic cache on initialize", () => {
+      expect(warmupMock).toHaveBeenCalled();
+      const call = warmupMock.mock.calls[0]?.[0];
+      expect(call instanceof Map).toBe(true);
+      if (call instanceof Map) {
+        expect(call.size).toBeGreaterThan(0);
+      }
     });
   });
 

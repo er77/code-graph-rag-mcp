@@ -5,9 +5,9 @@
  * Uses the MCP SDK to communicate with the server
  */
 
+import { spawn } from "node:child_process";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { spawn } from "child_process";
 
 const TEST_DIR =
   process.env.TEST_DIR ||
