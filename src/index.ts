@@ -34,7 +34,7 @@ createSafeEnvironment();
 
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, normalize, resolve } from "node:path";
+import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 // Consolidated MCP SDK imports
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -46,7 +46,7 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 // Import our multi-agent components
 import { ConductorOrchestrator } from "./agents/conductor-orchestrator.js";
 // TASK-001: Import new YAML configuration system
-import { initializeConfig, validateConfig } from "./config/yaml-config.js";
+import { ConfigLoader, initializeConfig, validateConfig } from "./config/yaml-config.js";
 import { knowledgeBus } from "./core/knowledge-bus.js";
 import { resourceManager } from "./core/resource-manager.js";
 import { getGraphStorage, initializeGraphStorage } from "./storage/graph-storage-factory.js";
@@ -63,8 +63,39 @@ import { createRequestId, logger } from "./utils/logger.js";
 
 // Parse command line arguments
 const args = process.argv.slice(2);
-if (args.length !== 1) {
-  console.error("Usage: code-graph-rag-mcp <directory>");
+let overrideConfigPath: string | undefined;
+const positionalArgs: string[] = [];
+
+for (let i = 0; i < args.length; i++) {
+  const arg = args[i]!;
+
+  if (arg === "--config") {
+    const next = args[++i];
+    if (!next) {
+      console.error("Error: --config requires a path argument");
+      console.error("Usage: code-graph-rag-mcp [--config <path>] <directory>");
+      process.exit(1);
+    }
+    overrideConfigPath = next;
+  } else if (arg.startsWith("--config=")) {
+    const value = arg.slice("--config=".length);
+    if (!value) {
+      console.error("Error: --config requires a non-empty path");
+      console.error("Usage: code-graph-rag-mcp [--config <path>] <directory>");
+      process.exit(1);
+    }
+    overrideConfigPath = value;
+  } else if (arg.startsWith("-")) {
+    console.error(`Unknown option: ${arg}`);
+    console.error("Usage: code-graph-rag-mcp [--config <path>] <directory>");
+    process.exit(1);
+  } else {
+    positionalArgs.push(arg);
+  }
+}
+
+if (positionalArgs.length !== 1) {
+  console.error("Usage: code-graph-rag-mcp [--config <path>] <directory>");
   process.exit(1);
 }
 
@@ -73,6 +104,10 @@ function expandHome(filepath: string): string {
     return join(homedir(), filepath.slice(1));
   }
   return filepath;
+}
+
+if (overrideConfigPath) {
+  ConfigLoader.setOverridePath(overrideConfigPath);
 }
 
 /**
@@ -115,7 +150,18 @@ function getVersionInfo() {
   }
 }
 
-const directory = normalize(resolve(expandHome(args[0] as string)));
+const versionInfo = getVersionInfo();
+
+const directory = normalize(resolve(expandHome(positionalArgs[0]!)));
+
+function normalizeInputPath(rawPath: string): string;
+function normalizeInputPath(rawPath?: string | null): string | undefined;
+function normalizeInputPath(rawPath?: string | null): string | undefined {
+  if (!rawPath) return undefined;
+  const expanded = expandHome(rawPath);
+  const target = isAbsolute(expanded) ? expanded : resolve(directory, expanded);
+  return normalize(target);
+}
 
 // TASK-001: Initialize YAML configuration system
 const config = initializeConfig();
@@ -150,10 +196,11 @@ logger.systemEvent("MCP Server Starting", {
 });
 
 // Initialize resource manager with configuration constraints
+const conductorResources = config.conductor.resourceConstraints;
 resourceManager.startMonitoring();
 logger.systemEvent("Resource Manager Started", {
-  maxMemoryMB: 1024,
-  maxCpuPercent: 80,
+  maxMemoryMB: conductorResources.maxMemoryMB,
+  maxCpuPercent: conductorResources.maxCpuPercent,
   embeddingFallback: config.mcp.embedding?.fallbackToMemory,
 });
 
@@ -163,20 +210,7 @@ let conductor: ConductorOrchestrator | null = null;
 function getConductor(): ConductorOrchestrator {
   if (!conductor) {
     // TASK-001: Use YAML configuration for conductor setup
-    const mcpConfig = config.mcp;
-    conductor = new ConductorOrchestrator({
-      resourceConstraints: {
-        maxMemoryMB: 1024, // 1GB for our process
-        maxCpuPercent: 80,
-        maxConcurrentAgents: mcpConfig.agents?.maxConcurrent || 10,
-        maxTaskQueueSize: 100,
-      },
-      taskQueueLimit: 100,
-      loadBalancingStrategy: "least-loaded",
-      complexityThreshold: 8, // Require approval for complexity > 8 (allow indexing to proceed)
-      mandatoryDelegation: true, // ENFORCE delegation to dev-agent or Dora
-      // embeddingConfig will be handled in agent initialization
-    });
+    conductor = new ConductorOrchestrator(config.conductor ?? {});
   }
   return conductor;
 }
@@ -309,14 +343,15 @@ async function resolveEntityWithHint(
   hintFilePath?: string,
 ): Promise<Entity | null> {
   const esc = (s: string) => escapeRegExp(s);
+  const resolvedHintPath = hintFilePath ? normalizeInputPath(hintFilePath) : undefined;
 
-  if (hintFilePath) {
-    const hintLower = toPosixPath(hintFilePath).toLowerCase();
+  if (resolvedHintPath) {
+    const hintLower = toPosixPath(resolvedHintPath).toLowerCase();
 
     const exact = await storage.executeQuery({
       type: "entity",
       filters: {
-        filePath: hintFilePath,
+        filePath: resolvedHintPath,
         name: new RegExp(`^${esc(name)}$`, "i"),
       },
       limit: 5,
@@ -381,11 +416,12 @@ async function resolveEntityWithHint(
 }
 
 function mapEntitySummary(entity: Entity) {
+  const normalizedPath = normalizeInputPath(entity.filePath) ?? entity.filePath;
   return {
     id: entity.id,
     name: entity.name,
     type: entity.type,
-    filePath: entity.filePath,
+    filePath: normalizedPath,
     location: entity.location,
     metadata: entity.metadata,
   };
@@ -467,12 +503,18 @@ const ListEntitiesToolSchema = z.object({
   entityTypes: z.array(z.string()).describe("Types of entities to list").optional(),
 });
 
-const ListRelationshipsToolSchema = z.object({
-  entityName: z.string().describe("Name of the entity to find relationships for"),
-  filePath: z.string().optional().describe("Optional file path hint to disambiguate entity"),
-  depth: z.number().optional().default(1).describe("Depth of relationship traversal"),
-  relationshipTypes: z.array(z.string()).optional().describe("Types of relationships to include"),
-});
+const ListRelationshipsToolSchema = z
+  .object({
+    entityId: z.string().optional().describe("Exact entity ID to find relationships for"),
+    entityName: z.string().optional().describe("Name of the entity to find relationships for"),
+    filePath: z.string().optional().describe("Optional file path hint to disambiguate entity"),
+    depth: z.number().optional().default(1).describe("Depth of relationship traversal"),
+    relationshipTypes: z.array(z.string()).optional().describe("Types of relationships to include"),
+  })
+  .refine((value) => Boolean(value.entityId || value.entityName), {
+    message: "Provide either entityId or entityName",
+    path: ["entityId"],
+  });
 
 const QueryToolSchema = z.object({
   query: z.string().describe("Natural language or structured query"),
@@ -567,8 +609,8 @@ const GetAgentMetricsSchema = z.object({});
 // Create MCP server
 const server = new Server(
   {
-    name: "code-graph-rag-mcp",
-    version: "2.4.1",
+    name: versionInfo.name,
+    version: versionInfo.version,
   },
   {
     capabilities: {
@@ -608,12 +650,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "list_file_entities",
-        description: "List all entities (functions, classes, etc.) in a file",
+        description:
+          "List parsed entities within a single file (imports, functions, classes, etc.); use as the entry point to discover stable entity identifiers before running relationship queries.",
         inputSchema: zodToJsonSchema(ListEntitiesToolSchema) as any,
       },
       {
         name: "list_entity_relationships",
-        description: "List all relationships for a specific entity",
+        description:
+          "List outgoing relationships for an entity (imports, references, containment). Provide either the entity id (preferred) or name+file path to inspect its dependencies.",
         inputSchema: zodToJsonSchema(ListRelationshipsToolSchema) as any,
       },
       {
@@ -634,7 +678,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       // New semantic tools - TASK-002
       {
         name: "semantic_search",
-        description: "Search code using natural language queries with semantic understanding",
+        description:
+          "Search the codebase using natural language keywords or file/module paths. Useful for discovery before diving into structural graph queries.",
         inputSchema: zodToJsonSchema(SemanticSearchSchema) as any,
       },
       {
@@ -644,7 +689,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "analyze_code_impact",
-        description: "Analyze the impact of changes to a specific entity",
+        description:
+          "Discover entities and files that depend on a given symbol. Use together with list_file_entities to obtain the precise entity id for impact analysis.",
         inputSchema: zodToJsonSchema(AnalyzeCodeImpactSchema) as any,
       },
       {
@@ -1027,8 +1073,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "list_file_entities": {
         const { filePath, entityTypes } = ListEntitiesToolSchema.parse(args);
+        const targetFilePath = normalizeInputPath(filePath);
 
-        const cached = knowledgeBus.query(`entities:${filePath}`, 1);
+        const cacheKey = `entities:${targetFilePath}`;
+        const cached = knowledgeBus.query(cacheKey, 1);
         if (cached.length > 0) {
           const entry = cached[0];
           if (entry && Date.now() - entry.timestamp < 60000) {
@@ -1048,7 +1096,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const query = await storage.executeQuery({
           type: "entity",
           filters: {
-            filePath,
+            filePath: targetFilePath,
             ...(normalizedEntityTypes ? { entityType: normalizedEntityTypes } : {}),
           },
           limit: 500,
@@ -1060,13 +1108,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           .map((entity) => mapEntitySummary(entity));
 
         const response = {
-          filePath,
+          filePath: targetFilePath,
           total: entities.length,
           entities,
           stats: query.stats,
         };
 
-        knowledgeBus.publish(`entities:${filePath}`, response, "mcp-server", 60000);
+        knowledgeBus.publish(cacheKey, response, "mcp-server", 60000);
 
         return {
           content: [
@@ -1078,10 +1126,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
       case "list_entity_relationships": {
-        const { entityName, relationshipTypes, filePath: hintFilePath } = ListRelationshipsToolSchema.parse(args);
+        const {
+          entityId: directId,
+          entityName,
+          relationshipTypes,
+          filePath: hintFilePath,
+        } = ListRelationshipsToolSchema.parse(args);
         const storage = await getGraphStorage(globalSQLiteManager);
+        const resolvedHintPath = hintFilePath ? normalizeInputPath(hintFilePath) : undefined;
 
-        const entity = await resolveEntityWithHint(storage, entityName, hintFilePath);
+        let entity: Entity | null = null;
+        if (directId) {
+          entity = await storage.getEntity(directId);
+        }
+        if (!entity) {
+          entity = await resolveEntityWithHint(storage, entityName ?? directId ?? "", resolvedHintPath);
+        }
         if (!entity) {
           return {
             content: [
@@ -1351,6 +1411,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "suggest_refactoring": {
         const { filePath, focusArea, entityId, startLine, endLine } = SuggestRefactoringSchema.parse(args);
+        const targetFilePath = normalizeInputPath(filePath);
 
         const semanticAgent = await getSemanticAgent();
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
@@ -1361,8 +1422,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const MAX_SNIPPET = 10000;
 
         const readFileSafe = async (p: string) => {
+          const normalizedPath = normalizeInputPath(p);
           try {
-            return await fs.readFile(p, "utf8");
+            return await fs.readFile(normalizedPath, "utf8");
           } catch {
             return "";
           }
@@ -1412,14 +1474,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           suggestions: unknown;
         }> = [];
 
-        const fileText = await readFileSafe(filePath);
+        const fileText = await readFileSafe(targetFilePath);
 
         if (!fileText) {
           return {
             content: [
               {
                 type: "text",
-                text: JSON.stringify({ success: false, error: `Cannot read file: ${filePath}` }, null, 2),
+                text: JSON.stringify({ success: false, error: `Cannot read file: ${targetFilePath}` }, null, 2),
               },
             ],
           };
@@ -1434,7 +1496,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             content: [
               {
                 type: "text",
-                text: JSON.stringify({ filePath, focus: { mode: "range", range }, analyzed }, null, 2),
+                text: JSON.stringify({ filePath: targetFilePath, focus: { mode: "range", range }, analyzed }, null, 2),
               },
             ],
           };
@@ -1461,14 +1523,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             content: [
               {
                 type: "text",
-                text: JSON.stringify({ filePath, focus: { mode: "entityId", entityId: ent.id }, analyzed }, null, 2),
+                text: JSON.stringify(
+                  { filePath: targetFilePath, focus: { mode: "entityId", entityId: ent.id }, analyzed },
+                  null,
+                  2,
+                ),
               },
             ],
           };
         }
 
         if (focusArea) {
-          const ent = await resolveEntityWithHint(storage, focusArea, filePath);
+          const ent = await resolveEntityWithHint(storage, focusArea, targetFilePath);
           if (ent) {
             const { snippet, range } = sliceByEntity(fileText, ent);
             const suggestions = await runSuggest(snippet);
@@ -1478,7 +1544,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               content: [
                 {
                   type: "text",
-                  text: JSON.stringify({ filePath, focus: { mode: "focusArea", focusArea }, analyzed }, null, 2),
+                  text: JSON.stringify(
+                    { filePath: targetFilePath, focus: { mode: "focusArea", focusArea }, analyzed },
+                    null,
+                    2,
+                  ),
                 },
               ],
             };
@@ -1487,7 +1557,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         const query = await storage.executeQuery({
           type: "entity",
-          filters: { filePath },
+          filters: { filePath: targetFilePath },
           limit: 500,
         });
 
@@ -1510,7 +1580,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             content: [
               {
                 type: "text",
-                text: JSON.stringify({ filePath, focus: { mode: "file" }, analyzed }, null, 2),
+                text: JSON.stringify({ filePath: targetFilePath, focus: { mode: "file" }, analyzed }, null, 2),
               },
             ],
           };
@@ -1527,7 +1597,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             {
               type: "text",
               text: JSON.stringify(
-                { filePath, focus: { mode: "auto-top-entities", count: analyzed.length }, analyzed },
+                { filePath: targetFilePath, focus: { mode: "auto-top-entities", count: analyzed.length }, analyzed },
                 null,
                 2,
               ),
@@ -1635,9 +1705,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         // Read code snippet for this entity using stored location
         const fs = await import("node:fs/promises");
+        const entityFilePath = normalizeInputPath(entity.filePath) ?? entity.filePath;
         let snippet = "";
         try {
-          const full = await fs.readFile(entity.filePath, "utf8");
+          const full = await fs.readFile(entityFilePath, "utf8");
           const startIdx =
             typeof (entity as any).location?.start?.index === "number" ? (entity as any).location.start.index : 0;
           const endIdx =
@@ -1683,46 +1754,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             {
               type: "text",
               text: JSON.stringify(
-                { entity: { id: entity.id, name: entity.name, filePath: entity.filePath }, related: results },
-                null,
-                2,
-              ),
-            },
-          ],
-        };
-      }
-
-      case "get_graph": {
-        const { query, limit } = GetGraphSchema.parse(args);
-
-        // Use direct database query instead of going through agents
-        const storage = await getGraphStorage(globalSQLiteManager);
-        const result = await queryGraphEntities(storage, query, limit);
-
-        logger.info(
-          "GRAPH_QUERY",
-          `Retrieved graph with ${result.entities.length} entities and ${result.relationships.length} relationships`,
-          {
-            query,
-            limit,
-            stats: result.stats,
-          },
-          requestId,
-        );
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(
-                {
-                  entities: result.entities,
-                  relations: result.relationships,
-                  stats: {
-                    totalNodes: result.stats.totalEntities,
-                    totalRelations: result.stats.totalRelationships,
-                  },
-                },
+                { entity: { id: entity.id, name: entity.name, filePath: entityFilePath }, related: results },
                 null,
                 2,
               ),
@@ -1773,10 +1805,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "analyze_code_impact": {
         const { entityId, filePath: hintFilePath } = AnalyzeCodeImpactSchema.parse(args);
         const storage = await getGraphStorage(globalSQLiteManager);
+        const resolvedHintPath = hintFilePath ? normalizeInputPath(hintFilePath) : undefined;
 
         let entity = await storage.getEntity(entityId);
         if (!entity) {
-          entity = await resolveEntityWithHint(storage, entityId, hintFilePath);
+          entity = await resolveEntityWithHint(storage, entityId, resolvedHintPath);
         }
 
         if (!entity) {
@@ -1824,7 +1857,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         const affectedFiles = new Set<string>();
         for (const sample of [...directEntities, ...indirectEntities]) {
-          affectedFiles.add(sample.filePath);
+          affectedFiles.add(normalizeInputPath(sample.filePath) ?? sample.filePath);
         }
 
         const totalImpact = directEntities.length + indirectEntities.length;

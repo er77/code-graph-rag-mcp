@@ -22,6 +22,7 @@
 
 import { nanoid } from "nanoid";
 import pLimit from "p-limit";
+import { getConfig } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { ConnectionPool } from "../query/connection-pool.js";
 import { GraphQueryProcessor } from "../query/graph-query-processor.js";
@@ -52,14 +53,19 @@ import { BaseAgent } from "./base.js";
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
 // =============================================================================
-const QUERY_AGENT_CONFIG = {
-  maxConcurrency: 10,
-  memoryLimit: 112, // MB (64 base + 32 cache + 16 connections)
-  priority: 9, // High priority for user queries
-  simpleQueryTimeout: 100, // ms
-  complexQueryTimeout: 1000, // ms
-  cacheWarmupSize: 100,
-};
+function getQueryAgentConfig() {
+  const config = getConfig();
+  return {
+    maxConcurrency: config.queryAgent?.maxConcurrency ?? 10,
+    memoryLimit: config.queryAgent?.memoryLimit ?? 112, // MB (64 base + 32 cache + 16 connections)
+    priority: config.queryAgent?.priority ?? 9,
+    simpleQueryTimeout: config.queryAgent?.simpleQueryTimeout ?? 100,
+    complexQueryTimeout: config.queryAgent?.complexQueryTimeout ?? 1000,
+    cacheWarmupSize: config.queryAgent?.cacheWarmupSize ?? 100,
+  };
+}
+
+const QUERY_AGENT_CONFIG = getQueryAgentConfig();
 
 // =============================================================================
 // 3. QUERY AGENT IMPLEMENTATION

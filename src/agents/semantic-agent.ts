@@ -74,14 +74,18 @@ interface CircuitBreakerConfig {
   monitorWindow: number; // Time window for failure counting (ms)
 }
 
-const AGENT_CONFIG = {
-  maxConcurrency: 5, // Embedding generation is resource-intensive
-  memoryLimit: 240, // MB (96 base + 64 embeddings + 48 vectors + 32 cache)
-  priority: 8,
-  batchSize: 8, // Optimal for 4-core CPU
-  vectorDbPath: "./vectors.db",
-  modelPath: "./models",
-};
+function getSemanticAgentConfig() {
+  const config = getConfig();
+  return {
+    maxConcurrency: config.semanticAgent?.maxConcurrency ?? 5,
+    memoryLimit: config.semanticAgent?.memoryLimit ?? 240,
+    priority: config.semanticAgent?.priority ?? 8,
+    batchSize: config.semanticAgent?.batchSize ?? 8,
+    modelPath: config.semanticAgent?.modelPath ?? "./models",
+  };
+}
+
+const AGENT_CONFIG = getSemanticAgentConfig();
 
 // TASK-004B: Circuit breaker configuration
 const CIRCUIT_BREAKER_CONFIG: CircuitBreakerConfig = {
