@@ -4,7 +4,7 @@
  * that are delegated by the Conductor orchestrator
  */
 
-import { readdirSync, statSync } from "node:fs";
+import { lstatSync, readdirSync } from "node:fs";
 import { extname, join } from "node:path";
 import { ConfigLoader, getConfig } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
@@ -459,6 +459,9 @@ export class DevAgent extends BaseAgent {
       ".pytest_cache",
       "venv",
       ".venv",
+      "test",
+      "tests",
+      "__tests__",
       "build",
       "dist",
       "out",
@@ -492,8 +495,15 @@ export class DevAgent extends BaseAgent {
 
           if (shouldExclude(fullPath)) continue;
 
-          const stat = statSync(fullPath);
-          if (stat.isDirectory()) {
+          const lstat = lstatSync(fullPath, { throwIfNoEntry: false });
+          if (!lstat) {
+            continue;
+          }
+          if (lstat.isSymbolicLink()) {
+            continue;
+          }
+
+          if (lstat.isDirectory()) {
             const lowerItem = item.toLowerCase();
             if (defaultExcludedDirNames.has(lowerItem)) {
               continue;
@@ -501,7 +511,7 @@ export class DevAgent extends BaseAgent {
             if (!item.startsWith(".")) {
               walkDir(fullPath);
             }
-          } else if (stat.isFile()) {
+          } else if (lstat.isFile()) {
             const ext = extname(fullPath).toLowerCase();
             if (supportedExtensions.includes(ext)) {
               files.push(fullPath);
