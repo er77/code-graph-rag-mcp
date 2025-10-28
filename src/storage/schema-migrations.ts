@@ -183,10 +183,12 @@ export const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_rel_from_to_type ON relationships(from_id, to_id, type);
 
       -- Vector embeddings table (separate from metadata)
+      DROP TABLE IF EXISTS embeddings;
       CREATE TABLE IF NOT EXISTS embeddings (
         id TEXT PRIMARY KEY,
         entity_id TEXT NOT NULL,
         content TEXT NOT NULL,
+        metadata TEXT,
         vector_data BLOB,
         model_name TEXT NOT NULL DEFAULT 'default',
         created_at INTEGER NOT NULL,

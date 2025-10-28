@@ -37,6 +37,9 @@ interface ConductorConfig {
   loadBalancingStrategy: "round-robin" | "least-loaded" | "priority";
   complexityThreshold: number; // Complexity threshold for approval workflow
   mandatoryDelegation: boolean; // Force delegation to specialized agents
+  maxConcurrency: number;
+  memoryLimit: number;
+  priority: number;
 }
 
 interface TaskComplexityAnalysis {
@@ -67,35 +70,65 @@ interface MethodProposal {
   recommended: boolean;
 }
 
+type ConductorConfigOverrides = Partial<Omit<ConductorConfig, "resourceConstraints">> & {
+  resourceConstraints?: Partial<ResourceConstraints>;
+};
+
+const DEFAULT_RESOURCE_CONSTRAINTS: ResourceConstraints = {
+  maxMemoryMB: 1024,
+  maxCpuPercent: 80,
+  maxConcurrentAgents: 10,
+  maxTaskQueueSize: 100,
+};
+
+const DEFAULT_CONDUCTOR_CONFIG: ConductorConfig = {
+  resourceConstraints: DEFAULT_RESOURCE_CONSTRAINTS,
+  taskQueueLimit: 100,
+  loadBalancingStrategy: "least-loaded",
+  complexityThreshold: 8,
+  mandatoryDelegation: true,
+  maxConcurrency: 100,
+  memoryLimit: 128,
+  priority: 10,
+};
+
 function getConductorAgentDefaults(): {
   capabilities: { maxConcurrency: number; memoryLimit: number; priority: number };
   config: ConductorConfig;
 } {
   const appConfig = getConfig();
-  const conductorConfig = appConfig.conductor ?? {};
+  const conductorOverrides = (appConfig.conductor ?? {}) as ConductorConfigOverrides;
+  const fallbackConcurrentAgents =
+    conductorOverrides.resourceConstraints?.maxConcurrentAgents ??
+    appConfig.mcp.agents?.maxConcurrent ??
+    DEFAULT_RESOURCE_CONSTRAINTS.maxConcurrentAgents;
 
   const resourceConstraints: ResourceConstraints = {
-    maxMemoryMB: conductorConfig.resourceConstraints?.maxMemoryMB ?? 1024,
-    maxCpuPercent: conductorConfig.resourceConstraints?.maxCpuPercent ?? 80,
-    maxConcurrentAgents:
-      conductorConfig.resourceConstraints?.maxConcurrentAgents ?? appConfig.mcp.agents?.maxConcurrent ?? 10,
-    maxTaskQueueSize: conductorConfig.resourceConstraints?.maxTaskQueueSize ?? 100,
+    maxMemoryMB: conductorOverrides.resourceConstraints?.maxMemoryMB ?? DEFAULT_RESOURCE_CONSTRAINTS.maxMemoryMB,
+    maxCpuPercent: conductorOverrides.resourceConstraints?.maxCpuPercent ?? DEFAULT_RESOURCE_CONSTRAINTS.maxCpuPercent,
+    maxConcurrentAgents: fallbackConcurrentAgents,
+    maxTaskQueueSize:
+      conductorOverrides.resourceConstraints?.maxTaskQueueSize ?? DEFAULT_RESOURCE_CONSTRAINTS.maxTaskQueueSize,
+  };
+
+  const maxConcurrency = conductorOverrides.maxConcurrency ?? DEFAULT_CONDUCTOR_CONFIG.maxConcurrency;
+  const memoryLimit = conductorOverrides.memoryLimit ?? DEFAULT_CONDUCTOR_CONFIG.memoryLimit;
+  const priority = conductorOverrides.priority ?? DEFAULT_CONDUCTOR_CONFIG.priority;
+
+  const config: ConductorConfig = {
+    resourceConstraints,
+    taskQueueLimit: conductorOverrides.taskQueueLimit ?? DEFAULT_CONDUCTOR_CONFIG.taskQueueLimit,
+    loadBalancingStrategy: conductorOverrides.loadBalancingStrategy ?? DEFAULT_CONDUCTOR_CONFIG.loadBalancingStrategy,
+    complexityThreshold: conductorOverrides.complexityThreshold ?? DEFAULT_CONDUCTOR_CONFIG.complexityThreshold,
+    mandatoryDelegation: conductorOverrides.mandatoryDelegation ?? DEFAULT_CONDUCTOR_CONFIG.mandatoryDelegation,
+    maxConcurrency,
+    memoryLimit,
+    priority,
   };
 
   return {
-    capabilities: {
-      maxConcurrency: conductorConfig.maxConcurrency ?? 100,
-      memoryLimit: conductorConfig.memoryLimit ?? 128,
-      priority: conductorConfig.priority ?? 10,
-    },
-    config: {
-      resourceConstraints,
-      taskQueueLimit: conductorConfig.taskQueueLimit ?? 100,
-      loadBalancingStrategy: conductorConfig.loadBalancingStrategy ?? "least-loaded",
-      complexityThreshold: conductorConfig.complexityThreshold ?? 8,
-      mandatoryDelegation:
-        conductorConfig.mandatoryDelegation !== undefined ? conductorConfig.mandatoryDelegation : true,
-    },
+    capabilities: { maxConcurrency, memoryLimit, priority },
+    config,
   };
 }
 
@@ -129,9 +162,16 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   private readonly AGENT_STALE_MS = 30000; // 30s without activity => suspect
   private agentLastSeen: Map<string, number> = new Map();
 
-  constructor(config: Partial<ConductorConfig> = {}) {
+  constructor(config: ConductorConfigOverrides = {}) {
     const defaults = getConductorAgentDefaults();
-    super(AgentType.COORDINATOR, defaults.capabilities);
+
+    const resolvedCapabilities = {
+      maxConcurrency: config.maxConcurrency ?? defaults.capabilities.maxConcurrency,
+      memoryLimit: config.memoryLimit ?? defaults.capabilities.memoryLimit,
+      priority: config.priority ?? defaults.capabilities.priority,
+    };
+
+    super(AgentType.COORDINATOR, resolvedCapabilities);
 
     const resourceConstraints: ResourceConstraints = {
       maxMemoryMB: config.resourceConstraints?.maxMemoryMB ?? defaults.config.resourceConstraints.maxMemoryMB,
@@ -144,6 +184,9 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
 
     this.config = {
       resourceConstraints,
+      maxConcurrency: resolvedCapabilities.maxConcurrency,
+      memoryLimit: resolvedCapabilities.memoryLimit,
+      priority: resolvedCapabilities.priority,
       taskQueueLimit: config.taskQueueLimit ?? defaults.config.taskQueueLimit,
       loadBalancingStrategy: config.loadBalancingStrategy ?? defaults.config.loadBalancingStrategy,
       complexityThreshold: config.complexityThreshold ?? defaults.config.complexityThreshold,

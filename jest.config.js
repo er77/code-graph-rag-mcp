@@ -8,7 +8,10 @@ export default {
   resetModules: true,
   extensionsToTreatAsEsm: [".ts"],
   moduleNameMapper: {
-    "^\\.{1,2}/semantic/(.*)\\.js$": "<rootDir>/src/semantic/$1.ts",
+    "^(?:\\.{1,2}/)+semantic/(.*)\\.js$": "<rootDir>/src/semantic/$1.ts",
+    "^(?:\\.{1,2}/)+semantic/(?!.*\\.js$)(.*)$": "<rootDir>/src/semantic/$1.ts",
+    "^(?:\\.{1,2}/)+storage/(.*)\\.js$": "<rootDir>/src/storage/$1.ts",
+    "^(?:\\.{1,2}/)+storage/(?!.*\\.js$)(.*)$": "<rootDir>/src/storage/$1.ts",
     "^(\\.{1,2}/.*)\\.js$": "$1",
     "^nanoid$": "<rootDir>/src/__mocks__/nanoid.cjs",
     "^p-limit$": "<rootDir>/src/__mocks__/p-limit.cjs",
@@ -30,9 +33,7 @@ export default {
   verbose: true,
   setupFilesAfterEnv: ["<rootDir>/jest.setup.js"],
   maxWorkers: 1,
-  testTimeout: 30000,
   detectOpenHandles: false,
-  testTimeout: 10000,
   forceExit: true,
   silent: false,
 };

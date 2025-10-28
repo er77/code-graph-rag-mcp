@@ -94,7 +94,7 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
-if (positionalArgs.length !== 1) {
+if (positionalArgs.length < 1) {
   console.error("Usage: code-graph-rag-mcp [--config <path>] <directory>");
   process.exit(1);
 }
@@ -153,6 +153,35 @@ function getVersionInfo() {
 const versionInfo = getVersionInfo();
 
 const directory = normalize(resolve(expandHome(positionalArgs[0]!)));
+
+type DebugRequest = {
+  raw: string;
+  parsed: unknown;
+};
+
+const debugRequestStrings = positionalArgs.slice(1);
+const debugRequests: DebugRequest[] = [];
+const isDebugMode = debugRequestStrings.length > 0;
+
+for (const raw of debugRequestStrings) {
+  const trimmed = raw.trim();
+  if (!trimmed) continue;
+  try {
+    debugRequests.push({ raw: trimmed, parsed: JSON.parse(trimmed) });
+  } catch (error) {
+    console.error(`[Debug] Failed to parse JSON request: ${trimmed}`);
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+}
+
+if (isDebugMode) {
+  process.env.MCP_DEBUG_MODE = process.env.MCP_DEBUG_MODE ?? "1";
+  if (!process.env.PARSER_DISABLE_CACHE) {
+    process.env.PARSER_DISABLE_CACHE = "1";
+  }
+  process.env.MCP_DEBUG_DISABLE_SEMANTIC = process.env.MCP_DEBUG_DISABLE_SEMANTIC ?? "1";
+}
 
 function normalizeInputPath(rawPath: string): string;
 function normalizeInputPath(rawPath?: string | null): string | undefined;
@@ -297,6 +326,9 @@ async function getDoraAgent(): Promise<any> {
 }
 
 async function ensureSemanticsReady(minVectors = 1, timeoutMs = 15000): Promise<boolean> {
+  if (process.env.MCP_DEBUG_DISABLE_SEMANTIC === "1") {
+    return true;
+  }
   const agent = await getSemanticAgent();
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -367,7 +399,28 @@ async function resolveEntityWithHint(
       limit: 30,
     });
 
-    const badPaths = ["/dist/", "/build/", "/out/", "/.next/", "/.nuxt/", "/coverage/", "/node_modules/"];
+    const badPaths = [
+      "/dist/",
+      "/build/",
+      "/out/",
+      "/.next/",
+      "/.nuxt/",
+      "/coverage/",
+      "/node_modules/",
+      "/tmp/",
+      "/temp/",
+      "/archives/",
+      "/archive/",
+      ".zip",
+      ".tar",
+      ".gz",
+      ".tgz",
+      ".rar",
+      ".7z",
+      ".xz",
+      ".bz2",
+      ".zst",
+    ];
 
     const ranked = fuzzy.entities
       .map((e) => {
@@ -384,8 +437,9 @@ async function resolveEntityWithHint(
       })
       .sort((a, b) => b.score - a.score || (a.e.filePath?.length ?? 0) - (b.e.filePath?.length ?? 0));
 
-    if (ranked.length > 0 && ranked[0]?.score > 0) {
-      return ranked[0]?.e;
+    const top = ranked[0];
+    if (top && top.score > 0) {
+      return top.e ?? null;
     }
   }
 
@@ -399,7 +453,28 @@ async function resolveEntityWithHint(
     return fb.entities[0] ?? null;
   }
 
-  const badPaths = ["/dist/", "/build/", "/out/", "/.next/", "/.nuxt/", "/coverage/", "/node_modules/"];
+  const badPaths = [
+    "/dist/",
+    "/build/",
+    "/out/",
+    "/.next/",
+    "/.nuxt/",
+    "/coverage/",
+    "/node_modules/",
+    "/tmp/",
+    "/temp/",
+    "/archives/",
+    "/archive/",
+    ".zip",
+    ".tar",
+    ".gz",
+    ".tgz",
+    ".rar",
+    ".7z",
+    ".xz",
+    ".bz2",
+    ".zst",
+  ];
 
   const ranked = query.entities
     .map((e) => {
@@ -412,7 +487,7 @@ async function resolveEntityWithHint(
     })
     .sort((a, b) => b.score - a.score || (a.e.filePath?.length ?? 0) - (b.e.filePath?.length ?? 0));
 
-  return ranked[0]?.e;
+  return ranked[0]?.e ?? null;
 }
 
 function mapEntitySummary(entity: Entity) {
@@ -489,9 +564,23 @@ const IndexToolSchema = z.object({
     ".gradle/**",
     ".idea/**",
     ".vscode/**",
+    "tmp/**",
+    "temp/**",
+    "**/tmp/**",
+    "**/temp/**",
     "*.log",
     "*.tmp",
     "*.cache",
+    "*.zip",
+    "*.tar",
+    "*.tar.gz",
+    "*.tgz",
+    "*.gz",
+    "*.bz2",
+    "*.xz",
+    "*.7z",
+    "*.rar",
+    "*.zst",
     ".DS_Store",
     "Thumbs.db",
   ]),
@@ -762,14 +851,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   };
 });
 
-// Handler for tool execution
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
-  const requestId = createRequestId();
-  const startTime = Date.now();
-
-  logger.mcpRequest(name, args, requestId);
-
+async function executeToolCall(name: string, args: unknown, requestId: string, startTime: number) {
   try {
     switch (name) {
       case "index": {
@@ -783,7 +865,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           logger.systemEvent("Graph storage cleared before indexing", { directory: targetDir });
         }
 
-        await getSemanticAgent();
+        if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
+          await getSemanticAgent();
+        }
 
         // Enhanced exclude patterns for large codebases
         const enhancedExcludePatterns = [...excludePatterns];
@@ -890,10 +974,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Process through conductor with mandatory delegation
         const cond = getConductor();
         await cond.initialize();
-        const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
+        const configuredTimeout = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
+        const timeoutMs = isDebugMode ? Math.max(configuredTimeout, 120000) : configuredTimeout;
         const result = await withTimeout(cond.process(task), timeoutMs, "index", requestId);
 
-        await ensureSemanticsReady(1, 5000);
+        if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
+          await ensureSemanticsReady(1, 5000);
+        }
 
         // Log indexing activity
         logger.agentActivity(
@@ -955,7 +1042,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         await storage.clear();
         logger.systemEvent("Graph storage cleared before clean index", { directory: targetDir });
 
-        await getSemanticAgent();
+        if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
+          await getSemanticAgent();
+        }
 
         // Perform index with reset semantics (already cleared), non-incremental
         const enhancedExcludePatterns = [...(excludePatterns || [])];
@@ -1047,7 +1136,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
         const result = await withTimeout(cond.process(task), timeoutMs, "clean_index", requestId);
 
-        await ensureSemanticsReady(1, 5000);
+        if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
+          await ensureSemanticsReady(1, 5000);
+        }
 
         knowledgeBus.publish("index:completed", result, "mcp-server");
         const duration = Date.now() - startTime;
@@ -2081,7 +2172,49 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       ],
     };
   }
+}
+
+// Handler for tool execution
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const { name, arguments: args } = request.params;
+  const requestId = createRequestId();
+  const startTime = Date.now();
+
+  logger.mcpRequest(name, args, requestId);
+
+  return executeToolCall(name, args, requestId, startTime);
 });
+
+async function processDebugRequests(requests: DebugRequest[]): Promise<void> {
+  for (const { parsed, raw } of requests) {
+    let callRequest: z.infer<typeof CallToolRequestSchema>;
+    try {
+      callRequest = CallToolRequestSchema.parse(parsed);
+    } catch (error) {
+      console.error(`[Debug] Invalid tools/call request payload: ${raw}`);
+      throw error;
+    }
+
+    const { name, arguments: args } = callRequest.params;
+    const parsedObj = parsed as Record<string, unknown>;
+    const responseIdValue = parsedObj?.id;
+    const responseId =
+      typeof responseIdValue === "string" || typeof responseIdValue === "number" ? responseIdValue : createRequestId();
+    const requestId = typeof responseId === "string" ? responseId : String(responseId);
+    const startTime = Date.now();
+
+    logger.mcpRequest(name, args, requestId);
+    const result = await executeToolCall(name, args, requestId, startTime);
+
+    const response = {
+      jsonrpc: "2.0",
+      id: responseId,
+      result,
+    };
+
+    console.log(JSON.stringify(response, null, 2));
+  }
+}
 
 // Graceful shutdown
 process.on("SIGINT", async () => {
@@ -2144,6 +2277,30 @@ async function main() {
     toolsCount: 13,
     readyTime: Date.now(),
   });
+
+  if (debugRequests.length > 0) {
+    try {
+      await getDevAgent();
+      await getDoraAgent();
+      if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
+        await getSemanticAgent();
+      }
+      await processDebugRequests(debugRequests);
+      console.log("[Debug] Completed processing supplied requests.");
+      process.exit(0);
+    } catch (error) {
+      console.error("[Debug] Request execution failed:", error instanceof Error ? error.message : error);
+      logger.error(
+        "DEBUG_MODE",
+        "Debug request execution failed",
+        { error: error instanceof Error ? error.message : String(error) },
+        undefined,
+        error instanceof Error ? error : undefined,
+      );
+      process.exit(1);
+    }
+    return;
+  }
 
   // Defer heavy agent initialization in the background
   (async () => {

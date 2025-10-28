@@ -27,34 +27,68 @@ interface CoordinatorConfig {
   resourceConstraints: ResourceConstraints;
   taskQueueLimit: number;
   loadBalancingStrategy: "round-robin" | "least-loaded" | "priority";
+  maxConcurrency: number;
+  memoryLimit: number;
+  priority: number;
 }
+
+type CoordinatorConfigOverrides = Partial<Omit<CoordinatorConfig, "resourceConstraints">> & {
+  resourceConstraints?: Partial<ResourceConstraints>;
+};
+
+const DEFAULT_RESOURCE_CONSTRAINTS: ResourceConstraints = {
+  maxMemoryMB: 1024,
+  maxCpuPercent: 80,
+  maxConcurrentAgents: 10,
+  maxTaskQueueSize: 100,
+};
+
+const DEFAULT_COORDINATOR_CONFIG: CoordinatorConfig = {
+  resourceConstraints: DEFAULT_RESOURCE_CONSTRAINTS,
+  taskQueueLimit: 100,
+  loadBalancingStrategy: "least-loaded",
+  maxConcurrency: 100,
+  memoryLimit: 128,
+  priority: 10,
+};
 
 function getCoordinatorAgentDefaults(): {
   capabilities: { maxConcurrency: number; memoryLimit: number; priority: number };
   config: CoordinatorConfig;
 } {
   const appConfig = getConfig();
-  const coordinatorConfig = appConfig.coordinator ?? {};
+  const coordinatorOverrides = (appConfig.coordinator ?? {}) as CoordinatorConfigOverrides;
+  const fallbackConcurrentAgents =
+    coordinatorOverrides.resourceConstraints?.maxConcurrentAgents ??
+    appConfig.mcp.agents?.maxConcurrent ??
+    DEFAULT_RESOURCE_CONSTRAINTS.maxConcurrentAgents;
 
   const resourceConstraints: ResourceConstraints = {
-    maxMemoryMB: coordinatorConfig.resourceConstraints?.maxMemoryMB ?? 1024,
-    maxCpuPercent: coordinatorConfig.resourceConstraints?.maxCpuPercent ?? 80,
-    maxConcurrentAgents:
-      coordinatorConfig.resourceConstraints?.maxConcurrentAgents ?? appConfig.mcp.agents?.maxConcurrent ?? 10,
-    maxTaskQueueSize: coordinatorConfig.resourceConstraints?.maxTaskQueueSize ?? 100,
+    maxMemoryMB: coordinatorOverrides.resourceConstraints?.maxMemoryMB ?? DEFAULT_RESOURCE_CONSTRAINTS.maxMemoryMB,
+    maxCpuPercent:
+      coordinatorOverrides.resourceConstraints?.maxCpuPercent ?? DEFAULT_RESOURCE_CONSTRAINTS.maxCpuPercent,
+    maxConcurrentAgents: coordinatorOverrides.resourceConstraints?.maxConcurrentAgents ?? fallbackConcurrentAgents,
+    maxTaskQueueSize:
+      coordinatorOverrides.resourceConstraints?.maxTaskQueueSize ?? DEFAULT_RESOURCE_CONSTRAINTS.maxTaskQueueSize,
+  };
+
+  const maxConcurrency = coordinatorOverrides.maxConcurrency ?? DEFAULT_COORDINATOR_CONFIG.maxConcurrency;
+  const memoryLimit = coordinatorOverrides.memoryLimit ?? DEFAULT_COORDINATOR_CONFIG.memoryLimit;
+  const priority = coordinatorOverrides.priority ?? DEFAULT_COORDINATOR_CONFIG.priority;
+
+  const config: CoordinatorConfig = {
+    resourceConstraints,
+    taskQueueLimit: coordinatorOverrides.taskQueueLimit ?? DEFAULT_COORDINATOR_CONFIG.taskQueueLimit,
+    loadBalancingStrategy:
+      coordinatorOverrides.loadBalancingStrategy ?? DEFAULT_COORDINATOR_CONFIG.loadBalancingStrategy,
+    maxConcurrency,
+    memoryLimit,
+    priority,
   };
 
   return {
-    capabilities: {
-      maxConcurrency: coordinatorConfig.maxConcurrency ?? 100,
-      memoryLimit: coordinatorConfig.memoryLimit ?? 128,
-      priority: coordinatorConfig.priority ?? 10,
-    },
-    config: {
-      resourceConstraints,
-      taskQueueLimit: coordinatorConfig.taskQueueLimit ?? 100,
-      loadBalancingStrategy: coordinatorConfig.loadBalancingStrategy ?? "least-loaded",
-    },
+    capabilities: { maxConcurrency, memoryLimit, priority },
+    config,
   };
 }
 
@@ -64,9 +98,14 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
   private roundRobinIndex: Map<AgentType, number> = new Map();
   private pendingTasks: Map<string, AgentTask> = new Map();
 
-  constructor(config: Partial<CoordinatorConfig> = {}) {
+  constructor(config: CoordinatorConfigOverrides = {}) {
     const defaults = getCoordinatorAgentDefaults();
-    super(AgentType.COORDINATOR, defaults.capabilities);
+    const resolvedCapabilities = {
+      maxConcurrency: config.maxConcurrency ?? defaults.capabilities.maxConcurrency,
+      memoryLimit: config.memoryLimit ?? defaults.capabilities.memoryLimit,
+      priority: config.priority ?? defaults.capabilities.priority,
+    };
+    super(AgentType.COORDINATOR, resolvedCapabilities);
 
     const resourceConstraints: ResourceConstraints = {
       maxMemoryMB: config.resourceConstraints?.maxMemoryMB ?? defaults.config.resourceConstraints.maxMemoryMB,
@@ -81,6 +120,9 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
       resourceConstraints,
       taskQueueLimit: config.taskQueueLimit ?? defaults.config.taskQueueLimit,
       loadBalancingStrategy: config.loadBalancingStrategy ?? defaults.config.loadBalancingStrategy,
+      maxConcurrency: resolvedCapabilities.maxConcurrency,
+      memoryLimit: resolvedCapabilities.memoryLimit,
+      priority: resolvedCapabilities.priority,
     };
   }
 

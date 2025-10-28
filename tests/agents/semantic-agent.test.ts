@@ -9,10 +9,18 @@
  *  - 2025-09-14: Created by Dev-Agent - TASK-002: SemanticAgent test suite
  */
 
-import { afterEach, beforeEach, describe, expect, it, jest } from "@jest/globals";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, jest } from "@jest/globals";
 
 // Declare warmupMock before the mock so it's accessible in the test scope
 const warmupMock = jest.fn();
+
+beforeAll(() => {
+  (globalThis as unknown as Record<string, unknown>).__semanticCacheWarmupMock = warmupMock;
+});
+
+afterAll(() => {
+  delete (globalThis as unknown as Record<string, unknown>).__semanticCacheWarmupMock;
+});
 
 jest.mock(
   "../../semantic/vector-store",

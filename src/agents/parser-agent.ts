@@ -221,16 +221,34 @@ export class ParserAgent extends BaseAgent {
       // Update statistics
       const elapsed = Date.now() - startTime;
 
-      // If any result contains errors, treat the whole task as failed.
-      const errors = results.flatMap((r) => r.errors || []);
-      if (errors.length > 0) {
-        const message =
-          `Parsing failed for ${errors.length} file(s): ` +
-          errors
-            .slice(0, 3)
-            .map((e) => e.message)
-            .join("; ");
-        throw new Error(message);
+      const resultsWithErrors = results.filter((r) => Array.isArray(r.errors) && r.errors.length > 0);
+      if (resultsWithErrors.length > 0) {
+        const summaries = resultsWithErrors
+          .slice(0, 5)
+          .map((r) => {
+            const messages = (r.errors ?? []).map((e) => e.message).join(", ");
+            return `${r.filePath ?? "unknown"}: ${messages || "unknown error"}`;
+          })
+          .join("; ");
+
+        console.warn(`[${this.id}] ${resultsWithErrors.length} file(s) reported parse errors: ${summaries}`);
+
+        if (this.knowledgeBus) {
+          for (const result of resultsWithErrors) {
+            this.knowledgeBus.emit(TOPICS.PARSE_FAILED, {
+              agentId: this.id,
+              taskId: task.id,
+              filePath: result.filePath,
+              errors: result.errors,
+            });
+          }
+        }
+
+        const additionalErrors = resultsWithErrors.reduce(
+          (acc, r) => acc + (Array.isArray(r.errors) ? r.errors.length : 0),
+          0,
+        );
+        this.stats.errorCount += additionalErrors;
       }
 
       this.updateStats(results, elapsed);

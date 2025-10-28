@@ -12,13 +12,16 @@
  * - Agent Types: src/types/agent.ts
  */
 
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
 import type { StorageMetrics } from "../types/storage.js";
 
 // =============================================================================
@@ -57,6 +60,8 @@ export interface DatabaseInfo {
 // 4. SQLITE MANAGER IMPLEMENTATION
 // =============================================================================
 
+const require = createRequire(import.meta.url);
+
 function wrapWithTiming<F extends (...a: any[]) => any>(fn: F, ctx: any, record: (ms: number) => void): F {
   return ((...a: any[]) => {
     const start = Date.now();
@@ -71,6 +76,9 @@ export class SQLiteManager {
   private config: Required<SQLiteConfig>;
   private queryCount = 0;
   private totalQueryTime = 0;
+
+  private static cachedModule: typeof Database | null = null;
+  private static rebuildAttempted = false;
 
   constructor(config: SQLiteConfig = {}) {
     this.config = {
@@ -104,7 +112,9 @@ export class SQLiteManager {
 
     // Create database connection
     const dbPath = this.config.memory ? ":memory:" : this.config.path;
-    this.db = new Database(dbPath, {
+    const DatabaseModule = SQLiteManager.loadBetterSqlite3();
+
+    this.db = new DatabaseModule(dbPath, {
       readonly: this.config.readonly,
       verbose: this.config.verbose ? console.log : undefined,
       timeout: this.config.timeout,
@@ -112,8 +122,118 @@ export class SQLiteManager {
 
     // Apply optimized PRAGMA settings
     this.applyOptimizations();
+    this.ensureEmbeddingsTable();
 
     console.log(`[SQLiteManager] Database initialized at ${dbPath}`);
+  }
+
+  private static loadBetterSqlite3(): typeof Database {
+    if (SQLiteManager.cachedModule) {
+      return SQLiteManager.cachedModule;
+    }
+
+    const tryLoad = () => require("better-sqlite3") as typeof Database;
+
+    try {
+      SQLiteManager.cachedModule = tryLoad();
+      return SQLiteManager.cachedModule;
+    } catch (error) {
+      if (!SQLiteManager.rebuildAttempted && SQLiteManager.isNativeModuleError(error)) {
+        SQLiteManager.rebuildAttempted = true;
+        const packageRoot = fileURLToPath(new URL("../../", import.meta.url));
+        const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+        console.warn(
+          "[SQLiteManager] better-sqlite3 failed to load due to native module mismatch. Attempting automatic rebuild...",
+        );
+        const rebuild = spawnSync(npmCommand, ["rebuild", "better-sqlite3"], {
+          cwd: packageRoot,
+          stdio: "inherit",
+        });
+        if (rebuild.status === 0) {
+          try {
+            const resolvedPath = require.resolve("better-sqlite3");
+            if (require.cache[resolvedPath]) {
+              delete require.cache[resolvedPath];
+            }
+          } catch {
+            // ignore cache resolve errors
+          }
+          try {
+            SQLiteManager.cachedModule = tryLoad();
+            console.log("[SQLiteManager] Automatic rebuild succeeded. Using rebuilt better-sqlite3 binary.");
+            return SQLiteManager.cachedModule;
+          } catch (retryError) {
+            throw SQLiteManager.createLoadError(retryError, true);
+          }
+        }
+
+        throw SQLiteManager.createLoadError(error, true);
+      }
+
+      throw SQLiteManager.createLoadError(error);
+    }
+  }
+
+  private static isNativeModuleError(error: unknown): boolean {
+    if (!(error instanceof Error)) return false;
+    const message = error.message ?? "";
+    return message.includes("NODE_MODULE_VERSION") || (error as any).code === "ERR_DLOPEN_FAILED";
+  }
+
+  private static createLoadError(originalError: unknown, attemptedRebuild = false): Error {
+    const instructions =
+      "Automatic rebuild of better-sqlite3 failed. Please run `npm rebuild better-sqlite3` in the @er77/code-graph-rag-mcp installation directory.";
+    const message = attemptedRebuild
+      ? `[SQLiteManager] Failed to rebuild better-sqlite3 automatically. ${instructions}`
+      : `[SQLiteManager] Failed to load better-sqlite3. ${instructions}`;
+    const error = new Error(message);
+    (error as any).cause = originalError;
+    return error;
+  }
+
+  private ensureEmbeddingsTable(): void {
+    if (!this.db) {
+      throw new Error("Database not initialized");
+    }
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS embeddings (
+        id TEXT PRIMARY KEY,
+        entity_id TEXT,
+        content TEXT NOT NULL,
+        metadata TEXT,
+        vector_data BLOB,
+        model_name TEXT NOT NULL DEFAULT 'default',
+        created_at INTEGER NOT NULL
+      );
+    `);
+
+    const columns = this.db.prepare("PRAGMA table_info(embeddings)").all() as Array<{ name: string }>;
+    const ensureColumn = (name: string, definition: string, postUpdate?: string) => {
+      if (!columns.some((c) => c.name === name)) {
+        this.db?.exec(`ALTER TABLE embeddings ADD COLUMN ${definition}`);
+        if (postUpdate) {
+          this.db?.exec(postUpdate);
+        }
+      }
+    };
+
+    ensureColumn("entity_id", "entity_id TEXT");
+    ensureColumn("metadata", "metadata TEXT", "UPDATE embeddings SET metadata = '{}' WHERE metadata IS NULL");
+    ensureColumn("vector_data", "vector_data BLOB");
+    ensureColumn(
+      "model_name",
+      "model_name TEXT DEFAULT 'default'",
+      "UPDATE embeddings SET model_name = 'default' WHERE model_name IS NULL",
+    );
+    ensureColumn("created_at", "created_at INTEGER DEFAULT (strftime('%s','now'))");
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_embeddings_entity ON embeddings(entity_id);
+      CREATE INDEX IF NOT EXISTS idx_embeddings_model ON embeddings(model_name);
+      CREATE INDEX IF NOT EXISTS idx_embeddings_created ON embeddings(created_at);
+      CREATE INDEX IF NOT EXISTS idx_embeddings_content ON embeddings(content);
+    `);
   }
 
   /**
@@ -296,7 +416,7 @@ export class SQLiteManager {
    * Check if database is open
    */
   isOpen(): boolean {
-    return this.db?.open;
+    return this.db?.open ?? false;
   }
 
   /**

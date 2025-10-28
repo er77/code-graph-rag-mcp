@@ -163,6 +163,9 @@ get_agent_metrics
 get_bus_stats
 clear_bus_topic --args '{"topic": "semantic:search"}'
 
+# One-shot index from the CLI (debug mode)
+node dist/index.js /home/er77/tt '{"jsonrpc":"2.0","id":"index-1","method":"tools/call","params":{"name":"index","arguments":{"directory":"/home/er77/tt","incremental":false,"fullScan":true,"reset":true}}}'
+
 # Relationships for an entity name
 list_entity_relationships (entityName: "YourEntity", relationshipTypes: ["imports"]) 
 
@@ -182,6 +185,32 @@ export MCP_SEMANTIC_WARMUP_LIMIT=25
 1. "Analyze the frontend-app codebase structure"
 2. "Find authentication functions in backend-api"
 3. "Compare user management across all projects"
+
+---
+
+## 🧰 **Troubleshooting**
+
+- **Native module mismatch (`better-sqlite3`)**  
+  Since v2.6.4 the server automatically rebuilds the native binary when it detects a `NODE_MODULE_VERSION` mismatch. If the automatic rebuild fails (for example due to file permissions), run:
+  ```bash
+  npm rebuild better-sqlite3
+  ```
+  in the installation directory (globally this is commonly `/usr/lib/node_modules/@er77/code-graph-rag-mcp`).
+
+- **Legacy database missing new columns**  
+  Older installations might lack the latest `embeddings` columns (`metadata`, `model_name`, etc.). The server now auto-upgrades in place, but if you still encounter migration errors, delete the local DB and re-run the indexer:
+  ```bash
+  rm ~/.code-graph-rag/codegraph.db
+  ```
+  Then start the server again to trigger a clean rebuild.
+
+- **Running a one-shot index from the CLI**  
+  You can trigger tools directly by passing JSON-RPC payloads. When a payload is supplied, the server skips the semantic agent and uses low-memory batching for debugging. Example:
+  ```bash
+  node dist/index.js /path/to/project \
+    '{"jsonrpc":"2.0","id":"index-1","method":"tools/call","params":{"name":"index","arguments":{"directory":"/path/to/project","incremental":false,"fullScan":true,"reset":true}}}'
+  ```
+  The command logs progress to `logs_llm/mcp-server-YYYY-MM-DD.log`. Set `MCP_DEBUG_DISABLE_SEMANTIC=0` if you want embeddings enabled during the run.
 
 ---
 

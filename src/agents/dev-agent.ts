@@ -4,13 +4,13 @@
  * that are delegated by the Conductor orchestrator
  */
 
-
-import { readdirSync, statSync } from "fs";
-import { extname, join } from "path";
+import { readdirSync, statSync } from "node:fs";
+import { extname, join } from "node:path";
 import { ConfigLoader, getConfig } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { getSQLiteManager } from "../storage/sqlite-manager.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
+import type { ParserOptions } from "../types/parser.js";
 import { BaseAgent } from "./base.js";
 import { IndexerAgent } from "./indexer-agent.js";
 // Temporarily disable ParserAgent due to web-tree-sitter ESM issues
@@ -220,13 +220,21 @@ export class DevAgent extends BaseAgent {
     console.log(`[DevAgent ${this.id}] Found ${files.length} files to process`);
 
     const configLoader = ConfigLoader.getInstance();
-    const batchSize = this.indexBatchSize ?? configLoader.getDevIndexBatchSize();
+    const isDebugMode = process.env.MCP_DEBUG_MODE === "1";
+    const configuredBatchSize = this.indexBatchSize ?? configLoader.getDevIndexBatchSize();
+    const effectiveBatchSize = isDebugMode ? Math.min(configuredBatchSize, 5) : configuredBatchSize;
+    const parseOptions: ParserOptions = isDebugMode
+      ? {
+          batchSize: Math.max(1, Math.min(3, effectiveBatchSize)),
+          useCache: false,
+        }
+      : {};
     let totalEntities = 0;
     let totalRelationships = 0;
     let filesProcessed = 0;
 
-    for (let i = 0; i < files.length; i += batchSize) {
-      const batch = files.slice(i, Math.min(i + batchSize, files.length));
+    for (let i = 0; i < files.length; i += effectiveBatchSize) {
+      const batch = files.slice(i, Math.min(i + effectiveBatchSize, files.length));
 
       try {
         if (this.parserAgent) {
@@ -234,7 +242,7 @@ export class DevAgent extends BaseAgent {
             id: `parse-${Date.now()}-${i}`,
             type: "parse:batch",
             priority: 8,
-            payload: { files: batch, options: {} },
+            payload: { files: batch, options: parseOptions },
             createdAt: Date.now(),
           };
 
@@ -268,8 +276,6 @@ export class DevAgent extends BaseAgent {
           }
 
           for (const [file, group] of byFile.entries()) {
-            if (!group.entities.length) continue;
-
             const indexTask: AgentTask = {
               id: `index-entities-${Date.now()}-${i}-${file}`,
               type: "index:entities",
@@ -293,6 +299,10 @@ export class DevAgent extends BaseAgent {
             } catch (err) {
               console.error(`[DevAgent ${this.id}] Indexing failed for file ${file}:`, err);
             }
+          }
+
+          if (isDebugMode) {
+            global.gc?.();
           }
         } else {
           const entities: any[] = [];
@@ -424,7 +434,7 @@ export class DevAgent extends BaseAgent {
         console.error(`[DevAgent ${this.id}] Error processing batch ${i}:`, error);
       }
 
-      if ((i + batchSize) % 500 === 0 || i + batchSize >= files.length) {
+      if ((i + effectiveBatchSize) % 500 === 0 || i + effectiveBatchSize >= files.length) {
         console.log(`[DevAgent ${this.id}] Progress: ${filesProcessed}/${files.length} files processed`);
       }
     }
@@ -440,6 +450,26 @@ export class DevAgent extends BaseAgent {
   private async collectFiles(directory: string, excludePatterns: string[]): Promise<string[]> {
     const files: string[] = [];
     const supportedExtensions = [".js", ".ts", ".jsx", ".tsx", ".py", ".java", ".cpp", ".c", ".go", ".rs"];
+    const defaultExcludedDirNames = new Set([
+      "node_modules",
+      "tmp",
+      "temp",
+      "cache",
+      "__pycache__",
+      ".pytest_cache",
+      "venv",
+      ".venv",
+      "build",
+      "dist",
+      "out",
+      ".next",
+      ".nuxt",
+      "coverage",
+      "archives",
+      "archive",
+      "backups",
+      "backup",
+    ]);
     const agentId = this.id; // Capture this.id for use in nested function
 
     function shouldExclude(path: string): boolean {
@@ -464,7 +494,11 @@ export class DevAgent extends BaseAgent {
 
           const stat = statSync(fullPath);
           if (stat.isDirectory()) {
-            if (!item.startsWith(".") && item !== "node_modules") {
+            const lowerItem = item.toLowerCase();
+            if (defaultExcludedDirNames.has(lowerItem)) {
+              continue;
+            }
+            if (!item.startsWith(".")) {
               walkDir(fullPath);
             }
           } else if (stat.isFile()) {

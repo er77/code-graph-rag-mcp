@@ -74,6 +74,10 @@ function normalizeText(text: string): string {
   return text.trim().replace(/\s+/g, " ").slice(0, 512);
 }
 
+function ensureEmbedding(embedding: Float32Array | undefined, dimension: number): Float32Array {
+  return embedding ?? new Float32Array(dimension);
+}
+
 // =============================================================================
 // 5. CORE BUSINESS LOGIC (ORCHESTRATOR)
 // =============================================================================
@@ -168,13 +172,24 @@ export class EmbeddingGenerator {
     }
     this.cacheMisses++;
 
-    let embedding: Float32Array;
+    const dimension = this.provider?.getDimension() ?? this.fallback?.getDimension() ?? 384;
+
+    let embedding: Float32Array | undefined;
     try {
-      embedding = await this.provider?.embed(normalized);
+      if (this.provider) {
+        embedding = await this.provider.embed(normalized);
+      }
+      if (!embedding && this.fallback) {
+        embedding = await this.fallback.embed(normalized);
+      }
     } catch (e) {
       console.warn("[EmbeddingGenerator] embed failed, using fallback:", (e as Error)?.message || e);
-      embedding = await this.fallback?.embed(normalized);
+      if (this.fallback) {
+        embedding = await this.fallback.embed(normalized);
+      }
     }
+
+    embedding = ensureEmbedding(embedding, dimension);
 
     // Cache with simple LRU eviction
     if (this.cache.size >= MAX_CACHE_ENTRIES) {
@@ -223,28 +238,41 @@ export class EmbeddingGenerator {
 
       // Process uncached
       if (toProcess.length > 0) {
+        const dimension = this.provider?.getDimension() ?? this.fallback?.getDimension() ?? 384;
         let embeddings: Float32Array[] = [];
         try {
-          if (typeof this.provider?.embedBatch === "function") {
-            embeddings = await this.provider?.embedBatch?.(toProcess.map((t) => t.text));
+          if (this.provider && typeof this.provider.embedBatch === "function") {
+            embeddings = (await this.provider.embedBatch(toProcess.map((t) => t.text))) ?? [];
           } else {
             // sequential fallback
             embeddings = [];
             for (const item of toProcess) {
               try {
-                embeddings.push(await this.provider?.embed(item.text));
+                let emb: Float32Array | undefined;
+                if (this.provider) {
+                  emb = await this.provider.embed(item.text);
+                }
+                if (!emb && this.fallback) {
+                  emb = await this.fallback.embed(item.text);
+                }
+                embeddings.push(ensureEmbedding(emb, dimension));
               } catch (e) {
                 console.warn("[EmbeddingGenerator] embed failed in batch, using fallback:", (e as Error)?.message || e);
-                embeddings.push(await this.fallback?.embed(item.text));
+                const fallbackEmbedding =
+                  (this.fallback && (await this.fallback.embed(item.text))) ?? new Float32Array(dimension);
+                embeddings.push(fallbackEmbedding);
               }
             }
           }
         } catch (_e) {
-          embeddings = await this.fallback?.embedBatch?.(toProcess.map((t) => t.text));
+          const fallbackBatch = this.fallback?.embedBatch
+            ? await this.fallback.embedBatch(toProcess.map((t) => t.text))
+            : undefined;
+          embeddings = fallbackBatch?.map((emb) => ensureEmbedding(emb, dimension)) ?? [];
         }
 
         toProcess.forEach((item, k) => {
-          const embedding = embeddings[k] ?? new Float32Array(this.provider?.getDimension() ?? 384);
+          const embedding = ensureEmbedding(embeddings[k], dimension);
           batchResults[item.index] = embedding;
           if (this.cache.size >= MAX_CACHE_ENTRIES) this.evictOldestCacheEntry();
           this.cache.set(item.key, {

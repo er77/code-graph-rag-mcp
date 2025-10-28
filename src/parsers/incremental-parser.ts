@@ -140,6 +140,8 @@ export class IncrementalParser {
   async parseFile(filePath: string, content?: string, options: ParserOptions = {}): Promise<ParseResult> {
     const startTime = Date.now();
 
+    const shouldUseCache = options.useCache !== false;
+
     try {
       // Read content if not provided
       if (content === undefined) {
@@ -150,7 +152,7 @@ export class IncrementalParser {
       const contentHash = this.computeFileHash(content);
 
       // Check cache if enabled
-      if (options.useCache !== false) {
+      if (shouldUseCache) {
         const cached = this.getFromCache(filePath, contentHash);
         if (cached) {
           this.stats.cacheHits++;
@@ -186,7 +188,9 @@ export class IncrementalParser {
       }
 
       // Store in cache
-      this.addToCache(filePath, contentHash, result);
+      if (shouldUseCache) {
+        this.addToCache(filePath, contentHash, result);
+      }
 
       // Update stats
       this.updateStats(result.parseTimeMs);
@@ -199,7 +203,7 @@ export class IncrementalParser {
       this.stats.errorCount++;
       console.error(`[IncrementalParser] Error parsing ${filePath}:`, error);
 
-      return {
+      const errorResult: ParseResult = {
         filePath,
         language: "javascript",
         entities: [],
@@ -212,6 +216,10 @@ export class IncrementalParser {
           },
         ],
       };
+      if (shouldUseCache) {
+        this.addToCache(filePath, "error", errorResult);
+      }
+      return errorResult;
     }
   }
 
