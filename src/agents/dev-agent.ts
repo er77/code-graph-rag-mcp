@@ -16,6 +16,8 @@ import { IndexerAgent } from "./indexer-agent.js";
 // Temporarily disable ParserAgent due to web-tree-sitter ESM issues
 import { ParserAgent } from "./parser-agent.js";
 
+const SUPPORTED_CODE_EXTENSIONS = [".js", ".ts", ".jsx", ".tsx", ".py", ".java", ".cpp", ".c", ".go", ".rs"] as const;
+
 function getDevAgentConfig() {
   const config = getConfig();
   return {
@@ -309,9 +311,14 @@ export class DevAgent extends BaseAgent {
           const relationships: any[] = [];
 
           for (const file of batch) {
+            const extWithDot = extname(file).toLowerCase();
+            if (!SUPPORTED_CODE_EXTENSIONS.includes(extWithDot as (typeof SUPPORTED_CODE_EXTENSIONS)[number])) {
+              continue;
+            }
+
             const fileName = file.split("/").pop() || "unknown";
             const fileNameNoExt = fileName.replace(/\.[^/.]+$/, "");
-            const ext = extname(file).substring(1);
+            const ext = extWithDot.slice(1);
 
             // file entity
             entities.push({
@@ -449,7 +456,6 @@ export class DevAgent extends BaseAgent {
 
   private async collectFiles(directory: string, excludePatterns: string[]): Promise<string[]> {
     const files: string[] = [];
-    const supportedExtensions = [".js", ".ts", ".jsx", ".tsx", ".py", ".java", ".cpp", ".c", ".go", ".rs"];
     const defaultExcludedDirNames = new Set([
       "node_modules",
       "tmp",
@@ -462,6 +468,7 @@ export class DevAgent extends BaseAgent {
       "test",
       "tests",
       "__tests__",
+      ".memory_bank",
       "build",
       "dist",
       "out",
@@ -513,7 +520,7 @@ export class DevAgent extends BaseAgent {
             }
           } else if (lstat.isFile()) {
             const ext = extname(fullPath).toLowerCase();
-            if (supportedExtensions.includes(ext)) {
+            if (SUPPORTED_CODE_EXTENSIONS.includes(ext as (typeof SUPPORTED_CODE_EXTENSIONS)[number])) {
               files.push(fullPath);
             }
           }

@@ -34,7 +34,7 @@ createSafeEnvironment();
 
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
+import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 // Consolidated MCP SDK imports
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -54,9 +54,11 @@ import { getSQLiteManager } from "./storage/sqlite-manager.js";
 import { collectAgentMetrics } from "./tools/agent-metrics.js";
 // Import graph query functions
 import { getGraphStats, queryGraphEntities } from "./tools/graph-query.js";
+import { runJscpdCloneDetection } from "./tools/jscpd.js";
 import type { AgentTask } from "./types/agent.js";
 import { AgentType } from "./types/agent.js";
 import { AgentBusyError } from "./types/errors.js";
+import type { CloneGroup } from "./types/semantic.js";
 import type { Entity, Relationship } from "./types/storage.js";
 import { EntityType } from "./types/storage.js";
 import { createRequestId, logger } from "./utils/logger.js";
@@ -64,6 +66,8 @@ import { createRequestId, logger } from "./utils/logger.js";
 // Parse command line arguments
 const args = process.argv.slice(2);
 let overrideConfigPath: string | undefined;
+let helpRequested = false;
+let versionRequested = false;
 const positionalArgs: string[] = [];
 
 for (let i = 0; i < args.length; i++) {
@@ -85,6 +89,10 @@ for (let i = 0; i < args.length; i++) {
       process.exit(1);
     }
     overrideConfigPath = value;
+  } else if (arg === "--help" || arg === "-h") {
+    helpRequested = true;
+  } else if (arg === "--version" || arg === "-v") {
+    versionRequested = true;
   } else if (arg.startsWith("-")) {
     console.error(`Unknown option: ${arg}`);
     console.error("Usage: code-graph-rag-mcp [--config <path>] <directory>");
@@ -92,6 +100,135 @@ for (let i = 0; i < args.length; i++) {
   } else {
     positionalArgs.push(arg);
   }
+}
+
+function printHelp() {
+  console.log(`Code Graph RAG MCP Server
+
+Usage:
+  code-graph-rag-mcp [options] <directory>
+
+Options:
+  --config <path>   Use an alternate YAML configuration file
+  --help, -h        Show this help message and exit
+  --version, -v     Print version information and exit
+
+Examples:
+  code-graph-rag-mcp /path/to/project
+  code-graph-rag-mcp --config config/production.yaml /repo
+  code-graph-rag-mcp --version
+`);
+}
+
+if (helpRequested) {
+  printHelp();
+  process.exit(0);
+}
+
+const versionInfo = getVersionInfo();
+
+type NormalizedSemanticGroup = {
+  id: string;
+  cloneType: CloneGroup["cloneType"];
+  avgSimilarity: number;
+  files: Array<{
+    filePath: string;
+    occurrences: Array<{
+      id: string;
+      similarity: number;
+      startLine?: number;
+      snippet: string;
+    }>;
+  }>;
+};
+
+function parseSemanticMemberPath(
+  memberId: string,
+  memberPath: string | undefined,
+): {
+  filePath: string;
+  startLine?: number;
+} {
+  let filePath = memberPath ?? "";
+  let startLine: number | undefined;
+
+  if (!filePath || filePath.startsWith("parsed:")) {
+    const match = /^parsed:(.*?):(\d+):\d+$/.exec(memberId);
+    if (match) {
+      filePath = match[1] ?? filePath;
+      startLine = Number.parseInt(match[2] ?? "", 10);
+    }
+  }
+
+  if (!filePath && memberId.includes(":")) {
+    filePath = memberId.split(":")[0] ?? memberId;
+  }
+
+  return { filePath, startLine };
+}
+
+function normalizeSemanticCloneGroups(
+  groups: CloneGroup[],
+  baseDir: string,
+): {
+  groups: NormalizedSemanticGroup[];
+  skippedGroups: number;
+} {
+  const normalized: NormalizedSemanticGroup[] = [];
+  let skippedGroups = 0;
+
+  for (const group of groups) {
+    const files = new Map<
+      string,
+      {
+        filePath: string;
+        occurrences: Array<{
+          id: string;
+          similarity: number;
+          startLine?: number;
+          snippet: string;
+        }>;
+      }
+    >();
+
+    for (const member of group.members) {
+      const { filePath: rawPath, startLine } = parseSemanticMemberPath(member.id, member.path);
+      const sanitizedPath =
+        rawPath && baseDir && rawPath.startsWith(baseDir)
+          ? relative(baseDir, rawPath) || rawPath
+          : rawPath || member.id;
+      const record =
+        files.get(sanitizedPath) ??
+        files.set(sanitizedPath, { filePath: sanitizedPath, occurrences: [] }).get(sanitizedPath)!;
+      record.occurrences.push({
+        id: member.id,
+        similarity: member.similarity,
+        startLine,
+        snippet: member.content,
+      });
+    }
+
+    if (files.size < 2) {
+      skippedGroups += 1;
+      continue;
+    }
+
+    normalized.push({
+      id: group.id,
+      cloneType: group.cloneType,
+      avgSimilarity: group.avgSimilarity,
+      files: Array.from(files.values()),
+    });
+  }
+
+  return { groups: normalized, skippedGroups };
+}
+
+if (versionRequested) {
+  console.log(
+    `${versionInfo.name} ${versionInfo.version}\nNode ${versionInfo.nodeVersion} (${versionInfo.platform} ${versionInfo.arch})`,
+  );
+  process.exit(0);
 }
 
 if (positionalArgs.length < 1) {
@@ -149,8 +286,6 @@ function getVersionInfo() {
     };
   }
 }
-
-const versionInfo = getVersionInfo();
 
 const directory = normalize(resolve(expandHome(positionalArgs[0]!)));
 
@@ -567,6 +702,7 @@ const IndexToolSchema = z.object({
     "**/test/**",
     "**/tests/**",
     "**/__tests__/**",
+    "**/.memory_bank/**",
     "tmp/**",
     "temp/**",
     "**/tmp/**",
@@ -574,6 +710,7 @@ const IndexToolSchema = z.object({
     "*.log",
     "*.tmp",
     "*.cache",
+    "**/*.md",
     "*.zip",
     "*.tar",
     "*.tar.gz",
@@ -634,6 +771,24 @@ const AnalyzeCodeImpactSchema = z.object({
 const DetectCodeClonesSchema = z.object({
   minSimilarity: z.number().optional().default(0.8).describe("Minimum similarity for clones"),
   scope: z.string().optional().default("all").describe("Scope: all, file, or module"),
+});
+
+const JscpdCloneDetectionSchema = z.object({
+  paths: z
+    .array(z.string())
+    .nonempty()
+    .optional()
+    .describe("Directories or files to scan. Relative paths resolve against the server root."),
+  pattern: z.string().optional().describe("Glob pattern to apply within each path (default **/*)."),
+  ignore: z.array(z.string()).optional().describe("Glob patterns to exclude from scanning."),
+  formats: z
+    .array(z.string().regex(/^[^.]+$/))
+    .optional()
+    .describe("File extensions to include without dots (e.g. ['ts','js'])."),
+  minLines: z.number().int().min(1).optional().describe("Minimum lines per clone block."),
+  maxLines: z.number().int().min(1).optional().describe("Maximum lines per clone block."),
+  minTokens: z.number().int().min(1).optional().describe("Minimum tokens per clone (interpreted as lines)."),
+  ignoreCase: z.boolean().optional().describe("Lowercase tokens before comparison."),
 });
 
 const SuggestRefactoringSchema = z
@@ -789,6 +944,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: "detect_code_clones",
         description: "Find duplicate or similar code blocks across the codebase",
         inputSchema: zodToJsonSchema(DetectCodeClonesSchema) as any,
+      },
+      {
+        name: "jscpd_detect_clones",
+        description: "Run JSCPD clone detection using a lightweight tokenizer",
+        inputSchema: zodToJsonSchema(JscpdCloneDetectionSchema) as any,
       },
       {
         name: "suggest_refactoring",
@@ -1486,12 +1646,71 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         await ensureSemanticsReady(1, 20000);
         const semanticAgent = await getSemanticAgent();
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
-        const result = await withTimeout(
+        const semanticResult = await withTimeout<CloneGroup[]>(
           semanticAgent.detectClones(minSimilarity),
           timeoutMs,
           "detect_code_clones",
           requestId,
         );
+
+        const jscpdResult = await runJscpdCloneDetection({
+          paths: [directory],
+          minTokens: 20,
+          minLines: 3,
+          ignore: [
+            "node_modules/**",
+            "dist/**",
+            "coverage/**",
+            "tmp/**",
+            "**/tmp/**",
+            "**/__tests__/**",
+            "**/tests/**",
+            "**/*.d.ts",
+          ],
+        });
+
+        const semanticNormalized = normalizeSemanticCloneGroups(semanticResult, directory);
+
+        const combined = {
+          semantic: {
+            totalGroups: semanticNormalized.groups.length,
+            skippedGroups: semanticNormalized.skippedGroups,
+            groups: semanticNormalized.groups,
+            raw: semanticResult,
+          },
+          jscpd: {
+            summary: jscpdResult.summary,
+            clones: jscpdResult.summary.clones,
+          },
+        };
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(combined, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "jscpd_detect_clones": {
+        const parsed = JscpdCloneDetectionSchema.parse(args);
+        const rawPaths = parsed.paths && parsed.paths.length > 0 ? parsed.paths : [directory];
+        const resolvedPaths = rawPaths
+          .map((p) => normalizeInputPath(p) ?? directory)
+          .filter((p): p is string => Boolean(p));
+
+        const result = await runJscpdCloneDetection({
+          paths: resolvedPaths,
+          pattern: parsed.pattern,
+          ignore: parsed.ignore,
+          formats: parsed.formats?.map((fmt) => fmt.toLowerCase()),
+          minLines: parsed.minLines,
+          maxLines: parsed.maxLines,
+          minTokens: parsed.minTokens,
+          ignoreCase: parsed.ignoreCase,
+        });
 
         return {
           content: [

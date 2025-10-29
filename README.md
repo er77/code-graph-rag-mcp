@@ -10,7 +10,7 @@
 
 A powerful [Model Context Protocol](https://github.com/modelcontextprotocol) server that creates intelligent graph representations of your codebase with comprehensive semantic analysis capabilities.
 
-**🌟 10 Languages Supported** | **⚡ 5.5x Faster** | **🔍 Semantic Search** | **📊 22 MCP Methods**
+**🌟 10 Languages Supported** | **⚡ 5.5x Faster** | **🔍 Semantic Search** | **📊 23 MCP Methods**
 
 ---
 
@@ -96,12 +96,13 @@ transport = "stdio"
 
 ## 🔍 **Key Features**
 
-### **🔬 Advanced Analysis Tools (22 MCP Methods)**
+### **🔬 Advanced Analysis Tools (23 MCP Methods)**
 
 | Feature | Description | Use Case |
 |---------|-------------|----------|
 | **Semantic Search** | Natural language code search | "Find authentication functions" |
 | **Code Similarity** | Duplicate & clone detection | Identify refactoring opportunities |
+| **JSCPD Clone Scan** | JSCPD-based copy/paste detection without embeddings | Targeted duplicate sweeps |
 | **Impact Analysis** | Change impact prediction | Assess modification risks |
 | **AI Refactoring** | Intelligent code suggestions | Improve code quality |
 | **Hotspot Analysis** | Complexity & coupling metrics | Find problem areas |
@@ -143,6 +144,10 @@ transport = "stdio"
 ```bash
 # Single project analysis
 code-graph-rag-mcp /path/to/your/project
+
+# CLI helpers
+code-graph-rag-mcp --help
+code-graph-rag-mcp --version
 
 # Multi-project setup (see Multi-Codebase Setup Guide)
 # Configure multiple projects in Claude Desktop config
@@ -215,6 +220,21 @@ export MCP_SEMANTIC_WARMUP_LIMIT=25
 ---
 
 ## 📋 **Changelog**
+
+### 🚀 Version 2.7.4 (2025-11-02) - **Clone Reporting & CLI Boost**
+
+- 🆕 Added `--help/-h` and `--version/-v` flags for quick CLI interaction
+- 🔄 `detect_code_clones` now merges deduplicated semantic groups with JSCPD summaries
+- 📊 `jscpd_detect_clones` summary includes duplicated line/token counts, percentages, and inline snippets
+- 🧪 Integration coverage verifies clone-report fields to guard against regressions
+- 🔁 Maintains vendored lightweight JSCPD pipeline with zero external deps
+
+### 🚀 Version 2.7.0 (2025-11-02) - **JSCPD Clone Detection**
+
+- ➕ Added `jscpd_detect_clones` MCP tool exposing JSCPD duplicate detection without requiring embeddings
+- 🧩 Vendored lightweight JSCPD core/tokenizer for zero external build dependencies
+- 🧪 New integration fixtures ensure JSCPD scans surface expected duplicate blocks
+- 📚 README / tool catalog now counts 23 MCP methods and documents JSCPD usage
 
 ### 🚀 Version 2.6.0 (2025-10-12) - **Major Architecture Upgrade**
 
