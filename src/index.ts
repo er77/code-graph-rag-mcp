@@ -55,6 +55,8 @@ import { collectAgentMetrics } from "./tools/agent-metrics.js";
 // Import graph query functions
 import { getGraphStats, queryGraphEntities } from "./tools/graph-query.js";
 import { runJscpdCloneDetection } from "./tools/jscpd.js";
+import { ingestLernaGraph } from "./tools/lerna-graph-ingest.js";
+import { getLernaProjectGraph } from "./tools/lerna-project-graph.js";
 import type { AgentTask } from "./types/agent.js";
 import { AgentType } from "./types/agent.js";
 import { AgentBusyError } from "./types/errors.js";
@@ -830,6 +832,14 @@ const GetGraphSchema = z.object({
 });
 
 const GetGraphStatsSchema = z.object({});
+const GetLernaProjectGraphSchema = z.object({
+  directory: z
+    .string()
+    .optional()
+    .describe("Workspace directory to run the Lerna graph command from (defaults to server root)."),
+  ingest: z.boolean().optional().default(false).describe("Store package nodes and dependencies in graph storage."),
+  force: z.boolean().optional().default(false).describe("Bypass caches and force a fresh Lerna graph command."),
+});
 const GetGraphHealthSchema = z.object({
   minEntities: z.number().optional().default(1).describe("Minimum entity count for healthy status"),
   minRelationships: z.number().optional().default(0).describe("Minimum relationship count for healthy status"),
@@ -979,6 +989,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: "get_graph_stats",
         description: "Get statistics about the code graph",
         inputSchema: zodToJsonSchema(GetGraphStatsSchema) as any,
+      },
+      {
+        name: "lerna_project_graph",
+        description: "Generate a Lerna workspace dependency graph (if configured)",
+        inputSchema: zodToJsonSchema(GetLernaProjectGraphSchema) as any,
       },
       {
         name: "reset_graph",
@@ -2221,6 +2236,99 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             {
               type: "text",
               text: JSON.stringify(stats, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "lerna_project_graph": {
+        const { directory: inputDir, ingest, force } = GetLernaProjectGraphSchema.parse(args ?? {});
+        const targetDir = normalizeInputPath(inputDir) ?? directory;
+        const result = await getLernaProjectGraph(targetDir, { force });
+
+        if (result.ok) {
+          let ingestSummary:
+            | {
+                packageCount: number;
+                relationshipCount: number;
+                skippedPackages: number;
+                removedPackages: number;
+              }
+            | undefined;
+
+          if (ingest) {
+            const storage = await getGraphStorage(globalSQLiteManager);
+            ingestSummary = await ingestLernaGraph(storage, result.graph);
+          }
+
+          logger.info(
+            "LERNA_GRAPH",
+            "Generated Lerna project graph",
+            {
+              cwd: result.cwd,
+              lernaVersion: result.lernaVersion,
+              nodes: Object.keys(result.graph).length,
+              ingestSummary,
+              cached: result.cached ?? false,
+              force,
+            },
+            requestId,
+          );
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    success: true,
+                    cwd: result.cwd,
+                    lernaVersion: result.lernaVersion,
+                    nodeCount: Object.keys(result.graph).length,
+                    graph: result.graph,
+                    ingestSummary,
+                    cached: result.cached ?? false,
+                    force,
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        }
+
+        logger.warn(
+          "LERNA_GRAPH",
+          "Lerna project graph unavailable",
+          {
+            cwd: result.cwd,
+            reason: result.reason,
+            message: result.message,
+            cached: result.cached ?? false,
+            force,
+          },
+          requestId,
+        );
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  success: false,
+                  cwd: result.cwd,
+                  reason: result.reason,
+                  message: result.message,
+                  stdout: result.stdout,
+                  stderr: result.stderr,
+                  cached: result.cached ?? false,
+                  force,
+                },
+                null,
+                2,
+              ),
             },
           ],
         };

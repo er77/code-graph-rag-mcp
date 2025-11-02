@@ -12,10 +12,9 @@ export class MemoryStore<IMapFrame> implements IStore<IMapFrame> {
 
   public get(key: string): Promise<IMapFrame> {
     return new Promise((resolve, reject) => {
-      // @ts-expect-error
-      if (key in this.values[this._namespace]) {
-        // @ts-expect-error
-        resolve(this.values[this._namespace][key]);
+      const namespaceValues = this.values[this._namespace];
+      if (namespaceValues && key in namespaceValues) {
+        resolve(namespaceValues[key] as IMapFrame);
       } else {
         reject(new Error("not found"));
       }
@@ -23,8 +22,8 @@ export class MemoryStore<IMapFrame> implements IStore<IMapFrame> {
   }
 
   public set(key: string, value: IMapFrame): Promise<IMapFrame> {
-    // @ts-expect-error
-    this.values[this._namespace][key] = value;
+    const namespaceValues = this.values[this._namespace] ?? (this.values[this._namespace] = {});
+    namespaceValues[key] = value;
     return Promise.resolve(value);
   }
 

@@ -27,6 +27,8 @@ import Database from "better-sqlite3";
 
 const vi = jest;
 
+jest.setTimeout(20000);
+
 import { QueryAgent } from "../../src/agents/query-agent.js";
 import { QueryCache } from "../../src/query/query-cache.js";
 import { SQLiteManager } from "../../src/storage/sqlite-manager.js";

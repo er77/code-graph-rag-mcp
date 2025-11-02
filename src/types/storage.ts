@@ -40,6 +40,7 @@ export enum EntityType {
   EXPORT = "export",
   VARIABLE = "variable",
   CONSTANT = "constant",
+  PACKAGE = "package",
 }
 
 /**
@@ -91,6 +92,7 @@ export interface Entity {
       arguments?: string[];
       isBuiltin?: boolean;
     }>;
+    [key: string]: unknown;
   };
   hash: string;
   createdAt: number;
@@ -114,6 +116,7 @@ export interface Relationship {
     line?: number;
     column?: number;
     context?: string;
+    [key: string]: unknown;
   };
 
   // Enhanced v2 fields

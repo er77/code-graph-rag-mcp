@@ -10,7 +10,7 @@
 
 A powerful [Model Context Protocol](https://github.com/modelcontextprotocol) server that creates intelligent graph representations of your codebase with comprehensive semantic analysis capabilities.
 
-**🌟 10 Languages Supported** | **⚡ 5.5x Faster** | **🔍 Semantic Search** | **📊 23 MCP Methods**
+**🌟 10 Languages Supported** | **⚡ 5.5x Faster** | **🔍 Semantic Search** | **📊 24 MCP Methods**
 
 ---
 
@@ -89,14 +89,14 @@ transport = "stdio"
 |------------|-------------------|-------------------|-----------------|
 | Execution Time | 55.84s | <10s | **5.5x faster** |
 | Memory Usage | Process-heavy | 65MB | **Optimized** |
-| Features | Basic patterns | 22 methods | **Comprehensive** |
+| Features | Basic patterns | 24 methods | **Comprehensive** |
 | Accuracy | Pattern-based | Semantic | **Superior** |
 
 ---
 
 ## 🔍 **Key Features**
 
-### **🔬 Advanced Analysis Tools (23 MCP Methods)**
+### **🔬 Advanced Analysis Tools (24 MCP Methods)**
 
 | Feature | Description | Use Case |
 |---------|-------------|----------|
@@ -112,6 +112,7 @@ transport = "stdio"
 | **Safe Reset** | Clean reindexing | `reset_graph`, `clean_index` |
 | **Agent Telemetry** | Runtime metrics across agents | `get_agent_metrics` |
 | **Bus Diagnostics** | Inspect/clear knowledge bus topics | `get_bus_stats`, `clear_bus_topic` |
+| **Lerna Project Graph** | Workspace dependency DAG export, optional ingest, cached refresh control | `lerna_project_graph` (requires Lerna config) |
 | **Semantic Warmup** | Configurable cache priming for embeddings | `mcp.semantic.cacheWarmupLimit` |
 
 ### **⚡ High-Performance Architecture**
@@ -162,6 +163,11 @@ get_graph_health
 reset_graph
 # Clean reindex (reset + full index)
 clean_index
+# Lerna workspace graph (ingest into storage)
+lerna_project_graph --args '{"ingest": true}'
+# Force refresh graph and re-ingest (bypass cache)
+lerna_project_graph --args '{"ingest": true, "force": true}'
+# Cached runs return `cached: true`; use `force` to break the 30s debounce when configs change.
 # Agent telemetry snapshot
 get_agent_metrics
 # Knowledge bus diagnostics

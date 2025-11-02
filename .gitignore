@@ -201,3 +201,6 @@ data/query_cache.db-shm
 *.db-wal
 *.db-shm
 *.db-wal
+vectors.db-shm
+vectors.db-wal
+vectors.db-shm
