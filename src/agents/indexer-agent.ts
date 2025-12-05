@@ -513,21 +513,34 @@ export class IndexerAgent extends BaseAgent {
         }
       }
 
-      // Reference relationships
-      if (parsed.references) {
+      // Reference / call relationships (within the same file)
+      if (parsed.references && parsed.references.length > 0) {
         for (const ref of parsed.references) {
-          // Try to find referenced entity in current file
+          // Try to find referenced entity in current file by name
           const refKey = Array.from(entityMap.keys()).find((key) => key.startsWith(`${ref}:`));
-          if (refKey) {
+          const targetId = refKey ? entityMap.get(refKey)! : undefined;
+          if (!targetId) continue;
+
+          const baseMetadata = {
+            line: parsed.location.start.line,
+            column: parsed.location.start.column,
+          } as const;
+
+          relationships.push({
+            id: nanoid(12),
+            fromId: entity.id,
+            toId: targetId,
+            type: RelationType.REFERENCES,
+            metadata: { ...baseMetadata },
+          });
+
+          if (parsed.type === "function" || parsed.type === "method") {
             relationships.push({
               id: nanoid(12),
               fromId: entity.id,
-              toId: entityMap.get(refKey)!,
-              type: RelationType.REFERENCES,
-              metadata: {
-                line: parsed.location.start.line,
-                column: parsed.location.start.column,
-              },
+              toId: targetId,
+              type: RelationType.CALLS,
+              metadata: { ...baseMetadata },
             });
           }
         }

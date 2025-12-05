@@ -61,8 +61,8 @@ import type { AgentTask } from "./types/agent.js";
 import { AgentType } from "./types/agent.js";
 import { AgentBusyError } from "./types/errors.js";
 import type { CloneGroup } from "./types/semantic.js";
-import type { Entity, Relationship } from "./types/storage.js";
-import { EntityType } from "./types/storage.js";
+import type { Entity, GraphQuery, Relationship } from "./types/storage.js";
+import { EntityType, RelationType } from "./types/storage.js";
 import { createRequestId, logger } from "./utils/logger.js";
 
 // Parse command line arguments
@@ -586,8 +586,7 @@ async function resolveEntityWithHint(
     limit: 20,
   });
   if (query.entities.length === 0) {
-    const fb = await storage.executeQuery({ type: "entity", limit: 1 });
-    return fb.entities[0] ?? null;
+    return null;
   }
 
   const badPaths = [
@@ -770,6 +769,11 @@ const AnalyzeCodeImpactSchema = z.object({
   depth: z.number().optional().default(2).describe("Depth of impact analysis"),
 });
 
+const AnalyzeModuleDependentsSchema = z.object({
+  moduleSource: z.string().describe("Module import source (e.g. ./editorWebWorker.js)"),
+  limit: z.number().optional().default(100).describe("Maximum number of importers to return"),
+});
+
 const DetectCodeClonesSchema = z.object({
   minSimilarity: z.number().optional().default(0.8).describe("Minimum similarity for clones"),
   scope: z.string().optional().default("all").describe("Scope: all, file, or module"),
@@ -908,13 +912,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "list_file_entities",
         description:
-          "List parsed entities within a single file (imports, functions, classes, etc.); use as the entry point to discover stable entity identifiers before running relationship queries.",
+          "List parsed entities within a single file (imports, functions, classes, etc.). Use this first to discover the exact entity id for a symbol before calling list_entity_relationships or analyze_code_impact.",
         inputSchema: zodToJsonSchema(ListEntitiesToolSchema) as any,
       },
       {
         name: "list_entity_relationships",
         description:
-          "List outgoing relationships for an entity (imports, references, containment). Provide either the entity id (preferred) or name+file path to inspect its dependencies.",
+          "List raw graph relationships for an entity (imports, references, containment) based on the code index. Best for structural questions about a module/class; may be empty for functions or symbols if no relationships were indexed.",
         inputSchema: zodToJsonSchema(ListRelationshipsToolSchema) as any,
       },
       {
@@ -947,8 +951,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "analyze_code_impact",
         description:
-          "Discover entities and files that depend on a given symbol. Use together with list_file_entities to obtain the precise entity id for impact analysis.",
+          "Analyze who depends on a given symbol and which files are affected (reverse dependency/callers view). Typical flow: list_file_entities → pick entityId of the symbol → analyze_code_impact(entityId, optional filePath hint).",
         inputSchema: zodToJsonSchema(AnalyzeCodeImpactSchema) as any,
+      },
+      {
+        name: "list_module_importers",
+        description:
+          "List all files and import entities that import a given module source path (e.g. ./editorWebWorker.js). Use when you care about module-level dependents rather than a specific symbol.",
+        inputSchema: zodToJsonSchema(AnalyzeModuleDependentsSchema) as any,
       },
       {
         name: "detect_code_clones",
@@ -2168,8 +2178,59 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           (e): e is Entity => Boolean(e),
         );
 
+        const symbolDependents: Entity[] = [];
+        const symbolLikeTypes: EntityType[] = [
+          EntityType.FUNCTION,
+          EntityType.METHOD,
+          EntityType.CLASS,
+          EntityType.INTERFACE,
+          EntityType.TYPE,
+          EntityType.CONSTANT,
+          EntityType.VARIABLE,
+        ];
+
+        if (symbolLikeTypes.includes(entity.type)) {
+          try {
+            const symbolQuery = await storage.executeQuery({
+              type: "entity",
+              filters: {
+                entityType: EntityType.IMPORT,
+
+                name: entity.name,
+              },
+            });
+
+            const externalSymbols = symbolQuery.entities.filter(
+              (e) => e.filePath?.startsWith("external://") || (e.metadata as any)?.isExternal,
+            );
+
+            for (const symbolEntity of externalSymbols) {
+              const symbolRels = await storage.getRelationshipsForEntity(symbolEntity.id, RelationType.IMPORTS);
+              for (const rel of symbolRels) {
+                const importerId = rel.fromId === symbolEntity.id ? rel.toId : rel.fromId;
+                if (!importerId || importerId === entity.id) continue;
+                const importer = await storage.getEntity(importerId);
+                if (importer) {
+                  symbolDependents.push(importer);
+                }
+              }
+            }
+          } catch {}
+        }
+
+        const mergedDirectMap = new Map<string, Entity>();
+        for (const e of directEntities) {
+          mergedDirectMap.set(e.id, e);
+        }
+        for (const e of symbolDependents) {
+          if (!mergedDirectMap.has(e.id)) {
+            mergedDirectMap.set(e.id, e);
+          }
+        }
+        const mergedDirectEntities = Array.from(mergedDirectMap.values());
+
         const indirectIds = new Set<string>();
-        for (const direct of directEntities) {
+        for (const direct of mergedDirectEntities) {
           const rels = await storage.getRelationshipsForEntity(direct.id);
           for (const rel of rels) {
             const candidate = rel.fromId === direct.id ? rel.toId : rel.fromId;
@@ -2183,12 +2244,15 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           (e): e is Entity => Boolean(e),
         );
 
+        const visibleDirectEntities = mergedDirectEntities.filter((e) => !(e.metadata as any)?.isExternal);
+        const visibleIndirectEntities = indirectEntities.filter((e) => !(e.metadata as any)?.isExternal);
+
         const affectedFiles = new Set<string>();
-        for (const sample of [...directEntities, ...indirectEntities]) {
+        for (const sample of [...visibleDirectEntities, ...visibleIndirectEntities]) {
           affectedFiles.add(normalizeInputPath(sample.filePath) ?? sample.filePath);
         }
 
-        const totalImpact = directEntities.length + indirectEntities.length;
+        const totalImpact = visibleDirectEntities.length + visibleIndirectEntities.length;
         const riskLevel =
           totalImpact > 50 ? "critical" : totalImpact > 20 ? "high" : totalImpact > 5 ? "medium" : "low";
 
@@ -2203,14 +2267,14 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
         const impact = {
           source: mapEntitySummary(entity),
-          directImpacts: directEntities.map((item) => mapEntitySummary(item)),
-          indirectImpacts: indirectEntities.map((item) => mapEntitySummary(item)),
+          directImpacts: visibleDirectEntities.map((item) => mapEntitySummary(item)),
+          indirectImpacts: visibleIndirectEntities.map((item) => mapEntitySummary(item)),
           outboundDependencies: outboundSummaries,
           affectedFiles: Array.from(affectedFiles),
           riskLevel,
           totals: {
-            direct: directEntities.length,
-            indirect: indirectEntities.length,
+            direct: visibleDirectEntities.length,
+            indirect: visibleIndirectEntities.length,
             outbound: outboundIds.size,
           },
         };
@@ -2220,6 +2284,45 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             {
               type: "text",
               text: JSON.stringify(impact, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "list_module_importers": {
+        const { moduleSource, limit } = AnalyzeModuleDependentsSchema.parse(args);
+        const storage = await getGraphStorage(globalSQLiteManager);
+        const query: GraphQuery = {
+          type: "entity",
+          filters: {
+            entityType: EntityType.IMPORT,
+            importSource: moduleSource,
+          } as any,
+          limit,
+        };
+
+        const result = await storage.executeQuery(query);
+
+        const limited = result.entities;
+
+        const affectedFiles = Array.from(new Set(limited.map((e) => normalizeInputPath(e.filePath) ?? e.filePath)));
+
+        const payload = {
+          moduleSource,
+          directImpacts: limited.map((e) => mapEntitySummary(e)),
+          indirectImpacts: [],
+          affectedFiles,
+          riskLevel: limited.length > 20 ? "high" : limited.length > 5 ? "medium" : "low",
+          totals: {
+            direct: limited.length,
+          },
+        };
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(payload, null, 2),
             },
           ],
         };

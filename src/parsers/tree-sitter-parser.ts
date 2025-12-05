@@ -541,6 +541,25 @@ export class TreeSitterParser {
     const parameters = this.extractParameters(node, source);
     const position = convertPosition(node);
     const signature = source.substring(position.start.index, Math.min(position.end.index, position.start.index + 200));
+
+    const body = node.namedChildren.find((c) => c.type === "statement_block" || c.type === "class_body");
+    const references = new Set<string>();
+    if (body) {
+      const queue: TreeSitterNode[] = [...body.namedChildren];
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        if (current.type === "identifier" || current.type === "property_identifier") {
+          const text = current.text;
+          if (text && text !== name) {
+            references.add(text);
+          }
+        }
+        for (const child of current.namedChildren) {
+          queue.push(child);
+        }
+      }
+    }
+
     return {
       name,
       type: node.parent?.type === "method_definition" ? "method" : "function",
@@ -548,6 +567,7 @@ export class TreeSitterParser {
       modifiers,
       parameters,
       signature: signature.trim(),
+      references: references.size ? Array.from(references) : undefined,
     };
   }
 

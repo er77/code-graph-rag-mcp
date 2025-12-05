@@ -1,0 +1,165 @@
+
+debug: false
+
+mcp:
+  embedding:
+    enabled: true
+    provider: ollama
+    model: "nomic-embed-text"
+    fallbackToMemory: true
+    ollama:
+      baseUrl: "http://127.0.0.1:11434"
+      timeout: 60000
+      concurrency: 1
+      maxBatchSize: 16
+
+  server:
+    host: "localhost"
+    port: 3000
+
+  agents:
+    maxConcurrent: 10   # Higher concurrency for production
+    defaultTimeout: 900000  # 900 seconds for complex operations
+    useParser: true     # Enable ParserAgent for AST parsing (MCP_USE_PARSER)
+    devIndexBatch: 100  # Batch size for file processing (MCP_DEV_INDEX_BATCH)
+
+# Database Configuration (Production Optimized)
+database:
+  path: "/tmp/data/vectors.db"  # Persistent volume path
+  mode: "WAL"               # WAL mode for best performance
+  cacheSize: 50000          # Larger cache for production
+  mmapSize: 1073741824      # 1GB memory mapping for large datasets
+  synchronous: "NORMAL"     # Balance between performance and safety
+  tempStore: "MEMORY"       # Keep temp data in memory
+
+# Logging Configuration (Production)
+logging:
+  level: "warn"             # Only warnings and errors in production
+  format: "json"            # Structured JSON logging for log aggregation
+  enableConsole: false      # Disable console output in production
+  outputFile: "/tmp/logs_mcp/mcp-server.log"  # Persistent log file
+  maxFileSize: "100MB"      # Larger log files for production
+  maxFiles: 10              # Keep more log files for debugging
+
+# Parser Configuration (Production Optimized)
+parser:
+  treeSitter:
+    enabled: true
+    languageConfigs:
+      - "typescript"
+      - "javascript"
+      - "python"
+      - "c"
+      - "cpp"
+      - "java"
+      - "rust"
+      - "go"
+      - "php"
+      - "ruby"
+      - "swift"
+      - "kotlin"
+    maxFileSize: 5242880      # 5MB maximum file size for production
+    timeout: 180000           # 180 seconds timeout for large files
+    bufferSize: 1048576       # 1MB buffer size for tree-sitter parser
+    
+  incremental:
+    enabled: true
+    cacheSize: 5000           # Larger cache for production workloads
+    cacheTTL: 1800000         # 30 minutes cache TTL
+
+  agent:
+    maxConcurrency: 4     # Parallel file processing
+    memoryLimit: 2024     # MB - memory limit for parser agent
+    priority: 8           # High priority for parsing
+    batchSize: 10         # Files per batch
+    cacheSize: 104857600  # 100MB cache (in bytes)
+    workerPoolSize: 2     # Number of worker threads
+
+indexer:
+  maxConcurrency: 5       # Single database operation for development
+  memoryLimit: 2024       # MB 
+  priority: 7
+  batchSize: 500
+  cacheSize: 25165824     # 25MB cache (in bytes)
+  cacheTTL: 180000        # 3 minutes (in ms)
+
+devAgent:
+  maxConcurrency: 5
+  memoryLimit: 2024 
+  priority: 7
+
+doraAgent:
+  maxConcurrency: 3
+  memoryLimit: 2024 
+  priority: 6
+
+queryAgent:
+  maxConcurrency: 16
+  memoryLimit: 2024 
+  priority: 9
+  simpleQueryTimeout: 100
+  complexQueryTimeout: 1500
+  cacheWarmupSize: 200
+
+semanticAgent:
+  maxConcurrency: 8
+  memoryLimit: 2024
+  priority: 8
+  batchSize: 16
+  modelPath: "./models"
+
+coordinator:
+  maxConcurrency: 160
+  memoryLimit: 2024 
+  priority: 10
+  taskQueueLimit: 160
+  loadBalancingStrategy: "least-loaded"
+  resourceConstraints:
+    maxMemoryMB: 8096
+    maxCpuPercent: 80
+    maxConcurrentAgents: 20
+    maxTaskQueueSize: 160
+
+conductor:
+  maxConcurrency: 160
+  memoryLimit: 2024 
+  priority: 10
+  taskQueueLimit: 160
+  loadBalancingStrategy: "least-loaded"
+  resourceConstraints:
+    maxMemoryMB: 8096
+    maxCpuPercent: 80
+    maxConcurrentAgents: 20
+    maxTaskQueueSize: 160
+  complexityThreshold: 8
+  mandatoryDelegation: true
+
+# Performance Configuration (Production)
+performance:
+  monitoring:
+    enabled: true
+    collectMetrics: true
+    metricsInterval: 300000   # 5 minutes metrics collection
+    
+  optimization:
+    enableVectorSearch: true  # Enable vector search in production
+    enableParallelParsing: true
+    maxWorkerThreads: 8       # More threads for production servers
+    
+# Production Security
+security:
+  enableCORS: false           # Disable CORS for production API
+  rateLimiting:
+    enabled: true
+    requestsPerMinute: 1000   # Rate limit for API endpoints
+    
+# Resource Limits
+resources:
+  maxMemoryUsage: "8GB"       # Memory limit for the application
+  maxCpuUsage: "80%"          # CPU usage threshold
+  
+# Health Checks
+health:
+  enableHealthCheck: true
+  healthCheckInterval: 30000  # 30 seconds health check
+  gracefulShutdownTimeout: 10000  # 10 seconds graceful shutdown
