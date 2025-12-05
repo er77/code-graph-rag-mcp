@@ -164,6 +164,15 @@ export class VectorStore {
       this.sqliteVecEnabled = hasVecExtension;
       console.log(`[VectorStore] hasVecExtension: ${hasVecExtension}`);
       if (hasVecExtension) {
+        const existingDims = this.getExistingVecDimensions();
+        if (existingDims != null && existingDims !== this.config.dimensions) {
+          console.warn(
+            `[VectorStore] Existing vec_doc_embeddings uses dimension ${existingDims}, ` +
+              `overriding configured ${this.config.dimensions}`,
+          );
+          this.config.dimensions = existingDims;
+        }
+
         // Create optimized table using sqlite-vec virtual table
         this.db.exec(`
           CREATE VIRTUAL TABLE IF NOT EXISTS vec_doc_embeddings USING vec0(
@@ -211,6 +220,30 @@ export class VectorStore {
   }
 
   /**
+   * Detect existing sqlite-vec table dimensions from PRAGMA metadata.
+   */
+  private getExistingVecDimensions(): number | null {
+    if (!this.db) return null;
+
+    try {
+      const row = this.db
+        .prepare("SELECT type FROM pragma_table_info('vec_doc_embeddings') WHERE name = 'embedding'")
+        .get() as { type?: string } | undefined;
+
+      const type = row?.type;
+      if (!type) return null;
+
+      const match = /float\[(\d+)\]/i.exec(type);
+      if (!match) return null;
+
+      const dim = Number.parseInt(match[1]!, 10);
+      return Number.isFinite(dim) ? dim : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Prepare SQL statements for reuse
    */
   private prepareStatements(): void {
@@ -252,6 +285,28 @@ export class VectorStore {
     }
 
     this.deleteStmt = this.db.prepare(`DELETE FROM doc_embeddings WHERE id = ?`);
+  }
+
+  /**
+   * Ensure vector matches the configured dimension (pad or truncate if needed).
+   */
+  private ensureVectorDimension(vector: Float32Array, id: string): Float32Array {
+    const targetDim = this.config.dimensions;
+    if (!targetDim || vector.length === targetDim) {
+      return vector;
+    }
+
+    const adjusted = new Float32Array(targetDim);
+    const len = Math.min(vector.length, targetDim);
+    for (let i = 0; i < len; i++) {
+      adjusted[i] = vector[i]!;
+    }
+
+    if (this.debugMode) {
+      console.warn(`[VectorStore] Adjusted vector dimension for id=${id}: expected ${targetDim}, got ${vector.length}`);
+    }
+
+    return adjusted;
   }
 
   /**
@@ -349,13 +404,15 @@ export class VectorStore {
       if (hasVec && this.insertVecStmt && this.deleteVecByIdStmt) {
         const tx = this.db.transaction((e: VectorEmbedding) => {
           this.deleteVecByIdStmt?.run(e.id);
-          const vectorJson = JSON.stringify(Array.from(e.vector));
+          const vec = this.ensureVectorDimension(e.vector, e.id);
+          const vectorJson = JSON.stringify(Array.from(vec));
           this.insertVecStmt?.run(e.id, vectorJson);
           this.insertStmt?.run(e.id, e.content, metadataStr, timestamp);
         });
         tx(embedding);
       } else {
-        const vectorBuffer = float32ArrayToBuffer(embedding.vector);
+        const vec = this.ensureVectorDimension(embedding.vector, embedding.id);
+        const vectorBuffer = float32ArrayToBuffer(vec);
         this.insertStmt.run(embedding.id, embedding.content, vectorBuffer, metadataStr, timestamp);
       }
     } catch (error) {
@@ -381,11 +438,13 @@ export class VectorStore {
 
         if (hasVec && this.insertVecStmt && this.deleteVecByIdStmt) {
           this.deleteVecByIdStmt.run(e.id);
-          const vectorJson = JSON.stringify(Array.from(e.vector));
+          const vec = this.ensureVectorDimension(e.vector, e.id);
+          const vectorJson = JSON.stringify(Array.from(vec));
           this.insertVecStmt.run(e.id, vectorJson);
           this.insertStmt?.run(e.id, e.content, metadataStr, timestamp);
         } else {
-          const vectorBuffer = float32ArrayToBuffer(e.vector);
+          const vec = this.ensureVectorDimension(e.vector, e.id);
+          const vectorBuffer = float32ArrayToBuffer(vec);
           this.insertStmt?.run(e.id, e.content, vectorBuffer, metadataStr, timestamp);
         }
       }

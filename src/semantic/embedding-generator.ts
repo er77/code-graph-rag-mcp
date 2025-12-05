@@ -27,7 +27,7 @@
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
-import type { EmbeddingConfig } from "../types/semantic.js";
+import { type EmbeddingConfig, VECTOR_DIMENSIONS } from "../types/semantic.js";
 import type { EmbeddingProvider } from "./providers/base.js";
 import { createProvider } from "./providers/factory.js";
 import { MemoryProvider } from "./providers/memory-provider.js";
@@ -88,7 +88,6 @@ export class EmbeddingGenerator {
   private cache: Map<string, EmbeddingCache> = new Map();
   private config: EmbeddingConfig;
   private initPromise: Promise<void> | null = null;
-  private isInitializing = false;
 
   private cacheHits = 0;
   private cacheMisses = 0;
@@ -100,7 +99,7 @@ export class EmbeddingGenerator {
 
   private providerKey(): string {
     const info = this.provider?.info ?? this.fallback?.info;
-    const dim = this.provider?.getDimension() ?? this.fallback?.getDimension() ?? 384;
+    const dim = this.provider?.getDimension?.() ?? this.fallback?.getDimension?.() ?? VECTOR_DIMENSIONS;
     const name = info?.name ?? "memory";
     const model = info?.model ?? "deterministic-hash";
     return `${name}:${model}:${dim}`;
@@ -108,43 +107,48 @@ export class EmbeddingGenerator {
 
   async initialize(): Promise<void> {
     if (this.initPromise) return this.initPromise;
-    this.isInitializing = true;
 
     this.initPromise = (async () => {
+      const providerName = this.config.provider ?? "memory";
+      const baseDimension = this.config.memory?.dimension ?? VECTOR_DIMENSIONS;
+
+      // Base fallback uses deterministic hash embeddings with the base dimension.
+      this.fallback = new MemoryProvider({ dimension: baseDimension });
+
+      const mainProvider = createProvider({
+        provider: providerName,
+        modelName: this.config.modelName ?? DEFAULT_MODEL,
+        transformers: {
+          quantized: this.config.quantized,
+          localPath: this.config.localPath,
+        },
+        ollama: this.config.ollama,
+        openai: this.config.openai,
+        cloudru: this.config.cloudru,
+        memory: { dimension: baseDimension, ...this.config.memory },
+      });
+
       try {
-        const providerName = this.config.provider ?? "memory";
-        this.provider = createProvider({
-          provider: providerName,
-          modelName: this.config.modelName ?? DEFAULT_MODEL,
-          transformers: {
-            quantized: this.config.quantized,
-            localPath: this.config.localPath,
-          },
-          ollama: this.config.ollama,
-          openai: this.config.openai,
-          cloudru: this.config.cloudru,
-          memory: this.config.memory,
-        });
+        await mainProvider.initialize();
 
-        this.fallback = new MemoryProvider();
+        const detectedDim = mainProvider.getDimension?.() ?? this.config.memory?.dimension ?? baseDimension;
 
-        try {
-          await this.provider.initialize();
-          if (this.debugMode) {
-            console.log(
-              `[EmbeddingGenerator] Provider initialized: ${this.provider.info.name} (${this.provider.info.model})`,
-            );
-          }
-        } catch (e) {
-          console.warn("[EmbeddingGenerator] Provider init failed, using memory fallback:", (e as Error)?.message || e);
-          this.provider = this.fallback;
+        // Recreate fallback to match embedding dimension of the primary provider.
+        this.fallback = new MemoryProvider({ dimension: detectedDim });
+        this.provider = mainProvider;
+
+        if (this.debugMode) {
+          console.log(
+            `[EmbeddingGenerator] Provider initialized: ${this.provider.info.name} (${this.provider.info.model}), dim=${detectedDim}`,
+          );
         }
+      } catch (e) {
+        console.warn("[EmbeddingGenerator] Provider init failed, using memory fallback:", (e as Error)?.message || e);
+        this.provider = this.fallback;
+      }
 
-        if (!this.provider) {
-          this.provider = this.fallback;
-        }
-      } finally {
-        this.isInitializing = false;
+      if (!this.provider) {
+        this.provider = this.fallback;
       }
     })();
 
@@ -155,12 +159,17 @@ export class EmbeddingGenerator {
    * Generate embedding for a single text
    */
   async generateEmbedding(text: string): Promise<Float32Array> {
-    if (!this.provider && !this.isInitializing) {
-      await this.initialize();
-    } else if (this.isInitializing && this.fallback) {
-      if (this.debugMode) console.log("[EmbeddingGenerator] fallback during init");
-      return this.fallback.embed(normalizeText(text));
+    if (!this.provider) {
+      // Ensure initialization is fully completed before generating embeddings
+      await (this.initPromise ?? this.initialize());
     }
+
+    const provider = this.provider ?? this.fallback;
+    if (!provider) {
+      throw new Error("Embedding provider not initialized");
+    }
+
+    const fallback = this.fallback ?? provider;
 
     const normalized = normalizeText(text);
     const key = `${this.providerKey()}:${hashText(normalized)}`;
@@ -172,21 +181,14 @@ export class EmbeddingGenerator {
     }
     this.cacheMisses++;
 
-    const dimension = this.provider?.getDimension() ?? this.fallback?.getDimension() ?? 384;
+    const dimension = provider.getDimension?.() ?? fallback.getDimension?.() ?? VECTOR_DIMENSIONS;
 
     let embedding: Float32Array | undefined;
     try {
-      if (this.provider) {
-        embedding = await this.provider.embed(normalized);
-      }
-      if (!embedding && this.fallback) {
-        embedding = await this.fallback.embed(normalized);
-      }
+      embedding = await provider.embed(normalized);
     } catch (e) {
       console.warn("[EmbeddingGenerator] embed failed, using fallback:", (e as Error)?.message || e);
-      if (this.fallback) {
-        embedding = await this.fallback.embed(normalized);
-      }
+      embedding = await fallback.embed(normalized);
     }
 
     embedding = ensureEmbedding(embedding, dimension);
@@ -210,8 +212,15 @@ export class EmbeddingGenerator {
    */
   async generateBatch(texts: string[]): Promise<Float32Array[]> {
     if (!this.provider) {
-      await this.initialize();
+      await (this.initPromise ?? this.initialize());
     }
+
+    const provider = this.provider ?? this.fallback;
+    if (!provider) {
+      throw new Error("Embedding provider not initialized");
+    }
+
+    const fallback = this.fallback ?? provider;
 
     const results: Float32Array[] = [];
     const batchSize = this.config.batchSize ?? 8;
@@ -238,35 +247,33 @@ export class EmbeddingGenerator {
 
       // Process uncached
       if (toProcess.length > 0) {
-        const dimension = this.provider?.getDimension() ?? this.fallback?.getDimension() ?? 384;
+        const dimension = provider.getDimension?.() ?? fallback.getDimension?.() ?? VECTOR_DIMENSIONS;
         let embeddings: Float32Array[] = [];
         try {
-          if (this.provider && typeof this.provider.embedBatch === "function") {
-            embeddings = (await this.provider.embedBatch(toProcess.map((t) => t.text))) ?? [];
+          if (typeof provider.embedBatch === "function") {
+            embeddings = (await provider.embedBatch(toProcess.map((t) => t.text))) ?? [];
           } else {
             // sequential fallback
             embeddings = [];
             for (const item of toProcess) {
               try {
                 let emb: Float32Array | undefined;
-                if (this.provider) {
-                  emb = await this.provider.embed(item.text);
-                }
-                if (!emb && this.fallback) {
-                  emb = await this.fallback.embed(item.text);
+                emb = await provider.embed(item.text);
+                if (!emb) {
+                  emb = await fallback.embed(item.text);
                 }
                 embeddings.push(ensureEmbedding(emb, dimension));
               } catch (e) {
                 console.warn("[EmbeddingGenerator] embed failed in batch, using fallback:", (e as Error)?.message || e);
-                const fallbackEmbedding =
-                  (this.fallback && (await this.fallback.embed(item.text))) ?? new Float32Array(dimension);
+                const fallbackEmbedding = await fallback.embed(item.text);
                 embeddings.push(fallbackEmbedding);
               }
             }
           }
-        } catch (_e) {
-          const fallbackBatch = this.fallback?.embedBatch
-            ? await this.fallback.embedBatch(toProcess.map((t) => t.text))
+        } catch (e) {
+          console.warn("[EmbeddingGenerator] embedBatch failed, using fallback batch:", (e as Error)?.message || e);
+          const fallbackBatch = fallback.embedBatch
+            ? await fallback.embedBatch(toProcess.map((t) => t.text))
             : undefined;
           embeddings = fallbackBatch?.map((emb) => ensureEmbedding(emb, dimension)) ?? [];
         }

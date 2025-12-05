@@ -520,10 +520,61 @@ export class GraphStorageImpl implements GraphStorage {
       async () => {
         const start = Date.now();
 
+        // Fast path: raw SQL for import-source lookups to avoid artificial limits.
+        if (
+          query.type === "entity" &&
+          query.filters &&
+          (query as any).filters.importSource &&
+          query.filters.entityType === ("import" as EntityType | EntityType[])
+        ) {
+          const rawSource = (query as any).filters.importSource as string;
+          const norm = rawSource.replace(/\\/g, "/");
+          const base = norm.replace(/^.*\//, "").replace(/\.[a-zA-Z0-9]+$/, "");
+
+          const like1 = `%/${base}.%`;
+          const like2 = `%/${base}`;
+
+          const rows = this.db
+            .prepare(
+              `SELECT * FROM entities
+               WHERE type = 'import'
+                 AND (
+                   json_extract(metadata, '$.importData.source') LIKE ?
+                   OR json_extract(metadata, '$.importData.source') LIKE ?
+                   OR json_extract(metadata, '$.importData.source') = ?
+                 )
+               LIMIT ?`,
+            )
+            .all(like1, like2, rawSource, Math.min(query.limit || DEFAULT_QUERY_LIMIT, MAX_QUERY_LIMIT)) as any[];
+
+          const entities = rows.map((row) => this.rowToEntity(row));
+
+          const totalImports = this.db
+            .prepare(
+              `SELECT COUNT(*) as count FROM entities
+               WHERE type = 'import'
+                 AND (
+                   json_extract(metadata, '$.importData.source') LIKE ?
+                   OR json_extract(metadata, '$.importData.source') LIKE ?
+                   OR json_extract(metadata, '$.importData.source') = ?
+                 )`,
+            )
+            .get(like1, like2, rawSource) as { count: number };
+
+          return {
+            entities,
+            relationships: [],
+            stats: {
+              totalEntities: totalImports.count,
+              totalRelationships: 0,
+              queryTimeMs: Date.now() - start,
+            },
+          };
+        }
+
         const entities = await this.findEntities(query);
         const relationships = await this.findRelationships(query);
 
-        // Get total counts
         const totalEntities = this.db.prepare("SELECT COUNT(*) as count FROM entities").get() as { count: number };
         const totalRelationships = this.db.prepare("SELECT COUNT(*) as count FROM relationships").get() as {
           count: number;
