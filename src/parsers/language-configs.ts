@@ -70,6 +70,10 @@ export const FILE_EXTENSIONS: Record<string, SupportedLanguage> = {
   // Java
   java: "java",
 
+  // Kotlin
+  kt: "kotlin",
+  kts: "kotlin",
+
   // VBA
   vba: "vba",
   bas: "vba",
@@ -200,6 +204,55 @@ export const LANGUAGE_KEYWORDS: Record<
     imports: ["import"],
     exports: ["public", "protected"],
     types: ["int", "long", "double", "float", "char", "boolean", "String", "void"],
+  },
+
+  kotlin: {
+    functions: [
+      "fun",
+      "suspend",
+      "inline",
+      "infix",
+      "operator",
+      "tailrec",
+      "external",
+      "crossinline",
+      "noinline",
+      "reified",
+    ],
+    classes: [
+      "class",
+      "interface",
+      "object",
+      "companion",
+      "data",
+      "sealed",
+      "enum",
+      "annotation",
+      "inner",
+      "value",
+      "open",
+      "abstract",
+      "final",
+    ],
+    imports: ["import", "as"],
+    exports: ["public", "internal", "protected", "private"],
+    types: [
+      "typealias",
+      "Int",
+      "Long",
+      "Double",
+      "Float",
+      "Char",
+      "Boolean",
+      "String",
+      "Unit",
+      "Any",
+      "Nothing",
+      "Array",
+      "List",
+      "Map",
+      "Set",
+    ],
   },
 
   vba: {
@@ -1059,6 +1112,120 @@ const JAVA_CONFIG: LanguageConfig = {
 };
 
 /**
+ * Kotlin language configuration - Comprehensive support for all Kotlin features
+ */
+const KOTLIN_CONFIG: LanguageConfig = {
+  language: "kotlin",
+  extensions: ["kt", "kts"],
+  keywords: LANGUAGE_KEYWORDS.kotlin,
+  nodeTypes: {
+    functions: ["function_declaration", "anonymous_function", "lambda_literal", "getter", "setter"],
+    classes: ["class_declaration", "object_declaration", "companion_object", "enum_entry"],
+    methods: ["function_declaration", "anonymous_function", "getter", "setter", "secondary_constructor"],
+    imports: ["import_header", "import_list"],
+    exports: [], // Kotlin uses visibility modifiers, not exports
+    variables: ["property_declaration", "variable_declaration", "multi_variable_declaration", "class_parameter"],
+    types: ["type_alias", "user_type", "function_type", "nullable_type", "type_parameters", "type_constraints"],
+    interfaces: ["class_declaration"], // Interfaces use class_declaration with interface keyword
+  },
+  extractors: {
+    extractName: (nodeType: string) => {
+      switch (nodeType) {
+        case "function_declaration":
+        case "anonymous_function":
+          return ["simple_identifier"];
+        case "class_declaration":
+        case "object_declaration":
+        case "companion_object":
+          return ["simple_identifier", "type_identifier"];
+        case "property_declaration":
+        case "variable_declaration":
+        case "class_parameter":
+          return ["simple_identifier"];
+        case "type_alias":
+          return ["type_identifier", "simple_identifier"];
+        case "import_header":
+          return ["identifier", "import_alias"];
+        case "enum_entry":
+          return ["simple_identifier"];
+        case "secondary_constructor":
+          return ["constructor"];
+        case "lambda_literal":
+          return []; // Lambdas are anonymous
+        default:
+          return ["simple_identifier", "identifier"];
+      }
+    },
+    extractModifiers: (nodeType: string) => {
+      switch (nodeType) {
+        case "function_declaration":
+          return [
+            "public",
+            "private",
+            "protected",
+            "internal",
+            "suspend",
+            "inline",
+            "infix",
+            "operator",
+            "tailrec",
+            "external",
+            "open",
+            "final",
+            "override",
+            "abstract",
+            "expect",
+            "actual",
+          ];
+        case "class_declaration":
+          return [
+            "public",
+            "private",
+            "protected",
+            "internal",
+            "data",
+            "sealed",
+            "inner",
+            "value",
+            "annotation",
+            "enum",
+            "open",
+            "final",
+            "abstract",
+            "expect",
+            "actual",
+          ];
+        case "object_declaration":
+        case "companion_object":
+          return ["public", "private", "protected", "internal", "data"];
+        case "property_declaration":
+          return [
+            "public",
+            "private",
+            "protected",
+            "internal",
+            "const",
+            "lateinit",
+            "open",
+            "final",
+            "override",
+            "abstract",
+            "expect",
+            "actual",
+          ];
+        case "class_parameter":
+          return ["val", "var", "vararg", "crossinline", "noinline"];
+        default:
+          return ["public", "private", "protected", "internal", "open", "final", "override", "abstract"];
+      }
+    },
+    extractParameters: true,
+    extractReturnType: true,
+    extractReferences: true,
+  },
+};
+
+/**
  * VBA language configuration
  */
 const VBA_CONFIG: LanguageConfig = {
@@ -1145,6 +1312,7 @@ export const LANGUAGE_CONFIGS: Record<SupportedLanguage, LanguageConfig> = {
   csharp: CSHARP_CONFIG,
   go: GO_CONFIG,
   java: JAVA_CONFIG,
+  kotlin: KOTLIN_CONFIG,
   vba: VBA_CONFIG,
 };
 
@@ -1349,7 +1517,7 @@ export function getPythonNodeCategory(
  * Validate language configurations on startup
  */
 export function validateConfigurations(): boolean {
-  console.log("[LanguageConfig] Validating configurations...");
+  console.error("[LanguageConfig] Validating configurations...");
 
   for (const [lang, config] of Object.entries(LANGUAGE_CONFIGS)) {
     if (!config.language || !config.extensions.length) {
@@ -1358,6 +1526,6 @@ export function validateConfigurations(): boolean {
     }
   }
 
-  console.log("[LanguageConfig] All configurations valid");
+  console.error("[LanguageConfig] All configurations valid");
   return true;
 }

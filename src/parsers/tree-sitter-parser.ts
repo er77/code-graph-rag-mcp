@@ -20,6 +20,7 @@ import { CppAnalyzer } from "./cpp-analyzer.js";
 import { CSharpAnalyzer } from "./csharp-analyzer.js";
 import { GoAnalyzer } from "./go-analyzer.js";
 import { JavaAnalyzer } from "./java-analyzer.js";
+import { KotlinAnalyzer } from "./kotlin-analyzer.js";
 import { createPythonAnalyzer } from "./python-analyzer.js";
 import { RustAnalyzer } from "./rust-analyzer.js";
 import { VbaAnalyzer } from "./vba-analyzer.js";
@@ -76,6 +77,10 @@ const LANGUAGE_LOADERS: Partial<Record<SupportedLanguage, () => Promise<any>>> =
   },
   java: async () => {
     const m: any = requireModule("tree-sitter-java");
+    return m.default ?? m;
+  },
+  kotlin: async () => {
+    const m: any = requireModule("tree-sitter-kotlin");
     return m.default ?? m;
   },
 };
@@ -136,6 +141,9 @@ function detectLanguage(filePath: string): SupportedLanguage {
       return "go";
     case "java":
       return "java";
+    case "kt":
+    case "kts":
+      return "kotlin";
     case "h":
       return filePath.includes("++") || filePath.includes("cpp") || filePath.includes("cxx") ? "cpp" : "c";
     case "hpp":
@@ -176,6 +184,7 @@ export class TreeSitterParser {
   private cppAnalyzer = new CppAnalyzer();
   private goAnalyzer = new GoAnalyzer();
   private javaAnalyzer = new JavaAnalyzer();
+  private kotlinAnalyzer = new KotlinAnalyzer();
   private vbaAnalyzer = new VbaAnalyzer();
 
   private cacheHits = 0;
@@ -201,7 +210,7 @@ export class TreeSitterParser {
     if (this.initialized) return;
     this.parser = new Parser();
     this.initialized = true;
-    console.log("[TreeSitterParser] Initialization complete");
+    console.error("[TreeSitterParser] Initialization complete");
   }
 
   private getFromCache(key: string): ParseCacheEntry | undefined {
@@ -227,7 +236,7 @@ export class TreeSitterParser {
       const lang = await loader();
       if (!lang) throw new Error(`Language loader returned empty result for ${language}`);
       this.languages.set(language, lang);
-      console.log(`[TreeSitterParser] Loaded language: ${language}`);
+      console.error(`[TreeSitterParser] Loaded language: ${language}`);
       return lang;
     } catch (e: any) {
       throw new Error(`[TreeSitterParser] Language '${language}' is not available: ${e?.message || e}`);
@@ -271,7 +280,7 @@ export class TreeSitterParser {
       this.setCache(cacheKey, { tree: null, entities, hash: internalHash, timestamp: Date.now(), relationships });
 
       const parseTimeMs = Date.now() - startTime;
-      console.log(
+      console.error(
         `[TreeSitterParser] VBA analysis: ${entities.length} entities, ${relationships.length} relationships`,
       );
 
@@ -305,46 +314,57 @@ export class TreeSitterParser {
       const py = await this.pythonAnalyzer.analyzePythonCode(filePath, tree.rootNode as any, content);
       entities = py.entities;
       relationships = py.relationships || [];
-      console.log(
+      console.error(
         `[TreeSitterParser] Python analysis: ${entities.length} entities, ${relationships.length} relationships`,
       );
     } else if (language === "csharp") {
       const cs = await this.csharpAnalyzer.analyze(tree.rootNode as any, filePath);
       entities = cs.entities || [];
       relationships = cs.relationships || [];
-      console.log(
+      console.error(
         `[TreeSitterParser] C# analysis: ${entities.length} entities, ${relationships.length} relationships, ${(cs as any).patterns?.length || 0} patterns`,
       );
     } else if (language === "rust") {
       const ru = await this.rustAnalyzer.analyze(tree.rootNode as any, filePath);
       entities = ru.entities || [];
       relationships = ru.relationships || [];
-      console.log(
+      console.error(
         `[TreeSitterParser] Rust analysis: ${entities.length} entities, ${relationships.length} relationships, ${(ru as any).patterns?.length || 0} patterns`,
       );
     } else if (language === "c") {
       const ca = await this.cAnalyzer.analyze(tree.rootNode as any, filePath);
       entities = ca.entities || [];
       relationships = ca.relationships || [];
-      console.log(`[TreeSitterParser] C analysis: ${entities.length} entities, ${relationships.length} relationships`);
+      console.error(
+        `[TreeSitterParser] C analysis: ${entities.length} entities, ${relationships.length} relationships`,
+      );
     } else if (language === "cpp") {
       const cp = await this.cppAnalyzer.analyze(tree.rootNode as any, filePath);
       entities = cp.entities || [];
       relationships = cp.relationships || [];
-      console.log(
+      console.error(
         `[TreeSitterParser] C++ analysis: ${entities.length} entities, ${relationships.length} relationships`,
       );
     } else if (language === "go") {
       const ga = await this.goAnalyzer.analyze(tree.rootNode as any, filePath);
       entities = ga.entities || [];
       relationships = ga.relationships || [];
-      console.log(`[TreeSitterParser] Go analysis: ${entities.length} entities, ${relationships.length} relationships`);
+      console.error(
+        `[TreeSitterParser] Go analysis: ${entities.length} entities, ${relationships.length} relationships`,
+      );
     } else if (language === "java") {
       const ja = await this.javaAnalyzer.analyze(tree.rootNode as any, filePath);
       entities = ja.entities || [];
       relationships = ja.relationships || [];
-      console.log(
+      console.error(
         `[TreeSitterParser] Java analysis: ${entities.length} entities, ${relationships.length} relationships`,
+      );
+    } else if (language === "kotlin") {
+      const ko = await this.kotlinAnalyzer.analyze(tree.rootNode as any, filePath);
+      entities = ko.entities || [];
+      relationships = ko.relationships || [];
+      console.error(
+        `[TreeSitterParser] Kotlin analysis: ${entities.length} entities, ${relationships.length} relationships`,
       );
     } else {
       // Default parser for JS/TS/etc
