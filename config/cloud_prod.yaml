@@ -48,13 +48,12 @@ parser:
       - "python"
       - "c"
       - "cpp"
+      - "csharp"
       - "java"
+      - "kotlin"
       - "rust"
       - "go"
-      - "php"
-      - "ruby"
-      - "swift"
-      - "kotlin"
+      - "vba"
     maxFileSize: 5242880      # 5MB maximum file size for production
     timeout: 180000           # 180 seconds timeout for large files
     bufferSize: 1048576       # 1MB buffer size for tree-sitter parser

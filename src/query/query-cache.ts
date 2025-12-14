@@ -45,6 +45,7 @@ export class QueryCache {
   private l2Cache: LRUCache<string, CacheEntry>;
   private l3Db: Database.Database | null = null;
   private sqliteManager: SQLiteManager;
+  private cleanupInterval: NodeJS.Timeout | null = null;
 
   private stats = {
     l1Hits: 0,
@@ -365,6 +366,33 @@ export class QueryCache {
     this.l2Cache.clear();
   }
 
+  /**
+   * Flush and release background resources (intervals + SQLite connection).
+   */
+  async shutdown(): Promise<void> {
+    try {
+      await this.flush();
+    } catch {
+      // ignore flush errors during shutdown
+    }
+
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
+
+    try {
+      this.sqliteManager.close();
+    } catch {
+      // ignore close errors
+    }
+
+    this.l3Db = null;
+    this.l3Statements = {};
+    this.l1Cache.clear();
+    this.l2Cache.clear();
+  }
+
   // =============================================================================
   // 4. HELPER METHODS
   // =============================================================================
@@ -405,8 +433,10 @@ export class QueryCache {
   }
 
   private startCleanupInterval(): void {
+    if (this.cleanupInterval) return;
+
     // Cleanup expired L3 entries every 5 minutes
-    setInterval(() => {
+    this.cleanupInterval = setInterval(() => {
       if (this.l3Db && this.l3Statements.cleanup) {
         const now = Date.now();
         const result = this.l3Statements.cleanup.run(now);
@@ -415,5 +445,7 @@ export class QueryCache {
         }
       }
     }, 300000); // 5 minutes
+
+    this.cleanupInterval.unref?.();
   }
 }

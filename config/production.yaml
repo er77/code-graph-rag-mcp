@@ -59,13 +59,12 @@ parser:
       - "python"
       - "c"
       - "cpp"
+      - "csharp"
       - "java"
+      - "kotlin"
       - "rust"
       - "go"
-      - "php"
-      - "ruby"
-      - "swift"
-      - "kotlin"
+      - "vba"
     maxFileSize: 5242880      # 5MB maximum file size for production
     timeout: 10000            # 10 seconds timeout for large files
     

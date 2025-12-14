@@ -69,7 +69,7 @@ export class GraphStorageImpl implements GraphStorage {
   }
 
   async initialize(): Promise<void> {
-    this.ensureReady(true);
+    this.ensureReady();
   }
 
   private ensureReady(force = false): void {
@@ -77,21 +77,23 @@ export class GraphStorageImpl implements GraphStorage {
       throw new Error("SQLiteManager is required but not provided");
     }
 
-    try {
-      if (!force && this.sqliteManager.isOpen()) {
-        this.db.pragma("user_version");
-        return;
-      }
-    } catch {}
+    const managerWasOpen = this.sqliteManager.isOpen();
 
-    if (!this.sqliteManager.isOpen()) {
+    if (!managerWasOpen) {
       this.sqliteManager.initialize();
     }
 
-    if (force) {
-      this.db = this.sqliteManager.getConnection();
-      this.prepareStatements();
+    if (!force && managerWasOpen) {
+      try {
+        this.db.pragma("user_version");
+        return;
+      } catch {
+        // Stale connection - fall through and rebind.
+      }
     }
+
+    this.db = this.sqliteManager.getConnection();
+    this.prepareStatements();
   }
 
   /**
@@ -865,10 +867,13 @@ export class GraphStorageImpl implements GraphStorage {
     switch (ext) {
       case "ts":
       case "tsx":
+      case "mts":
+      case "cts":
         return "typescript";
       case "js":
       case "jsx":
       case "mjs":
+      case "cjs":
         return "javascript";
       case "py":
         return "python";
@@ -883,15 +888,18 @@ export class GraphStorageImpl implements GraphStorage {
       case "rs":
         return "rust";
       case "go":
+      case "mod":
         return "go";
-      case "php":
-        return "php";
-      case "rb":
-        return "ruby";
-      case "swift":
-        return "swift";
+      case "cs":
+        return "csharp";
       case "kt":
+      case "kts":
         return "kotlin";
+      case "vba":
+      case "bas":
+      case "cls":
+      case "frm":
+        return "vba";
       default:
         return "unknown";
     }

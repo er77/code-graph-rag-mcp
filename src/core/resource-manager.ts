@@ -78,6 +78,7 @@ export class ResourceManager extends EventEmitter {
       this.captureSnapshot();
       this.checkResourcePressure();
     }, 1000);
+    this.monitoringInterval.unref?.();
 
     console.log("Resource monitoring started");
     this.emit("monitoring:started");

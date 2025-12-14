@@ -76,6 +76,7 @@ export class QueryAgent extends BaseAgent implements QueryOperations {
   private cache!: QueryCache;
   private connectionPool!: ConnectionPool;
   private concurrencyLimiter = pLimit(QUERY_AGENT_CONFIG.maxConcurrency);
+  private subscriptionIds: string[] = [];
   private queryMetrics = {
     totalQueries: 0,
     totalTime: 0,
@@ -130,7 +131,17 @@ export class QueryAgent extends BaseAgent implements QueryOperations {
     console.log(`[${this.id}] Shutting down QueryAgent...`);
 
     // Cleanup resources
-    await this.cache.flush();
+    try {
+      for (const id of this.subscriptionIds) {
+        knowledgeBus.unsubscribe(id);
+      }
+    } catch {
+      // ignore unsubscribe errors during shutdown
+    } finally {
+      this.subscriptionIds = [];
+    }
+
+    await this.cache.shutdown();
     await this.connectionPool.shutdown();
 
     console.log(`[${this.id}] QueryAgent shutdown complete`);
@@ -428,16 +439,20 @@ export class QueryAgent extends BaseAgent implements QueryOperations {
 
   private subscribeToKnowledgeBus(): void {
     // Subscribe to index updates
-    knowledgeBus.subscribe(this.id, "index:updated", this.handleIndexUpdate.bind(this));
+    this.subscriptionIds.push(knowledgeBus.subscribe(this.id, "index:updated", this.handleIndexUpdate.bind(this)));
 
     // Subscribe to cache invalidation requests
-    knowledgeBus.subscribe(this.id, "cache:invalidate", this.handleCacheInvalidation.bind(this));
+    this.subscriptionIds.push(
+      knowledgeBus.subscribe(this.id, "cache:invalidate", this.handleCacheInvalidation.bind(this)),
+    );
 
     // Subscribe to query requests
-    knowledgeBus.subscribe(this.id, /^query:request:.*/, this.handleQueryRequest.bind(this));
+    this.subscriptionIds.push(knowledgeBus.subscribe(this.id, /^query:request:.*/, this.handleQueryRequest.bind(this)));
 
     // Subscribe to resource adjustments
-    knowledgeBus.subscribe(this.id, "resources:adjusted", this.handleResourceAdjustment.bind(this));
+    this.subscriptionIds.push(
+      knowledgeBus.subscribe(this.id, "resources:adjusted", this.handleResourceAdjustment.bind(this)),
+    );
   }
 
   private async handleIndexUpdate(entry: KnowledgeEntry): Promise<void> {

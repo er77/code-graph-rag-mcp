@@ -133,10 +133,6 @@ export class IndexerAgent extends BaseAgent {
     // CRITICAL FIX: Use singleton GraphStorage instance
     // This ensures IndexerAgent and MCP tools use the same storage instance
     this.graphStorage = await getGraphStorage(this.sqliteManager);
-    // Ensure graph storage is fully initialized (re-prepare statements after SQLite reset)
-    if (typeof (this.graphStorage as any).initialize === "function") {
-      await (this.graphStorage as any).initialize();
-    }
 
     const config = getIndexerConfig();
     this.batchOps = new BatchOperations(this.sqliteManager.getConnection(), config.batchSize);
@@ -757,13 +753,6 @@ export class IndexerAgent extends BaseAgent {
         console.warn(`[${this.id}] Analyze on shutdown skipped: ${(e as Error).message}`);
       }
     }
-
-    // Close database connection
-    try {
-      if (this.ready) {
-        this.sqliteManager.close();
-      }
-    } catch {}
 
     // Clear cache
     try {

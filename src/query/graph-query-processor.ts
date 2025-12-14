@@ -544,7 +544,9 @@ export class GraphQueryProcessor {
     const allImpacted = new Set<string>(directImpactIds);
     for (const impactedId of directImpactIds) {
       const secondLevel = await this.getRelatedEntitiesRecursive(impactedId, 2);
-      secondLevel.forEach((e) => allImpacted.add(e.id));
+      secondLevel.forEach((e) => {
+        allImpacted.add(e.id);
+      });
     }
 
     // Load all impacted entities

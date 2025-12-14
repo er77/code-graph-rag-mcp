@@ -25,12 +25,19 @@ describe("Language loaders resolve grammars correctly", () => {
     { file: "a.cs", code: "class A{ static void Main(){} }", expected: "csharp" },
     { file: "a.go", code: "package main\nfunc main(){}", expected: "go" },
     { file: "a.java", code: "class A { public static void main(String[] a){} }", expected: "java" },
+    { file: "a.kt", code: "package p\nclass A { fun f(x:Int):Int { return x } }", expected: "kotlin" },
   ];
 
   it.each(samples)("loads grammar for %s and parses", async ({ file, code, expected }) => {
     const res = await parser.parse(file, code, "hash");
     expect(res.language).toBe(expected);
-    if (expected === "javascript" || expected === "jsx" || expected === "typescript" || expected === "tsx") {
+    if (
+      expected === "javascript" ||
+      expected === "jsx" ||
+      expected === "typescript" ||
+      expected === "tsx" ||
+      expected === "kotlin"
+    ) {
       expect(res.entities.length).toBeGreaterThan(0);
     }
   });

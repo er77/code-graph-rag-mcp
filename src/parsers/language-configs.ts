@@ -9,7 +9,7 @@
  * - Enhanced Parser Types: src/types/parser.ts
  * - Tree-sitter Parser: src/parsers/tree-sitter-parser.ts
  * - Python Analyzer: src/parsers/python-analyzer.ts
- * - ADR-003B: Advanced Python Features Implementation
+ * - ADR-005: Enhanced Python Type System and Magic Methods
  */
 
 // =============================================================================
@@ -1112,7 +1112,7 @@ const JAVA_CONFIG: LanguageConfig = {
 };
 
 /**
- * Kotlin language configuration - Comprehensive support for all Kotlin features
+ * Kotlin language configuration - Comprehensive support for Kotlin features
  */
 const KOTLIN_CONFIG: LanguageConfig = {
   language: "kotlin",

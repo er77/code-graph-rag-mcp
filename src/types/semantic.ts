@@ -158,6 +158,38 @@ export interface VectorStoreConfig {
  */
 export type EmbeddingProviderKind = "memory" | "transformers" | "ollama" | "openai" | "cloudru";
 
+export interface OllamaProviderConfig {
+  baseUrl?: string;
+  timeoutMs?: number;
+  concurrency?: number;
+  headers?: Record<string, string>;
+  autoPull?: boolean;
+  warmupText?: string;
+  checkServer?: boolean;
+  pullTimeoutMs?: number;
+}
+
+export interface OpenAIProviderConfig {
+  baseUrl?: string;
+  apiKey?: string;
+  timeoutMs?: number;
+  concurrency?: number;
+  dimensions?: number;
+  maxBatchSize?: number;
+}
+
+export interface CloudRUProviderConfig {
+  baseUrl?: string;
+  apiKey?: string;
+  timeoutMs?: number;
+  concurrency?: number;
+  maxBatchSize?: number;
+}
+
+export interface MemoryProviderConfig {
+  dimension?: number;
+}
+
 export interface EmbeddingConfig {
   modelName: string;
   quantized: boolean;
@@ -165,33 +197,10 @@ export interface EmbeddingConfig {
   batchSize: number;
 
   provider?: EmbeddingProviderKind; // default: 'memory'
-  ollama?: {
-    baseUrl?: string;
-    timeoutMs?: number;
-    concurrency?: number;
-    headers?: Record<string, string>;
-    autoPull?: boolean;
-    warmupText?: string;
-    checkServer?: boolean;
-    pullTimeoutMs?: number;
-  };
-  openai?: {
-    baseUrl?: string;
-    apiKey?: string;
-    timeoutMs?: number;
-    concurrency?: number;
-    maxBatchSize?: number;
-  };
-  cloudru?: {
-    baseUrl?: string;
-    apiKey?: string;
-    timeoutMs?: number;
-    concurrency?: number;
-    maxBatchSize?: number;
-  };
-  memory?: {
-    dimension?: number;
-  };
+  ollama?: OllamaProviderConfig;
+  openai?: OpenAIProviderConfig;
+  cloudru?: CloudRUProviderConfig;
+  memory?: MemoryProviderConfig;
 }
 
 /**

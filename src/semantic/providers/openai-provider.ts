@@ -1,4 +1,5 @@
 import type { EmbeddingProvider, EmbedOptions, ProviderInfo, ProviderLogger } from "./base.js";
+import { createHttpEmbeddingMethods } from "./http-embedding-helpers.js";
 import { HttpEngine } from "./http-engine.js";
 
 export interface OpenAIOptions {
@@ -17,6 +18,7 @@ export class OpenAIProvider implements EmbeddingProvider {
   private engine: HttpEngine;
   private opts: OpenAIOptions;
   private log?: ProviderLogger;
+  private embedMethods: ReturnType<typeof createHttpEmbeddingMethods>;
 
   constructor(opts: OpenAIOptions) {
     this.opts = { baseUrl: "https://api.openai.com", ...opts };
@@ -37,6 +39,15 @@ export class OpenAIProvider implements EmbeddingProvider {
         "Content-Type": "application/json",
         Authorization: `Bearer ${this.opts.apiKey}`,
       },
+    });
+
+    this.embedMethods = createHttpEmbeddingMethods({
+      engine: this.engine,
+      request: { path: "/v1/embeddings", buildBody: this.buildBody },
+      parseSingle: this.parseSingle,
+      parseBatch: this.parseBatch,
+      maxBatchSize: this.info.maxBatchSize,
+      logger: this.log,
     });
   }
 
@@ -69,49 +80,11 @@ export class OpenAIProvider implements EmbeddingProvider {
   };
 
   async embed(text: string, opts?: EmbedOptions): Promise<Float32Array> {
-    this.log?.debug("embed()", { len: text?.length }, opts?.requestId);
-    return this.engine.callSingle(
-      { path: "/v1/embeddings", buildBody: this.buildBody },
-      text,
-      (j) => this.parseSingle(j),
-      { signal: opts?.signal },
-    );
+    return this.embedMethods.embed(text, opts);
   }
 
   async embedBatch(texts: string[], opts?: EmbedOptions): Promise<Float32Array[]> {
-    this.log?.debug("embedBatch()", { count: texts.length }, opts?.requestId);
-
-    const size = this.info.maxBatchSize ?? texts.length;
-    if (size < texts.length) {
-      const chunks: string[][] = [];
-      for (let i = 0; i < texts.length; i += size) {
-        chunks.push(texts.slice(i, i + size));
-      }
-      const parts = await Promise.all(
-        chunks.map((c) =>
-          this.engine.callSingle({ path: "/v1/embeddings", buildBody: this.buildBody }, c, (j) => this.parseBatch(j), {
-            signal: opts?.signal,
-          }),
-        ),
-      );
-      return parts.flat();
-    }
-
-    try {
-      return await this.engine.callSingle(
-        { path: "/v1/embeddings", buildBody: this.buildBody },
-        texts,
-        (j) => this.parseBatch(j),
-        { signal: opts?.signal },
-      );
-    } catch {
-      return this.engine.callBatch(
-        { path: "/v1/embeddings", buildBody: this.buildBody },
-        texts,
-        (j) => this.parseSingle(j),
-        { signal: opts?.signal },
-      );
-    }
+    return this.embedMethods.embedBatch(texts, opts);
   }
 
   async close(): Promise<void> {}

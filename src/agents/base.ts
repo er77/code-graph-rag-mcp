@@ -242,6 +242,7 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
     this._resourceMonitorInterval = setInterval(() => {
       this.updateResourceUsage();
     }, 1000); // Update every second
+    this._resourceMonitorInterval.unref?.();
   }
 
   private updateResourceUsage(): void {

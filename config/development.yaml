@@ -59,6 +59,7 @@ parser:
       - "rust"             # Rust language support
       - "go"               # Go language support
       - "java"             # Java language support
+      - "kotlin"           # Kotlin language support
       - "vba"              # VBA language support (regex-based)
     maxFileSize: 524288     # 512KB for quick parsing
     timeout: 3000          # Quick timeout for development

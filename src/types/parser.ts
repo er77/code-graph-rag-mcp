@@ -9,7 +9,7 @@
  * - Agent Types: src/types/agent.ts
  * - Base Agent: src/agents/base.ts
  * - Python Analyzer: src/parsers/python-analyzer.ts
- * - ADR-003B: Advanced Python Features Implementation
+ * - ADR-005: Enhanced Python Type System and Magic Methods
  */
 
 // =============================================================================

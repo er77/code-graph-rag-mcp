@@ -39,16 +39,21 @@
  *
  * Implementation uses circuit breakers for safety and follows the proven
  * pattern from Java analyzer with Kotlin-specific adaptations.
+ *
+ * Architecture References:
+ * - ADR-006: Kotlin Language Support (tree-sitter + KotlinAnalyzer)
+ *
+ * @adr_ref ADR-006
  */
 
 import type { EntityRelationship, ParsedEntity, TreeSitterNode } from "../types/parser.js";
 
 // Circuit breaker constants
 const MAX_RECURSION_DEPTH = 50;
-const PARSE_TIMEOUT_MS = 30000; // Increased timeout for verbose logging
+const VERBOSE = process.env.KOTLIN_ANALYZER_VERBOSE === "1";
+const PARSE_TIMEOUT_MS = VERBOSE ? 30000 : 10000;
 
 // Verbose logging - enable for debugging
-const VERBOSE = process.env.KOTLIN_ANALYZER_VERBOSE === "1";
 const log = (level: string, ...args: any[]) => {
   if (VERBOSE) {
     const timestamp = new Date().toISOString().split("T")[1];
@@ -561,7 +566,7 @@ export class KotlinAnalyzer {
 
     this.pushClassContext(objectName);
     const fullObjectName = this.currentClass!;
-    const objectId = `${filePath}:object:${fullObjectName}`;
+    const objectId = `${filePath}:class:${fullObjectName}`;
 
     const entity: ParsedEntity = {
       id: objectId,
@@ -615,7 +620,7 @@ export class KotlinAnalyzer {
     const modifiers = this.extractModifiers(node);
 
     const fullCompanionName = `${parentClass}.${companionName}`;
-    const companionId = `${filePath}:companion:${fullCompanionName}`;
+    const companionId = `${filePath}:class:${fullCompanionName}`;
     const parentClassId = `${filePath}:class:${parentClass}`;
 
     const entity: ParsedEntity = {
@@ -966,7 +971,12 @@ export class KotlinAnalyzer {
     const constructorId = `${filePath}:class:${parentClass}:constructor:primary`;
 
     // Extract parameters (which may also be properties with val/var)
+    // Kotlin grammars may either wrap parameters in `class_parameters` or place
+    // `class_parameter` nodes directly under `primary_constructor`.
     const paramsNode = node.namedChildren.find((c) => c.type === "class_parameters");
+    const paramNodes = paramsNode
+      ? paramsNode.namedChildren
+      : node.namedChildren.filter((c) => c.type === "class_parameter");
     const parameters: Array<{
       name: string;
       type?: string;
@@ -976,59 +986,59 @@ export class KotlinAnalyzer {
       isVar?: boolean;
     }> = [];
 
-    if (paramsNode) {
-      for (const param of paramsNode.namedChildren) {
-        if (param.type === "class_parameter") {
-          const paramNameNode = param.namedChildren.find((c) => c.type === "simple_identifier");
-          const paramTypeNode = param.namedChildren.find((c) => c.type === "type");
-          const paramText = param.text;
+    for (const param of paramNodes) {
+      if (param.type !== "class_parameter") continue;
 
-          const paramName = paramNameNode?.text;
-          const paramType = paramTypeNode?.text;
-          const isVal = paramText.includes("val ");
-          const isVar = paramText.includes("var ");
-          const isProperty = isVal || isVar;
+      const paramNameNode = param.namedChildren.find((c) => c.type === "simple_identifier" || c.type === "identifier");
+      const paramTypeNode = param.namedChildren.find(
+        (c) => c.type === "type" || c.type === "user_type" || c.type.endsWith("_type"),
+      );
+      const paramText = param.text;
 
-          if (paramName) {
-            parameters.push({
-              name: paramName,
-              type: paramType,
-              isProperty,
-              isVal,
-              isVar,
-            });
+      const paramName = paramNameNode?.text;
+      const paramType = paramTypeNode?.text;
+      const isVal = paramText.includes("val ");
+      const isVar = paramText.includes("var ");
+      const isProperty = isVal || isVar;
 
-            // If it's a property (val/var), create a property entity
-            if (isProperty) {
-              const propertyId = `${filePath}:class:${parentClass}:property:${paramName}`;
+      if (!paramName) continue;
 
-              entities.push({
-                id: propertyId,
-                name: paramName,
-                type: "property",
-                filePath,
-                location: this.getNodeLocation(param),
-                metadata: {
-                  propertyType: paramType,
-                  isVal,
-                  isVar,
-                  isConstructorProperty: true,
-                  parent: parentClass,
-                },
-              });
+      parameters.push({
+        name: paramName,
+        type: paramType,
+        isProperty,
+        isVal,
+        isVar,
+      });
 
-              relationships.push({
-                from: propertyId,
-                to: `${filePath}:class:${parentClass}`,
-                type: "member_of",
-                metadata: {
-                  memberType: "property",
-                  fromConstructor: true,
-                },
-              });
-            }
-          }
-        }
+      // If it's a property (val/var), create a property entity
+      if (isProperty) {
+        const propertyId = `${filePath}:class:${parentClass}:property:${paramName}`;
+
+        entities.push({
+          id: propertyId,
+          name: paramName,
+          type: "property",
+          filePath,
+          location: this.getNodeLocation(param),
+          metadata: {
+            propertyType: paramType,
+            isVal,
+            isVar,
+            isConstructorProperty: true,
+            parent: parentClass,
+          },
+        });
+
+        relationships.push({
+          from: propertyId,
+          to: `${filePath}:class:${parentClass}`,
+          type: "member_of",
+          metadata: {
+            memberType: "property",
+            fromConstructor: true,
+          },
+        });
       }
     }
 
@@ -1614,7 +1624,7 @@ export class KotlinAnalyzer {
         // Only add if it appears before the main declaration keyword
         const mainKeywords = ["class", "interface", "object", "fun", "val", "var", "typealias"];
         for (const keyword of mainKeywords) {
-          const keywordIndex = nodeText.indexOf(keyword + " ");
+          const keywordIndex = nodeText.indexOf(`${keyword} `);
           if (keywordIndex >= 0) {
             const beforeKeyword = nodeText.substring(0, keywordIndex);
             if (beforeKeyword.includes(mod)) {

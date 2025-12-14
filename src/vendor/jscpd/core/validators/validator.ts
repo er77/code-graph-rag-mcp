@@ -1,15 +1,16 @@
 import type { IClone, ICloneValidator, IOptions, IValidationResult } from "..";
 
 export function runCloneValidators(clone: IClone, options: IOptions, validators: ICloneValidator[]): IValidationResult {
-  return validators.reduce(
-    (acc: IValidationResult, validator: ICloneValidator): IValidationResult => {
-      const res = validator.validate(clone, options);
-      return {
-        ...acc,
-        status: res.status && acc.status,
-        message: res.message ? [...(acc.message as any), ...res.message] : acc.message,
-      };
-    },
-    { status: true, message: [], clone },
-  );
+  const acc: IValidationResult = { status: true, message: [], clone };
+
+  for (const validator of validators) {
+    const res = validator.validate(clone, options);
+    acc.status = acc.status && res.status;
+
+    if (res.message && acc.message) {
+      acc.message.push(...res.message);
+    }
+  }
+
+  return acc;
 }

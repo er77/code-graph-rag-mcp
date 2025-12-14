@@ -350,6 +350,7 @@ export class SQLiteConnectionPool extends EventEmitter implements ConnectionPool
     this.healthCheckInterval = setInterval(() => {
       this.performHealthCheck();
     }, CONNECTION_TEST_INTERVAL);
+    this.healthCheckInterval.unref?.();
   }
 
   /**

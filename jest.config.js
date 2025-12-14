@@ -1,4 +1,7 @@
 /** @type {import('jest').Config} */
+const detectOpenHandles = process.env.JEST_DETECT_OPEN_HANDLES === "1";
+const forceExit = process.env.JEST_FORCE_EXIT === "1";
+
 export default {
   preset: "ts-jest/presets/default-esm",
   testEnvironment: "node",
@@ -33,7 +36,7 @@ export default {
   verbose: true,
   setupFilesAfterEnv: ["<rootDir>/jest.setup.js"],
   maxWorkers: 1,
-  detectOpenHandles: false,
-  forceExit: true,
+  detectOpenHandles,
+  forceExit,
   silent: false,
 };

@@ -85,7 +85,7 @@ export class RabinKarp {
   private static createClone(format: string, mapFrameA: IMapFrame, mapFrameB: IMapFrame): IClone {
     return {
       format,
-      foundDate: new Date().getTime(),
+      foundDate: Date.now(),
       duplicationA: {
         sourceId: mapFrameA.sourceId,
         start: mapFrameA?.start?.loc?.start as ITokenLocation,

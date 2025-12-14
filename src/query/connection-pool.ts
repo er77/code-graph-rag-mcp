@@ -327,9 +327,10 @@ export class ConnectionPool extends EventEmitter {
   private scheduleIdleCheck(): void {
     // Check for idle connections that can be closed
     if (this.connections.length > this.config.minConnections) {
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         this.closeIdleConnections();
       }, this.config.idleTimeout);
+      timer.unref?.();
     }
   }
 
@@ -373,6 +374,7 @@ export class ConnectionPool extends EventEmitter {
         console.error("[ConnectionPool] Health check failed:", error);
       });
     }, this.config.connectionTestInterval);
+    this.testInterval.unref?.();
   }
 }
 

@@ -1,6 +1,5 @@
 /**
  * TASK-004B: Conductor Orchestrator Agent - Performance Optimized
- * ADR-004: MCP CodeGraph Systematic Fixing Plan
  *
  * MANDATORY DELEGATION VERSION with 40% overhead reduction optimizations
  *
@@ -157,7 +156,9 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   };
 
   // Heartbeat and health tracking
+  private healthMonitorTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
+  private performanceMonitorTimer: NodeJS.Timeout | null = null;
   private readonly HEARTBEAT_INTERVAL_MS = 5000;
   private readonly AGENT_STALE_MS = 30000; // 30s without activity => suspect
   private agentLastSeen: Map<string, number> = new Map();
@@ -208,6 +209,19 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
 
   protected async onShutdown(): Promise<void> {
     console.log(`[CONDUCTOR] Shutting down orchestrator and all managed agents...`);
+
+    if (this.healthMonitorTimer) {
+      clearInterval(this.healthMonitorTimer);
+      this.healthMonitorTimer = null;
+    }
+    if (this.performanceMonitorTimer) {
+      clearInterval(this.performanceMonitorTimer);
+      this.performanceMonitorTimer = null;
+    }
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
 
     // Log delegation statistics
     console.log(`[CONDUCTOR] Delegation Statistics:`);
@@ -705,9 +719,11 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   }
 
   private startHealthMonitoring(): void {
-    setInterval(() => {
+    if (this.healthMonitorTimer) return;
+    this.healthMonitorTimer = setInterval(() => {
       this.checkAgentHealth();
     }, 5000);
+    this.healthMonitorTimer.unref?.();
   }
 
   private checkAgentHealth(): void {
@@ -778,6 +794,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
         });
       }
     }, this.HEARTBEAT_INTERVAL_MS);
+    this.heartbeatTimer.unref?.();
   }
 
   protected async handleMessage(message: AgentMessage): Promise<void> {
@@ -819,10 +836,13 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     this.initializeMethodProposalTemplates();
 
     // Start performance monitoring
-    setInterval(() => {
-      this.updatePerformanceMetrics();
-      this.cleanupCaches();
-    }, 10000); // Every 10 seconds
+    if (!this.performanceMonitorTimer) {
+      this.performanceMonitorTimer = setInterval(() => {
+        this.updatePerformanceMetrics();
+        this.cleanupCaches();
+      }, 10000); // Every 10 seconds
+      this.performanceMonitorTimer.unref?.();
+    }
 
     console.log(`[CONDUCTOR] TASK-004B: Performance optimizations active`);
   }

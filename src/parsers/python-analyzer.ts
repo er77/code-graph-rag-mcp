@@ -12,14 +12,14 @@
  * - Coding Standards: doc/CODING_STANDARD.md
  * - Architectural Decisions: doc/ARCHITECTURAL_DECISIONS.md
  * - Enhanced Parser Types: src/types/parser.ts
- * - ADR-003B: Advanced Python Features Implementation
+ * - ADR-005: Enhanced Python Type System and Magic Methods
  *
  * External Dependencies:
  * - Tree-sitter: https://tree-sitter.github.io/tree-sitter/ - AST parsing and traversal
  * - web-tree-sitter: https://github.com/tree-sitter/tree-sitter/tree/master/lib/binding_web - Web bindings
  *
  * @task_id TASK-003B
- * @adr_ref ADR-003B
+ * @adr_ref ADR-005
  * @coding_standard Adheres to: doc/CODING_STANDARD.md
  * @history
  * - 2024-01-15: Created by Dev-Agent - TASK-003B: Advanced Python analyzer with 4-layer architecture

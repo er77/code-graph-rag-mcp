@@ -42,7 +42,7 @@ export default defineConfig({
   // Ensure executable permissions for CLI
   onSuccess: async () => {
     if (process.platform !== "win32") {
-      const { chmod } = await import("fs/promises");
+      const { chmod } = await import("node:fs/promises");
       await chmod("./dist/index.js", 0o755);
     }
   },

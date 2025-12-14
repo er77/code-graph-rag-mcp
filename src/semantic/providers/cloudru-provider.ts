@@ -1,4 +1,5 @@
 import type { EmbeddingProvider, EmbedOptions, ProviderInfo, ProviderLogger } from "./base.js";
+import { createHttpEmbeddingMethods } from "./http-embedding-helpers.js";
 import { HttpEngine } from "./http-engine.js";
 
 export interface CloudRUOptions {
@@ -16,6 +17,7 @@ export class CloudRUProvider implements EmbeddingProvider {
   private engine: HttpEngine;
   private opts: CloudRUOptions;
   private log?: ProviderLogger;
+  private embedMethods: ReturnType<typeof createHttpEmbeddingMethods>;
 
   constructor(opts: CloudRUOptions) {
     this.opts = { baseUrl: "https://foundation-models.api.cloud.ru", ...opts };
@@ -37,6 +39,15 @@ export class CloudRUProvider implements EmbeddingProvider {
       concurrency: this.opts.concurrency ?? 4,
       defaultHeaders: headers,
     });
+
+    this.embedMethods = createHttpEmbeddingMethods({
+      engine: this.engine,
+      request: { path: "/v1/embeddings", buildBody: this.buildBody },
+      parseSingle: this.parseSingle,
+      parseBatch: this.parseBatch,
+      maxBatchSize: this.info.maxBatchSize,
+      logger: this.log,
+    });
   }
 
   async initialize(): Promise<void> {
@@ -53,7 +64,7 @@ export class CloudRUProvider implements EmbeddingProvider {
 
   private buildBody = (input: string | string[]) => ({ model: this.info.model, input });
 
-  private parseSingle(json: any): Float32Array {
+  private parseSingle = (json: any): Float32Array => {
     if (Array.isArray(json?.data) && Array.isArray(json.data[0]?.embedding)) {
       const arr = new Float32Array(json.data[0].embedding);
       this.info.dimension = this.info.dimension ?? arr.length;
@@ -66,9 +77,9 @@ export class CloudRUProvider implements EmbeddingProvider {
     }
     if (json?.error) throw new Error(`CloudRU error: ${JSON.stringify(json.error)}`);
     throw new Error(`CloudRU invalid embedding response`);
-  }
+  };
 
-  private parseBatch(json: any): Float32Array[] {
+  private parseBatch = (json: any): Float32Array[] => {
     if (Array.isArray(json?.data)) {
       const out = json.data.map((d: any) => new Float32Array(d.embedding));
       if (!this.info.dimension && out[0]) this.info.dimension = out[0].length;
@@ -80,52 +91,14 @@ export class CloudRUProvider implements EmbeddingProvider {
       return out;
     }
     throw new Error("CloudRU invalid batch embedding response");
-  }
+  };
 
   async embed(text: string, opts?: EmbedOptions): Promise<Float32Array> {
-    this.log?.debug("embed()", { len: text?.length }, opts?.requestId);
-    return this.engine.callSingle(
-      { path: "/v1/embeddings", buildBody: this.buildBody },
-      text,
-      (j) => this.parseSingle(j),
-      { signal: opts?.signal },
-    );
+    return this.embedMethods.embed(text, opts);
   }
 
   async embedBatch(texts: string[], opts?: EmbedOptions): Promise<Float32Array[]> {
-    this.log?.debug("embedBatch()", { count: texts.length }, opts?.requestId);
-
-    const size = this.info.maxBatchSize ?? texts.length;
-    if (size < texts.length) {
-      const chunks: string[][] = [];
-      for (let i = 0; i < texts.length; i += size) {
-        chunks.push(texts.slice(i, i + size));
-      }
-      const parts = await Promise.all(
-        chunks.map((c) =>
-          this.engine.callSingle({ path: "/v1/embeddings", buildBody: this.buildBody }, c, (j) => this.parseBatch(j), {
-            signal: opts?.signal,
-          }),
-        ),
-      );
-      return parts.flat();
-    }
-
-    try {
-      return await this.engine.callSingle(
-        { path: "/v1/embeddings", buildBody: this.buildBody },
-        texts,
-        (j) => this.parseBatch(j),
-        { signal: opts?.signal },
-      );
-    } catch {
-      return this.engine.callBatch(
-        { path: "/v1/embeddings", buildBody: this.buildBody },
-        texts,
-        (j) => this.parseSingle(j),
-        { signal: opts?.signal },
-      );
-    }
+    return this.embedMethods.embedBatch(texts, opts);
   }
 
   async close(): Promise<void> {}

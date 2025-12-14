@@ -1,7 +1,6 @@
 /**
  * TASK-004B: Semantic Agent - Circuit Breaker Pattern Applied
  * TASK-002: Semantic Agent Implementation
- * ADR-004: MCP CodeGraph Systematic Fixing Plan
  *
  * Advanced semantic search and analysis agent with vector embeddings
  * Provides hybrid search, code similarity, and refactoring suggestions
@@ -19,7 +18,6 @@
  * - Performance Guide: PERFORMANCE_GUIDE.md
  *
  * @task_id TASK-004B
- * @adr_ref ADR-004
  * @coding_standard Adheres to: doc/CODING_STANDARD.md
  * @history
  *  - 2025-09-14: Created by Dev-Agent - TASK-002: Main SemanticAgent implementation
@@ -156,6 +154,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
     cacheHitRate: 0,
     vectorsStored: 0,
   };
+  private subscriptionIds: string[] = [];
 
   constructor() {
     super(AgentType.SEMANTIC, {
@@ -400,6 +399,16 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
    */
   protected async onShutdown(): Promise<void> {
     console.log(`[${this.id}] Shutting down semantic components...`);
+
+    try {
+      for (const id of this.subscriptionIds) {
+        knowledgeBus.unsubscribe(id);
+      }
+    } catch {
+      // ignore unsubscribe errors during shutdown
+    } finally {
+      this.subscriptionIds = [];
+    }
 
     // Clean up resources
     await this.embeddingGen.cleanup();
@@ -696,25 +705,29 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
   // Knowledge Bus integration
 
   private subscribeToKnowledgeBus(): void {
-    knowledgeBus.subscribe(this.id, "index:complete", this.handleIndexComplete.bind(this));
-    knowledgeBus.subscribe(this.id, "index:completed", this.handleIndexComplete.bind(this));
+    this.subscriptionIds.push(knowledgeBus.subscribe(this.id, "index:complete", this.handleIndexComplete.bind(this)));
+    this.subscriptionIds.push(knowledgeBus.subscribe(this.id, "index:completed", this.handleIndexComplete.bind(this)));
 
     // Subscribe to entity updates
-    knowledgeBus.subscribe(this.id, /^entity:.*/, this.handleEntityUpdate.bind(this));
+    this.subscriptionIds.push(knowledgeBus.subscribe(this.id, /^entity:.*/, this.handleEntityUpdate.bind(this)));
 
     // Subscribe to semantic ingestion of new parsed entities
-    knowledgeBus.subscribe(this.id, "semantic:new_entities", async (entry) => {
-      try {
-        const ents = entry.data as ParsedEntity[];
-        if (Array.isArray(ents) && ents.length > 0) {
-          await this.handleNewEntities(ents);
+    this.subscriptionIds.push(
+      knowledgeBus.subscribe(this.id, "semantic:new_entities", async (entry) => {
+        try {
+          const ents = entry.data as ParsedEntity[];
+          if (Array.isArray(ents) && ents.length > 0) {
+            await this.handleNewEntities(ents);
+          }
+        } catch (e) {
+          if (this.debugMode) console.warn(`[${this.id}] semantic:new_entities failed:`, (e as Error).message);
         }
-      } catch (e) {
-        if (this.debugMode) console.warn(`[${this.id}] semantic:new_entities failed:`, (e as Error).message);
-      }
-    });
+      }),
+    );
 
-    knowledgeBus.subscribe(this.id, "resources:adjusted", this.handleResourceAdjustment.bind(this));
+    this.subscriptionIds.push(
+      knowledgeBus.subscribe(this.id, "resources:adjusted", this.handleResourceAdjustment.bind(this)),
+    );
 
     console.log(`[${this.id}] Subscribed to knowledge bus events`);
   }

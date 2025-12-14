@@ -72,6 +72,7 @@ export class ParserAgent extends BaseAgent {
   private parser: IncrementalParser;
   private workers: Worker[] = [];
   private knowledgeBus: EventEmitter | null = null;
+  private handleFileChangeBound!: (event: any) => void;
   private isProcessing = false;
   private stats: ParserStats;
 
@@ -87,6 +88,7 @@ export class ParserAgent extends BaseAgent {
 
     this.parser = new IncrementalParser(config.cacheSize);
     this.knowledgeBus = knowledgeBus || null;
+    this.handleFileChangeBound = this.handleFileChange.bind(this);
 
     this.stats = {
       filesParsed: 0,
@@ -116,7 +118,7 @@ export class ParserAgent extends BaseAgent {
 
     // Subscribe to knowledge bus events
     if (this.knowledgeBus) {
-      this.knowledgeBus.on(TOPICS.FILE_CHANGED, this.handleFileChange.bind(this));
+      this.knowledgeBus.on(TOPICS.FILE_CHANGED, this.handleFileChangeBound);
     }
 
     const config = getParserConfig();
@@ -140,7 +142,7 @@ export class ParserAgent extends BaseAgent {
 
     // Unsubscribe from events
     if (this.knowledgeBus) {
-      this.knowledgeBus.removeAllListeners(TOPICS.FILE_CHANGED);
+      this.knowledgeBus.off(TOPICS.FILE_CHANGED, this.handleFileChangeBound);
     }
 
     console.log(`[${this.id}] Parser Agent shutdown complete`);

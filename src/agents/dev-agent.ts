@@ -16,7 +16,21 @@ import { IndexerAgent } from "./indexer-agent.js";
 // Temporarily disable ParserAgent due to web-tree-sitter ESM issues
 import { ParserAgent } from "./parser-agent.js";
 
-const SUPPORTED_CODE_EXTENSIONS = [".js", ".ts", ".jsx", ".tsx", ".py", ".java", ".cpp", ".c", ".go", ".rs"] as const;
+const SUPPORTED_CODE_EXTENSIONS = [
+  ".js",
+  ".ts",
+  ".jsx",
+  ".tsx",
+  ".py",
+  ".java",
+  ".kt",
+  ".kts",
+  ".cpp",
+  ".c",
+  ".go",
+  ".rs",
+  ".cs",
+] as const;
 
 function getDevAgentConfig() {
   const config = getConfig();

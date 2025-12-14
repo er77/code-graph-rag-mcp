@@ -28,6 +28,7 @@ export class KnowledgeBus extends EventEmitter {
   private messageQueue: AgentMessage[] = [];
   private maxQueueSize = 1000;
   private maxKnowledgePerTopic = 100;
+  private cleanupInterval: NodeJS.Timeout | null = null;
 
   constructor() {
     super();
@@ -220,9 +221,13 @@ export class KnowledgeBus extends EventEmitter {
   }
 
   private startCleanupInterval(): void {
-    setInterval(() => {
+    if (this.cleanupInterval) return;
+
+    this.cleanupInterval = setInterval(() => {
       this.cleanupExpiredKnowledge();
     }, 60000); // Run every minute
+
+    this.cleanupInterval.unref?.();
   }
 
   private cleanupExpiredKnowledge(): void {
@@ -248,6 +253,20 @@ export class KnowledgeBus extends EventEmitter {
     if (cleanedCount > 0) {
       this.emit("cleanup:completed", { entriesRemoved: cleanedCount });
     }
+  }
+
+  /**
+   * Stop background work and clear stored state (primarily for tests and one-shot usage).
+   */
+  shutdown(): void {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
+
+    this.knowledge.clear();
+    this.subscriptions.clear();
+    this.messageQueue = [];
   }
 }
 

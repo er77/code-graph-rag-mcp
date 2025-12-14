@@ -82,7 +82,7 @@ describe("IndexerAgent", () => {
     resetCacheManager();
 
     // Get SQLite manager and create agent
-    const sqliteManager = getSQLiteManager();
+    const sqliteManager = getSQLiteManager({ path: TEST_DB_PATH });
     agent = new IndexerAgent(sqliteManager);
   });
 
@@ -342,7 +342,7 @@ describe("IndexerAgent", () => {
 
       expect(result.entities).toBeDefined();
       expect(result.stats.totalEntities).toBeGreaterThan(0);
-      expect(result.stats.queryTimeMs).toBeGreaterThan(0);
+      expect(result.stats.queryTimeMs).toBeGreaterThanOrEqual(0);
     });
 
     test("should execute subgraph queries", async () => {

@@ -1,11 +1,52 @@
 #!/usr/bin/env node
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 
 const NPX = process.platform === "win32" ? "npx.cmd" : "npx";
 
 function listTests(extraArgs) {
-  const out = execFileSync(NPX, ["jest", "--listTests", ...extraArgs], { encoding: "utf8" });
-  return out.trim().split(/\r?\n/).filter(Boolean);
+  const testsDir = join(process.cwd(), "tests");
+  const tests = [];
+
+  const visit = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const fullPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        visit(fullPath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (fullPath.endsWith(".test.ts") || fullPath.endsWith(".spec.ts")) {
+        tests.push(fullPath);
+      }
+    }
+  };
+
+  visit(testsDir);
+  tests.sort();
+
+  // Best-effort filtering to match common Jest CLI args.
+  const positionalPatterns = extraArgs.filter((arg) => !arg.startsWith("-"));
+  if (positionalPatterns.length) {
+    return tests.filter((filePath) => positionalPatterns.some((pattern) => filePath.includes(pattern)));
+  }
+
+  const testPathPatternIndex = extraArgs.findIndex((arg) => arg === "--testPathPattern");
+  const testPathPatternArg = extraArgs.find((arg) => arg.startsWith("--testPathPattern="));
+  const testPathPattern =
+    testPathPatternIndex >= 0 ? extraArgs[testPathPatternIndex + 1] : testPathPatternArg?.split("=", 2)[1];
+
+  if (testPathPattern) {
+    try {
+      const regex = new RegExp(testPathPattern);
+      return tests.filter((filePath) => regex.test(filePath));
+    } catch {
+      return tests.filter((filePath) => filePath.includes(testPathPattern));
+    }
+  }
+
+  return tests;
 }
 
 function runTestFile(testPath, extraArgs) {

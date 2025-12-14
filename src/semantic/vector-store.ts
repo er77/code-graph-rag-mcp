@@ -1,7 +1,6 @@
 /**
  * TASK-004B: Vector Store Manager - Initialization Fixes Applied
  * TASK-002: Vector Store Manager with SQLite-vec
- * ADR-004: MCP CodeGraph Systematic Fixing Plan
  *
  * Manages vector storage and similarity search using sqlite-vec extension
  * Optimized for 384-dimensional vectors from all-MiniLM-L6-v2
@@ -18,7 +17,6 @@
  * - Performance Guide: PERFORMANCE_GUIDE.md
  *
  * @task_id TASK-004B
- * @adr_ref ADR-004
  * @coding_standard Adheres to: doc/CODING_STANDARD.md
  * @history
  *  - 2025-09-14: Created by Dev-Agent - TASK-002: Vector store implementation with sqlite-vec

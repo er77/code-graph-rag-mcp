@@ -1,7 +1,6 @@
 /**
  * TASK-004B: Embedding Generator - Stack Overflow Fixes Applied
  * TASK-002: Embedding Generator with Hugging Face Transformers
- * ADR-004: MCP CodeGraph Systematic Fixing Plan
  *
  * Generates 384-dimensional embeddings using all-MiniLM-L6-v2 model
  * Optimized for commodity hardware with ONNX runtime and quantization
@@ -18,7 +17,6 @@
  * - Performance Guide: PERFORMANCE_GUIDE.md
  *
  * @task_id TASK-004B
- * @adr_ref ADR-004
  * @coding_standard Adheres to: doc/CODING_STANDARD.md
  * @history
  *  - 2025-09-14: Created by Dev-Agent - TASK-002: Embedding generator with all-MiniLM-L6-v2

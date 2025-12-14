@@ -1,3 +1,9 @@
+import type {
+  CloudRUProviderConfig,
+  MemoryProviderConfig,
+  OllamaProviderConfig,
+  OpenAIProviderConfig,
+} from "../../types/semantic.js";
 import { logger as appLogger } from "../../utils/logger.js";
 import { makeProviderLogger } from "../../utils/provider-logger.js";
 import type { EmbeddingProvider, ProviderKind } from "./base.js";
@@ -11,32 +17,10 @@ export interface ProviderFactoryOptions {
   provider: ProviderKind;
   modelName: string;
   transformers?: { quantized?: boolean; localPath?: string };
-  ollama?: {
-    baseUrl?: string;
-    timeoutMs?: number;
-    concurrency?: number;
-    headers?: Record<string, string>;
-    autoPull?: boolean;
-    warmupText?: string;
-    checkServer?: boolean;
-    pullTimeoutMs?: number;
-  };
-  memory?: { dimension?: number };
-  openai?: {
-    baseUrl?: string;
-    apiKey?: string;
-    timeoutMs?: number;
-    concurrency?: number;
-    dimensions?: number;
-    maxBatchSize?: number;
-  };
-  cloudru?: {
-    baseUrl?: string;
-    apiKey?: string;
-    timeoutMs?: number;
-    concurrency?: number;
-    maxBatchSize?: number;
-  };
+  ollama?: OllamaProviderConfig;
+  memory?: MemoryProviderConfig;
+  openai?: OpenAIProviderConfig;
+  cloudru?: CloudRUProviderConfig;
 }
 
 export function createProvider(opts: ProviderFactoryOptions): EmbeddingProvider {

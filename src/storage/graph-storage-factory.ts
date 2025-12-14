@@ -14,30 +14,42 @@ import { getSQLiteManager } from "./sqlite-manager.js";
 
 let graphStorage: GraphStorageImpl | null = null;
 let boundManager: SQLiteManager | null = null;
+let initialization: { manager: SQLiteManager; promise: Promise<GraphStorageImpl> } | null = null;
 
 export async function getGraphStorage(sqliteManager?: SQLiteManager): Promise<GraphStorageImpl> {
   const manager = sqliteManager ?? getSQLiteManager();
 
-  const needNewInstance = !graphStorage || boundManager !== manager;
-  if (needNewInstance) {
-    console.log("[GraphStorageFactory] Creating NEW GraphStorage singleton instance");
-    if (!manager.isOpen()) {
-      manager.initialize();
+  if (!graphStorage || boundManager !== manager) {
+    if (initialization && initialization.manager === manager) {
+      return initialization.promise;
     }
-    runMigrations(manager);
-    const storage = new GraphStorageImpl(manager);
-    graphStorage = storage;
-    boundManager = manager;
 
-    await storage.initialize();
-    return storage;
+    const promise = (async () => {
+      console.log("[GraphStorageFactory] Creating NEW GraphStorage singleton instance");
+      if (!manager.isOpen()) {
+        manager.initialize();
+      }
+      runMigrations(manager);
+      graphStorage = new GraphStorageImpl(manager);
+      boundManager = manager;
+      await graphStorage.initialize();
+      return graphStorage;
+    })();
+
+    initialization = { manager, promise };
+    try {
+      return await promise;
+    } finally {
+      if (initialization?.manager === manager) {
+        initialization = null;
+      }
+    }
   }
 
   console.log("[GraphStorageFactory] Returning EXISTING GraphStorage singleton instance");
 
-  const storage = graphStorage as GraphStorageImpl;
-  await storage.initialize();
-  return storage;
+  await graphStorage.initialize();
+  return graphStorage;
 }
 
 export async function initializeGraphStorage(sqliteManager: SQLiteManager): Promise<GraphStorageImpl> {
@@ -47,4 +59,5 @@ export async function initializeGraphStorage(sqliteManager: SQLiteManager): Prom
 export function resetGraphStorage(): void {
   graphStorage = null;
   boundManager = null;
+  initialization = null;
 }
