@@ -17,6 +17,8 @@ A powerful [Model Context Protocol](https://github.com/modelcontextprotocol) ser
 ## 🚀 **Quick Start**
 
 ### Installation
+### LATEST VERSION ONLY FROM GitHub Realeases 
+### do not use npm install any more 
 ```bash
 # Install globally
 npm install -g ./er77-code-graph-rag-mcp-2.7.7.tgz
