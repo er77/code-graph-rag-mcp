@@ -34,7 +34,7 @@ npx @modelcontextprotocol/inspector add code-graph-rag \
 ```
 or
 ```
-# Быстрая настройка (рекомендуется)
+#
   claude mcp add-json  code-graph-rag ' { 
         "command": "npx",
         "args": ["@er77/code-graph-rag-mcp", "/_work_fodler"],
