@@ -2,7 +2,7 @@
 
 [![npm version](https://badge.fury.io/js/@er77%2Fcode-graph-rag-mcp.svg)](https://www.npmjs.com/package/@er77/code-graph-rag-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D24.0.0-brightgreen)](https://nodejs.org/)
 
 [Sponsor https://accelerator.slider-ai.ru/ ](https://t.me/SliderQuery)
 
@@ -10,7 +10,7 @@
 
 A powerful [Model Context Protocol](https://github.com/modelcontextprotocol) server that creates intelligent graph representations of your codebase with comprehensive semantic analysis capabilities.
 
-**🌟 10 Languages Supported** | **⚡ 5.5x Faster** | **🔍 Semantic Search** | **📊 24 MCP Methods**
+**🌟 11 Languages Supported** | **⚡ 5.5x Faster** | **🔍 Semantic Search** | **📊 25 MCP Methods**
 
 ---
 
@@ -19,10 +19,8 @@ A powerful [Model Context Protocol](https://github.com/modelcontextprotocol) ser
 ### Installation
 ```bash
 # Install globally
-npm install -g @er77/code-graph-rag-mcp
-
-# Or use with npx (no installation)
-npx @er77/code-graph-rag-mcp /path/to/your/project
+npm install -g ./er77-code-graph-rag-mcp-2.7.7.tgz
+code-graph-rag-mcp --version
 ```
 
 ### Claude Desktop Integration
@@ -66,7 +64,7 @@ gemini mcp add-json code-graph-rag '{
 # Project-scoped MCP server in ~/.codex/config.toml
 [projects."/path/to/your/project".mcp_servers.code_graph_rag]
 command = "npx"
-args = ["@er77/code-graph-rag-mcp", "/path/to/your/codebase"]
+args = ["@er77/code-graph-rag-mcp"]
 transport = "stdio"
 ```
 
@@ -74,7 +72,7 @@ transport = "stdio"
 
 ### Installation Guide (All Clients)
 - NPM: `npm install -g @er77/code-graph-rag-mcp`
-- Run server locally: `code-graph-rag-mcp /path/to/your/project`
+- Run server locally: `code-graph-rag-mcp [directory]`
 - Claude: use Inspector (above) or see [Quick Start](#-quick-start)
 - Gemini: run `./scripts/GEMINI-CORRECT-CONFIG.sh` and follow the printed command
 - Codex: run `./scripts/CODEX-CORRECT-CONFIG.sh` and update `~/.codex/config.toml`
@@ -89,14 +87,14 @@ transport = "stdio"
 |------------|-------------------|-------------------|-----------------|
 | Execution Time | 55.84s | <10s | **5.5x faster** |
 | Memory Usage | Process-heavy | 65MB | **Optimized** |
-| Features | Basic patterns | 24 methods | **Comprehensive** |
+| Features | Basic patterns | 25 methods | **Comprehensive** |
 | Accuracy | Pattern-based | Semantic | **Superior** |
 
 ---
 
 ## 🔍 **Key Features**
 
-### **🔬 Advanced Analysis Tools (24 MCP Methods)**
+### **🔬 Advanced Analysis Tools (25 MCP Methods)**
 
 | Feature | Description | Use Case |
 |---------|-------------|----------|
@@ -125,7 +123,7 @@ transport = "stdio"
 | **Vector Search** | Hardware-accelerated (optional) | Automatic embedding ingestion |
 | **AST Analysis** | Precise code snippets | Semantic context extraction |
 
-### **🌐 Multi-Language Support (10 Languages)**
+### **🌐 Multi-Language Support (11 Languages)**
 
 | Language | Features | Support Level |
 |----------|----------|---------------|
@@ -136,6 +134,7 @@ transport = "stdio"
 | **Rust** | Functions, structs, enums, traits, impls, modules, use | ✅ Advanced (90%) |
 | **Go** | Packages, functions, structs, interfaces, goroutines, channels | ✅ Advanced (90%) |
 | **Java** | Classes, interfaces, enums, records (Java 14+), generics, lambdas | ✅ Advanced (90%) |
+| **Kotlin** | Packages/imports, classes/objects, functions/properties, relationships | ✅ Implemented |
 | **VBA** | Modules, subs, functions, properties, user-defined types | ✅ Regex-based (80%) |
 
 ---
@@ -144,6 +143,7 @@ transport = "stdio"
 
 ```bash
 # Single project analysis
+code-graph-rag-mcp
 code-graph-rag-mcp /path/to/your/project
 
 # CLI helpers
@@ -201,6 +201,17 @@ export MCP_SEMANTIC_WARMUP_LIMIT=25
 
 ## 🧰 **Troubleshooting**
 
+- **Codex/VSCode MCP stdio fails to start**  
+  Codex is strict about stdio: `stdout` must be JSON-RPC only. As of v2.7.7, logs are routed to `stderr` automatically for non-TTY stdio sessions, and heavy initialization is deferred until after handshake / first tool call.  
+  Recommended Codex config: omit the directory argument and let the server use the workspace root via `roots/list`:
+  ```toml
+  [projects."/path/to/your/project".mcp_servers.code_graph_rag]
+  command = "npx"
+  args = ["@er77/code-graph-rag-mcp"]
+  transport = "stdio"
+  ```
+  If you must see logs on stdout for local debugging, set `MCP_STDIO_ALLOW_STDOUT_LOGS=1` (not recommended for strict clients).
+
 - **Native module mismatch (`better-sqlite3`)**  
   Since v2.6.4 the server automatically rebuilds the native binary when it detects a `NODE_MODULE_VERSION` mismatch. If the automatic rebuild fails (for example due to file permissions), run:
   ```bash
@@ -226,6 +237,13 @@ export MCP_SEMANTIC_WARMUP_LIMIT=25
 ---
 
 ## 📋 **Changelog**
+
+### 🚀 Version 2.7.7 (2025-12-14) - **Codex StdIO Hardening + Kotlin**
+
+- ✅ Codex/VSCode stdio compatibility: reserve `stdout` for JSON-RPC and route logs to `stderr`
+- ⚡ Faster readiness: defer heavy runtime init until after handshake / first tool call
+- 📁 Project root now optional: defaults to `cwd`, prefers MCP `roots/list` workspace root when available
+- 🧩 Kotlin support for `.kt/.kts` (tree-sitter + KotlinAnalyzer) with tests + ADR-006
 
 ### 🚀 Version 2.7.4 (2025-11-02) - **Clone Reporting & CLI Boost**
 
@@ -305,8 +323,8 @@ export MCP_SEMANTIC_WARMUP_LIMIT=25
 
 ## ⚡ **System Requirements**
 
-**Minimum**: Node.js 18+, 2GB RAM, Dual-core CPU
-**Recommended**: Node.js 18+, 8GB RAM, Quad-core CPU with SSD
+**Minimum**: Node.js 24+, 2GB RAM, Dual-core CPU
+**Recommended**: Node.js 24+, 8GB RAM, Quad-core CPU with SSD
 
 ### **Known Issues**
 
