@@ -20,7 +20,7 @@ A powerful [Model Context Protocol](https://github.com/modelcontextprotocol) ser
 ### do not use npm repository  any more 
 ```bash
 # Install globally
-npm install -g ./er77-code-graph-rag-mcp-2.7.7.tgz
+npm install -g ./er77-code-graph-rag-mcp-2.7.9.tgz
 code-graph-rag-mcp --version
 ```
 
@@ -47,10 +47,7 @@ or
 
 ### Gemini CLI Integration
 ```bash
-# Using helper script (prints the exact gemini CLI command to run)
-./scripts/GEMINI-CORRECT-CONFIG.sh
-
-# Or manually (example)
+# Example
 gemini mcp add-json code-graph-rag '{
   "command": "npx",
   "args": ["@er77/code-graph-rag-mcp", "/path/to/your/codebase"]
@@ -59,14 +56,13 @@ gemini mcp add-json code-graph-rag '{
 
 ### Codex CLI Integration
 ```bash
-# Using helper script (prints how to update ~/.codex/config.toml)
-./scripts/CODEX-CORRECT-CONFIG.sh
+# Recommended: add a *global* MCP server entry (works from any project folder)
+codex mcp remove code-graph-rag  # optional cleanup
+codex mcp add code-graph-rag -- code-graph-rag-mcp
 
-# Project-scoped MCP server in ~/.codex/config.toml
-[projects."/path/to/your/project".mcp_servers.code_graph_rag]
-command = "npx"
-args = ["@er77/code-graph-rag-mcp"]
-transport = "stdio"
+# Or point Codex directly at a local dev build (no npm/npx required)
+codex mcp remove code-graph-rag  # optional cleanup
+codex mcp add code-graph-rag -- node /absolute/path/to/code-graph-rag-mcp/dist/index.js
 ```
 
 **Multi-codebase support**: Analyze multiple projects simultaneously → [Multi-Codebase Setup Guide](docs/guides/MULTI_CODEBASE_SETUP.md)
@@ -75,8 +71,8 @@ transport = "stdio"
 - NPM: `npm install -g @er77/code-graph-rag-mcp`
 - Run server locally: `code-graph-rag-mcp [directory]`
 - Claude: use Inspector (above) or see [Quick Start](#-quick-start)
-- Gemini: run `./scripts/GEMINI-CORRECT-CONFIG.sh` and follow the printed command
-- Codex: run `./scripts/CODEX-CORRECT-CONFIG.sh` and update `~/.codex/config.toml`
+- Gemini: configure via `gemini mcp add-json ...` (above)
+- Codex: configure via `codex mcp add ...` (above)
 
 ---
 
@@ -203,15 +199,15 @@ export MCP_SEMANTIC_WARMUP_LIMIT=25
 ## 🧰 **Troubleshooting**
 
 - **Codex/VSCode MCP stdio fails to start**  
-  Codex is strict about stdio: `stdout` must be JSON-RPC only. As of v2.7.7, logs are routed to `stderr` automatically for non-TTY stdio sessions, and heavy initialization is deferred until after handshake / first tool call.  
+  Codex is strict about stdio: `stdout` must be JSON-RPC only. As of v2.7.9, console stdout logs are redirected to `stderr` during MCP runs, and heavy initialization is deferred until after handshake / first tool call.  
   Recommended Codex config: omit the directory argument and let the server use the workspace root via `roots/list`:
   ```toml
-  [projects."/path/to/your/project".mcp_servers.code_graph_rag]
-  command = "npx"
-  args = ["@er77/code-graph-rag-mcp"]
-  transport = "stdio"
+  [mcp_servers.code-graph-rag]
+  command = "code-graph-rag-mcp"
+  args = []
   ```
   If you must see logs on stdout for local debugging, set `MCP_STDIO_ALLOW_STDOUT_LOGS=1` (not recommended for strict clients).
+  If startup still fails, check the global tmp log mirror: `/tmp/code-graph-rag-mcp/mcp-server-YYYY-MM-DD.log` (Linux/macOS; uses `os.tmpdir()`).
 
 - **Native module mismatch (`better-sqlite3`)**  
   Since v2.6.4 the server automatically rebuilds the native binary when it detects a `NODE_MODULE_VERSION` mismatch. If the automatic rebuild fails (for example due to file permissions), run:
@@ -238,6 +234,17 @@ export MCP_SEMANTIC_WARMUP_LIMIT=25
 ---
 
 ## 📋 **Changelog**
+
+### 🚀 Version 2.7.9 (2025-12-15) - **Codex Config Fixes**
+
+- 🧭 Codex docs: use `codex mcp add ...` global config (works from any project folder)
+- 🧾 Removed references to non-existent helper scripts
+
+### 🚀 Version 2.7.8 (2025-12-15) - **MCP Startup Diagnostics**
+
+- ✅ TTY-safe stdio: redirect console stdout logs → `stderr` during MCP runs (prevents handshake breaks)
+- 🗂️ Global log mirror: always write a copy to `/tmp/code-graph-rag-mcp/mcp-server-YYYY-MM-DD.log` for early-start debugging
+- 🛡️ Resilient logging: if `logs_llm/` can’t be created, fall back to `os.tmpdir()` instead of exiting before `initialize`
 
 ### 🚀 Version 2.7.7 (2025-12-14) - **Codex StdIO Hardening + Kotlin**
 

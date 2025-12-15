@@ -1,6 +1,6 @@
 {
   "name": "@er77/code-graph-rag-mcp",
-  "version": "2.7.7",
+  "version": "2.7.9",
   "description": "Multi-agent LiteRAG MCP server for advanced code graph analysis",
   "license": "MIT",
   "author": "er77",

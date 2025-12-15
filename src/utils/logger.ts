@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, w
 import { join, resolve } from "node:path";
 import type { LoggerConfig } from "./logger-types.js";
 import { LogLevel } from "./logger-types.js";
+import { appendGlobalTmpLog, getGlobalTmpLogDir, getGlobalTmpLogFile } from "./tmp-log.js";
 
 // =============================================================================
 // LOGGING CONFIGURATION
@@ -39,17 +40,49 @@ export class RotatedLogger {
   private config: LoggerConfig;
   private currentLogFile: string;
   private logDir: string;
+  private globalTmpLogFile: string | null = null;
 
   constructor(config: Partial<LoggerConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.logDir = resolve(this.config.logDir);
-    this.ensureLogDirectory();
-    this.currentLogFile = this.getCurrentLogFile();
+    const requestedLogDir = this.logDir;
+
+    // Always attempt to mirror logs to a global tmp file (best-effort, never fatal).
+    try {
+      const tmpLogDir = getGlobalTmpLogDir();
+      if (!existsSync(tmpLogDir)) {
+        mkdirSync(tmpLogDir, { recursive: true });
+      }
+      this.globalTmpLogFile = getGlobalTmpLogFile();
+    } catch {
+      this.globalTmpLogFile = null;
+    }
+
+    // Ensure primary log directory exists; if it can't be created (permissions/cwd), fall back to tmp.
+    const primaryReady = this.ensureLogDirectory(this.logDir);
+    if (!primaryReady && this.globalTmpLogFile) {
+      this.logDir = getGlobalTmpLogDir();
+    }
+    this.currentLogFile = this.logDir ? this.getCurrentLogFile() : "";
+
+    appendGlobalTmpLog("logger: initialized", {
+      requestedLogDir,
+      resolvedLogDir: this.logDir,
+      currentLogFile: this.currentLogFile,
+      globalTmpLogFile: this.globalTmpLogFile ?? undefined,
+      primaryReady,
+    });
   }
 
-  private ensureLogDirectory(): void {
-    if (!existsSync(this.logDir)) {
-      mkdirSync(this.logDir, { recursive: true });
+  private ensureLogDirectory(targetDir: string): boolean {
+    try {
+      if (!targetDir) return false;
+      if (!existsSync(targetDir)) {
+        mkdirSync(targetDir, { recursive: true });
+      }
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -60,7 +93,7 @@ export class RotatedLogger {
   }
 
   private shouldRotate(): boolean {
-    if (!this.config.enableRotation || !existsSync(this.currentLogFile)) {
+    if (!this.config.enableRotation || !this.currentLogFile || !existsSync(this.currentLogFile)) {
       return false;
     }
 
@@ -69,7 +102,7 @@ export class RotatedLogger {
   }
 
   private rotateLogFile(): void {
-    if (!existsSync(this.currentLogFile)) return;
+    if (!this.currentLogFile || !existsSync(this.currentLogFile)) return;
 
     const now = new Date();
     const timestamp = now.toISOString().replace(/[:.]/g, "-");
@@ -144,17 +177,30 @@ export class RotatedLogger {
       return; // Skip logs below configured level
     }
 
-    // Check if we need to rotate
+    const logLine = this.formatLogEntry(entry);
+
+    // Check if we need to rotate primary file
     if (this.shouldRotate()) {
       this.rotateLogFile();
       this.currentLogFile = this.getCurrentLogFile();
     }
 
-    try {
-      const logLine = this.formatLogEntry(entry);
-      writeFileSync(this.currentLogFile, logLine, { flag: "a" });
-    } catch (error) {
-      console.error("Failed to write log:", error);
+    // Primary log file write (best-effort; never crash MCP startup).
+    if (this.currentLogFile) {
+      try {
+        writeFileSync(this.currentLogFile, logLine, { flag: "a" });
+      } catch {
+        // ignore
+      }
+    }
+
+    // Global tmp mirror write (best-effort).
+    if (this.globalTmpLogFile && this.globalTmpLogFile !== this.currentLogFile) {
+      try {
+        writeFileSync(this.globalTmpLogFile, logLine, { flag: "a" });
+      } catch {
+        // ignore
+      }
     }
   }
 

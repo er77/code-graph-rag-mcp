@@ -67,6 +67,7 @@ import type { CloneGroup } from "./types/semantic.js";
 import type { Entity, GraphQuery, Relationship } from "./types/storage.js";
 import { EntityType, RelationType } from "./types/storage.js";
 import { createRequestId, logger } from "./utils/logger.js";
+import { appendGlobalTmpLog, getGlobalTmpLogFile } from "./utils/tmp-log.js";
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -83,6 +84,7 @@ for (let i = 0; i < args.length; i++) {
     if (!next) {
       console.error("Error: --config requires a path argument");
       console.error("Usage: code-graph-rag-mcp [--config <path>] [directory]");
+      appendGlobalTmpLog("cli: missing --config path");
       process.exit(1);
     }
     overrideConfigPath = next;
@@ -91,6 +93,7 @@ for (let i = 0; i < args.length; i++) {
     if (!value) {
       console.error("Error: --config requires a non-empty path");
       console.error("Usage: code-graph-rag-mcp [--config <path>] [directory]");
+      appendGlobalTmpLog("cli: empty --config value");
       process.exit(1);
     }
     overrideConfigPath = value;
@@ -101,6 +104,7 @@ for (let i = 0; i < args.length; i++) {
   } else if (arg.startsWith("-")) {
     console.error(`Unknown option: ${arg}`);
     console.error("Usage: code-graph-rag-mcp [--config <path>] [directory]");
+    appendGlobalTmpLog("cli: unknown option", { arg });
     process.exit(1);
   } else {
     positionalArgs.push(arg);
@@ -2803,6 +2807,15 @@ process.on("SIGUSR1", async () => {
 
 // Start the server
 async function main() {
+  appendGlobalTmpLog("server: main() starting", {
+    cwd: process.cwd(),
+    argv: process.argv.slice(2),
+    directory,
+    directoryExplicit,
+    debugMode: debugRequests.length > 0,
+    tmpLogFile: getGlobalTmpLogFile(),
+  });
+
   console.log(`Starting MCP Code Graph Server for directory: ${directory}`);
   console.log("Multi-agent LiteRAG architecture initialized");
   console.log(`Resource constraints: 1GB memory, 80% CPU, 10 concurrent agents`);
@@ -2848,6 +2861,7 @@ async function main() {
 
 main().catch((error) => {
   console.error("Failed to start server:", error);
+  appendGlobalTmpLog("server: startup failed", { error: error instanceof Error ? error.message : String(error) });
   logger.critical("MCP Server Startup Failed", error.message, undefined, undefined, error);
   process.exit(1);
 });
