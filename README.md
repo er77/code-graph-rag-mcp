@@ -9,7 +9,7 @@
 
 A powerful [Model Context Protocol](https://github.com/modelcontextprotocol) server that creates intelligent graph representations of your codebase with comprehensive semantic analysis capabilities.
 
-**🌟 11 Languages Supported** | **⚡ 5.5x Faster** | **🔍 Semantic Search** | **📊 25 MCP Methods**
+**🌟 11 Languages Supported** | **⚡ 5.5x Faster** | **🔍 Semantic Search** | **📊 26 MCP Methods**
 
 ---
 
@@ -20,7 +20,7 @@ A powerful [Model Context Protocol](https://github.com/modelcontextprotocol) ser
 ### do not use npm repository  any more 
 ```bash
 # Install globally
-npm install -g ./er77-code-graph-rag-mcp-2.7.9.tgz
+npm install -g ./er77-code-graph-rag-mcp-2.7.12.tgz
 code-graph-rag-mcp --version
 ```
 
@@ -84,14 +84,14 @@ codex mcp add code-graph-rag -- node /absolute/path/to/code-graph-rag-mcp/dist/i
 |------------|-------------------|-------------------|-----------------|
 | Execution Time | 55.84s | <10s | **5.5x faster** |
 | Memory Usage | Process-heavy | 65MB | **Optimized** |
-| Features | Basic patterns | 25 methods | **Comprehensive** |
+| Features | Basic patterns | 26 methods | **Comprehensive** |
 | Accuracy | Pattern-based | Semantic | **Superior** |
 
 ---
 
 ## 🔍 **Key Features**
 
-### **🔬 Advanced Analysis Tools (25 MCP Methods)**
+### **🔬 Advanced Analysis Tools (26 MCP Methods)**
 
 | Feature | Description | Use Case |
 |---------|-------------|----------|
@@ -105,6 +105,7 @@ codex mcp add code-graph-rag -- node /absolute/path/to/code-graph-rag-mcp/dist/i
 | **Graph Health** | Database diagnostics | `get_graph_health` |
 | **Version Info** | Server version & runtime details | `get_version` |
 | **Safe Reset** | Clean reindexing | `reset_graph`, `clean_index` |
+| **Batched Indexing** | Resumable indexing with progress (Codex-safe for big repos) | `batch_index` |
 | **Agent Telemetry** | Runtime metrics across agents | `get_agent_metrics` |
 | **Bus Diagnostics** | Inspect/clear knowledge bus topics | `get_bus_stats`, `clear_bus_topic` |
 | **Lerna Project Graph** | Workspace dependency DAG export, optional ingest, cached refresh control | `lerna_project_graph` (requires Lerna config) |
@@ -160,6 +161,8 @@ get_graph_health
 reset_graph
 # Clean reindex (reset + full index)
 clean_index
+# Batched index with progress (recommended for strict clients/timeouts)
+batch_index
 # Lerna workspace graph (ingest into storage)
 lerna_project_graph --args '{"ingest": true}'
 # Force refresh graph and re-ingest (bypass cache)
@@ -199,15 +202,19 @@ export MCP_SEMANTIC_WARMUP_LIMIT=25
 ## 🧰 **Troubleshooting**
 
 - **Codex/VSCode MCP stdio fails to start**  
-  Codex is strict about stdio: `stdout` must be JSON-RPC only. As of v2.7.9, console stdout logs are redirected to `stderr` during MCP runs, and heavy initialization is deferred until after handshake / first tool call.  
+  Codex is strict about stdio: `stdout` must be JSON-RPC only. As of v2.7.12, console stdout logs are redirected to `stderr` during MCP runs, and heavy initialization is deferred until after handshake / first tool call.  
   Recommended Codex config: omit the directory argument and let the server use the workspace root via `roots/list`:
   ```toml
   [mcp_servers.code-graph-rag]
   command = "code-graph-rag-mcp"
   args = []
   ```
+  If `index` / `clean_index` time out on large repos and the transport closes, prefer `batch_index` with a small `maxFilesPerBatch` and keep calling it with the returned `sessionId` until `done:true`.
   If you must see logs on stdout for local debugging, set `MCP_STDIO_ALLOW_STDOUT_LOGS=1` (not recommended for strict clients).
   If startup still fails, check the global tmp log mirror: `/tmp/code-graph-rag-mcp/mcp-server-YYYY-MM-DD.log` (Linux/macOS; uses `os.tmpdir()`).
+
+- **Database location / multi-repo isolation**
+  By default, the server stores its SQLite DB under `./.code-graph-rag/vectors.db` (per repo). Add `/.code-graph-rag/` to your project’s `.gitignore`.
 
 - **Native module mismatch (`better-sqlite3`)**  
   Since v2.6.4 the server automatically rebuilds the native binary when it detects a `NODE_MODULE_VERSION` mismatch. If the automatic rebuild fails (for example due to file permissions), run:
@@ -219,7 +226,8 @@ export MCP_SEMANTIC_WARMUP_LIMIT=25
 - **Legacy database missing new columns**  
   Older installations might lack the latest `embeddings` columns (`metadata`, `model_name`, etc.). The server now auto-upgrades in place, but if you still encounter migration errors, delete the local DB and re-run the indexer:
   ```bash
-  rm ~/.code-graph-rag/codegraph.db
+  # delete the DB shown in logs as: "[Config] Database path: ..."
+  rm -f ./.code-graph-rag/vectors.db ./.code-graph-rag/vectors.db-wal ./.code-graph-rag/vectors.db-shm
   ```
   Then start the server again to trigger a clean rebuild.
 
@@ -234,6 +242,18 @@ export MCP_SEMANTIC_WARMUP_LIMIT=25
 ---
 
 ## 📋 **Changelog**
+
+### 🚀 Version 2.7.11 (2025-12-15) - **Per-Repo Database Isolation**
+
+- 🗄️ Default DB path moved to `./.code-graph-rag/vectors.db` so multiple codebases don’t share/mix a single global SQLite database
+
+### 🚀 Version 2.7.12 (2025-12-15) - **Remove Deprecated boolean Install Warning**
+
+- 🧹 npm install: stop auto-installing `onnxruntime-node` by default (optional peer dep instead), removing the `boolean@3.2.0` deprecation warning during install
+
+### 🚀 Version 2.7.10 (2025-12-15) - **sqlite-vec Global Install Fix**
+
+- 🧠 sqlite-vec: load the extension via `sqlite-vec`’s `getLoadablePath()` so global installs work regardless of project `cwd`
 
 ### 🚀 Version 2.7.9 (2025-12-15) - **Codex Config Fixes**
 

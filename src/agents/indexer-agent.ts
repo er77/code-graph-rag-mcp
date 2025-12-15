@@ -77,6 +77,11 @@ interface ProvidedRelationship {
   metadata?: { line?: number; [k: string]: unknown };
 }
 
+interface IndexEntitiesOptions {
+  fileHash?: string;
+  replaceFile?: boolean;
+}
+
 export interface IndexerTask extends AgentTask {
   type: "index:entities" | "index:incremental" | "query:graph" | "query:subgraph";
   payload: {
@@ -87,6 +92,8 @@ export interface IndexerTask extends AgentTask {
     entityId?: string;
     depth?: number;
     relationships?: EntityRelationship[];
+    fileHash?: string;
+    replaceFile?: boolean;
   };
 }
 
@@ -237,6 +244,7 @@ export class IndexerAgent extends BaseAgent {
           indexerTask.payload.entities!,
           indexerTask.payload.filePath!,
           indexerTask.payload.relationships,
+          { fileHash: indexerTask.payload.fileHash, replaceFile: indexerTask.payload.replaceFile },
         );
 
       case "index:incremental":
@@ -260,6 +268,7 @@ export class IndexerAgent extends BaseAgent {
     entities: ParsedEntity[],
     filePath: string,
     providedRelationships?: ProvidedRelationship[],
+    options?: IndexEntitiesOptions,
   ): Promise<BatchResult & { entitiesIndexed: number; relationshipsCreated: number }> {
     const startTime = Date.now();
     console.log(`[${this.id}] Indexing ${entities.length} entities from ${filePath}`);
@@ -268,7 +277,7 @@ export class IndexerAgent extends BaseAgent {
     const storageEntities: Entity[] = [];
     const validParsed: ParsedEntity[] = [];
     const preErrors: Array<{ item: unknown; error: string }> = [];
-    const fileHash = nanoid(8); // In production, use actual file hash
+    const fileHash = options?.fileHash || nanoid(8);
 
     for (const parsed of entities) {
       try {
@@ -300,6 +309,20 @@ export class IndexerAgent extends BaseAgent {
         validParsed.push(normalizedParsed as ParsedEntity);
       } catch (e) {
         preErrors.push({ item: parsed, error: (e as Error).message });
+      }
+    }
+
+    if (options?.replaceFile) {
+      try {
+        const deleted = await this.graphStorage.deleteFileData(filePath, {
+          preserveEntityIds: storageEntities.map((entity) => entity.id),
+        });
+        this.cacheManager.clear();
+        if (deleted.entitiesDeleted > 0 || deleted.relationshipsDeleted > 0 || deleted.fileInfoDeleted > 0) {
+          console.log(`[${this.id}] Replacing file data; deleted existing rows for ${filePath}`, deleted);
+        }
+      } catch (error) {
+        console.warn(`[${this.id}] Failed to replace file data for ${filePath}:`, error);
       }
     }
 

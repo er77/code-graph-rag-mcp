@@ -29,7 +29,7 @@ mcp:
 
 # Database Configuration
 database:
-  path: "./vectors.db"
+  path: "./.code-graph-rag/vectors.db"
   mode: "WAL"           # Options: WAL, DELETE, TRUNCATE
   cacheSize: 10000      # SQLite cache size
   mmapSize: 268435456   # 256MB memory mapping size

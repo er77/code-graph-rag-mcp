@@ -1,6 +1,6 @@
 {
   "name": "@er77/code-graph-rag-mcp",
-  "version": "2.7.9",
+  "version": "2.7.12",
   "description": "Multi-agent LiteRAG MCP server for advanced code graph analysis",
   "license": "MIT",
   "author": "er77",
@@ -105,16 +105,18 @@
     "zod-to-json-schema": "^3.23.0"
   },
   "optionalDependencies": {
-    "@xenova/transformers": "^2.17.2",
+    "@xenova/transformers": "^2.17.2"
+  },
+  "peerDependencies": {
     "onnxruntime-node": "^1.23.0"
   },
-  "overrides": {
-    "boolean": "3.2.0"
+  "peerDependenciesMeta": {
+    "onnxruntime-node": {
+      "optional": true
+    }
   },
   "engines": {
     "node": ">=24.0.0"
   },
-  "notes": {
-    "boolean@3.2.0": "Deprecated transitive dependency from onnxruntime-node. Package is unmaintained but functional. Used only in optional ML features."
-  }
+  "notes": {}
 }

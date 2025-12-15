@@ -8,6 +8,7 @@ import { lstatSync, readdirSync } from "node:fs";
 import { extname, join } from "node:path";
 import { ConfigLoader, getConfig } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
+import { getGraphStorage } from "../storage/graph-storage-factory.js";
 import { getSQLiteManager } from "../storage/sqlite-manager.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
 import type { ParserOptions } from "../types/parser.js";
@@ -232,8 +233,39 @@ export class DevAgent extends BaseAgent {
     const directory = payload.directory;
     const excludePatterns = payload.excludePatterns || [];
 
-    const files = await this.collectFiles(directory, excludePatterns);
-    console.log(`[DevAgent ${this.id}] Found ${files.length} files to process`);
+    const isFullScan = Boolean(payload.fullScan);
+    const isIncremental = Boolean(payload.incremental);
+
+    let files = Array.isArray(payload.files)
+      ? payload.files.filter((file: unknown) => typeof file === "string")
+      : await this.collectFiles(directory, excludePatterns);
+    const totalDiscovered = files.length;
+
+    if (isIncremental && !isFullScan) {
+      try {
+        const storage = await getGraphStorage(getSQLiteManager());
+        const filtered: string[] = [];
+
+        for (const file of files) {
+          const st = lstatSync(file, { throwIfNoEntry: false });
+          if (!st || !st.isFile()) continue;
+          const info = await storage.getFileInfo(file);
+          if (info && info.lastIndexed >= st.mtimeMs) {
+            continue;
+          }
+          filtered.push(file);
+        }
+
+        files = filtered;
+      } catch (error) {
+        console.warn(
+          `[DevAgent ${this.id}] Incremental filtering failed; falling back to full file list:`,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+
+    console.log(`[DevAgent ${this.id}] Found ${files.length}/${totalDiscovered} files to process`);
 
     const configLoader = ConfigLoader.getInstance();
     const isDebugMode = process.env.MCP_DEBUG_MODE === "1";
@@ -264,12 +296,18 @@ export class DevAgent extends BaseAgent {
 
           const results = (await this.parserAgent.process(parseTask)) as any[]; // ParseResult[]
 
-          const byFile = new Map<string, { entities: any[]; relationships: any[] }>();
+          const byFile = new Map<string, { entities: any[]; relationships: any[]; fileHash?: string }>();
 
           for (const res of results || []) {
             const fp = res?.filePath;
             if (!fp) continue;
-            const slot = byFile.get(fp) ?? { entities: [], relationships: [] };
+            let slot = byFile.get(fp);
+            if (!slot) {
+              slot = { entities: [], relationships: [], fileHash: res?.contentHash };
+              byFile.set(fp, slot);
+            } else if (!slot.fileHash && res?.contentHash) {
+              slot.fileHash = res.contentHash;
+            }
 
             if (Array.isArray(res.entities)) {
               slot.entities.push(...res.entities);
@@ -287,10 +325,9 @@ export class DevAgent extends BaseAgent {
                 }
               }
             }
-
-            byFile.set(fp, slot);
           }
 
+          const replaceFile = isIncremental && !isFullScan;
           for (const [file, group] of byFile.entries()) {
             const indexTask: AgentTask = {
               id: `index-entities-${Date.now()}-${i}-${file}`,
@@ -300,6 +337,8 @@ export class DevAgent extends BaseAgent {
                 entities: group.entities,
                 relationships: group.relationships,
                 filePath: file,
+                fileHash: group.fileHash,
+                replaceFile,
               },
               createdAt: Date.now(),
             };
@@ -417,25 +456,32 @@ export class DevAgent extends BaseAgent {
 
           const byFile = new Map<string, { entities: any[]; relationships: any[] }>();
           for (const e of entities) {
-            const slot = byFile.get(e.filePath) ?? { entities: [], relationships: [] };
+            let slot = byFile.get(e.filePath);
+            if (!slot) {
+              slot = { entities: [], relationships: [] };
+              byFile.set(e.filePath, slot);
+            }
             slot.entities.push(e);
-            byFile.set(e.filePath, slot);
           }
           for (const r of relationships) {
             const fp = r.filePath || null;
             if (!fp) continue;
-            const slot = byFile.get(fp) ?? { entities: [], relationships: [] };
+            let slot = byFile.get(fp);
+            if (!slot) {
+              slot = { entities: [], relationships: [] };
+              byFile.set(fp, slot);
+            }
             slot.relationships.push({ from: r.from, to: r.to, type: r.type, targetFile: r.filePath });
-            byFile.set(fp, slot);
           }
 
+          const replaceFile = isIncremental && !isFullScan;
           for (const [file, group] of byFile.entries()) {
             if (!group.entities.length) continue;
             const indexTask: AgentTask = {
               id: `index-entities-${Date.now()}-${i}-${file}`,
               type: "index:entities",
               priority: 7,
-              payload: { entities: group.entities, relationships: group.relationships, filePath: file },
+              payload: { entities: group.entities, relationships: group.relationships, filePath: file, replaceFile },
               createdAt: Date.now(),
             };
             try {
@@ -475,6 +521,7 @@ export class DevAgent extends BaseAgent {
       "tmp",
       "temp",
       "cache",
+      ".code-graph-rag",
       "__pycache__",
       ".pytest_cache",
       "venv",

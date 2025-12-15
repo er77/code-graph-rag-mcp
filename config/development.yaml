@@ -29,7 +29,7 @@ mcp:
 
 # Database Configuration (Development)
 database:
-  path: "./vectors.db"     # Local development database
+  path: "./.code-graph-rag/vectors.db"     # Local development database
   mode: "WAL"              # WAL mode for development
   cacheSize: 5000          # Smaller cache for development
   mmapSize: 134217728      # 128MB memory mapping

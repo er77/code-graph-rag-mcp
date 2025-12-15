@@ -26,12 +26,15 @@
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import Database from "better-sqlite3";
 import type { SimilarityResult, VectorEmbedding, VectorStoreConfig } from "../types/semantic.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
 // =============================================================================
+const DEFAULT_DB_PATH = "./.code-graph-rag/vectors.db";
 const DEFAULT_CONFIG: Partial<VectorStoreConfig> = {
   dimensions: 384,
   cacheSize: 64000, // 256MB cache
@@ -89,7 +92,7 @@ export class VectorStore {
 
   constructor(config: Partial<VectorStoreConfig> = {}) {
     this.config = {
-      dbPath: config.dbPath || "./vectors.db",
+      dbPath: config.dbPath || DEFAULT_DB_PATH,
       dimensions: config.dimensions || DEFAULT_CONFIG.dimensions!,
       cacheSize: config.cacheSize || DEFAULT_CONFIG.cacheSize,
       walMode: config.walMode ?? DEFAULT_CONFIG.walMode,
@@ -143,6 +146,11 @@ export class VectorStore {
    */
   private async initializeInternal(): Promise<void> {
     try {
+      const dbDir = dirname(this.config.dbPath);
+      if (dbDir && dbDir !== "." && !existsSync(dbDir)) {
+        mkdirSync(dbDir, { recursive: true });
+      }
+
       // Create database connection
       this.db = new Database(this.config.dbPath);
 
@@ -332,6 +340,21 @@ export class VectorStore {
         console.log(`[VectorStore] TASK-004B: Loading sqlite-vec extension (attempt ${this.extensionLoadAttempts})...`);
       }
 
+      // Preferred: resolve extension path via sqlite-vec itself (works for global installs regardless of cwd).
+      try {
+        const sqliteVec = await import("sqlite-vec");
+        if (typeof sqliteVec.getLoadablePath === "function") {
+          const loadablePath = sqliteVec.getLoadablePath();
+          this.db.loadExtension(loadablePath);
+          console.log(`[VectorStore] TASK-004B: Loaded sqlite-vec extension from: ${loadablePath}`);
+          return;
+        }
+      } catch (error) {
+        if (this.debugMode) {
+          console.log("[VectorStore] TASK-004B: sqlite-vec getLoadablePath() load failed, falling back:", error);
+        }
+      }
+
       // Determine platform-specific extension file
       const platform = process.platform;
       let extensionFile = "vec0";
@@ -357,7 +380,6 @@ export class VectorStore {
       const platformPackage = platformPackages[platformKey];
 
       const possiblePaths = [
-        "sqlite-vec",
         platformPackage ? `./node_modules/${platformPackage}/${extensionFile}` : null,
         `./node_modules/sqlite-vec/dist/${extensionFile}`,
         `/usr/local/lib/${extensionFile}`,

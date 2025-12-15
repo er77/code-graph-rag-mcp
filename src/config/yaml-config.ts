@@ -10,6 +10,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 
@@ -211,6 +212,25 @@ export interface AppConfig {
 // 2. DEFAULT CONFIGURATION VALUES
 // =============================================================================
 
+function expandTildePath(input: string | undefined): string | undefined {
+  if (!input) return input;
+  if (input === "~") return homedir();
+  if (input.startsWith("~/") || input.startsWith("~\\")) return join(homedir(), input.slice(2));
+  return input;
+}
+
+function selectDatabasePath(
+  yamlPath: string | undefined,
+  envPath: string | undefined,
+  defaultPath: string | undefined,
+): string | undefined {
+  // Prefer env override during tests to avoid writing outside the repo by default.
+  if (process.env.NODE_ENV === "test" || process.env.JEST_WORKER_ID) {
+    return envPath || yamlPath || defaultPath;
+  }
+  return yamlPath || envPath || defaultPath;
+}
+
 const DEFAULT_CONFIG: AppConfig = {
   mcp: {
     embedding: {
@@ -237,7 +257,9 @@ const DEFAULT_CONFIG: AppConfig = {
     },
   },
   database: {
-    path: "./vectors.db",
+    // Per-repo default (resolved relative to the workspace root after process.chdir()).
+    // Keeps codebases isolated by default and avoids global DB mixing.
+    path: "./.code-graph-rag/vectors.db",
     mode: "WAL",
     cacheSize: 10000,
     mmapSize: 268435456, // 256MB
@@ -626,7 +648,9 @@ export class ConfigLoader {
         },
       },
       database: {
-        path: yamlConfig.database?.path || process.env.DATABASE_PATH || DEFAULT_CONFIG.database?.path,
+        path: expandTildePath(
+          selectDatabasePath(yamlConfig.database?.path, process.env.DATABASE_PATH, DEFAULT_CONFIG.database?.path),
+        ),
         mode: (yamlConfig.database?.mode as any) || (process.env.DATABASE_MODE as any) || DEFAULT_CONFIG.database?.mode,
         cacheSize:
           yamlConfig.database?.cacheSize ||

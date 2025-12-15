@@ -40,6 +40,7 @@ const ID_LENGTH = 12;
 const DEFAULT_QUERY_LIMIT = 100;
 const MAX_QUERY_LIMIT = 1000;
 const MAX_SUBGRAPH_DEPTH = 5;
+const SIMPLE_LITERAL_REGEX_META_CHARS = new Set([".", "*", "+", "?", "^", "$", "{", "}", "(", ")", "|", "[", "]"]);
 
 // =============================================================================
 // 3. GRAPH STORAGE IMPLEMENTATION
@@ -312,10 +313,60 @@ export class GraphStorageImpl implements GraphStorage {
     return row ? this.rowToEntity(row) : null;
   }
 
+  private isRegexSourceCharEscaped(source: string, index: number): boolean {
+    let backslashes = 0;
+    for (let i = index - 1; i >= 0 && source[i] === "\\"; i--) {
+      backslashes++;
+    }
+    return backslashes % 2 === 1;
+  }
+
+  private tryParseSimpleLiteralNameRegExp(re: RegExp): {
+    literal: string;
+    anchorStart: boolean;
+    anchorEnd: boolean;
+    ignoreCase: boolean;
+  } | null {
+    const anchorStart = re.source.startsWith("^");
+    const anchorEnd = re.source.endsWith("$") && !this.isRegexSourceCharEscaped(re.source, re.source.length - 1);
+
+    const source = re.source.slice(anchorStart ? 1 : 0, anchorEnd ? -1 : undefined);
+
+    let literal = "";
+    for (let i = 0; i < source.length; i++) {
+      const ch = source[i]!;
+      if (ch === "\\") {
+        i++;
+        if (i >= source.length) return null;
+        const next = source[i]!;
+        if (next === "\\" || SIMPLE_LITERAL_REGEX_META_CHARS.has(next)) {
+          literal += next;
+          continue;
+        }
+        return null;
+      }
+      if (SIMPLE_LITERAL_REGEX_META_CHARS.has(ch)) return null;
+      literal += ch;
+    }
+
+    return { literal, anchorStart, anchorEnd, ignoreCase: re.ignoreCase };
+  }
+
+  private escapeSqlLikeLiteral(value: string): string {
+    return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+  }
+
+  private ensureNonGlobalRegExp(re: RegExp): RegExp {
+    if (!re.global && !re.sticky) return re;
+    const flags = re.flags.replace(/g/g, "").replace(/y/g, "");
+    return new RegExp(re.source, flags);
+  }
+
   async findEntities(query: GraphQuery): Promise<Entity[]> {
     this.ensureReady();
     let sql = "SELECT * FROM entities WHERE 1=1";
     const params: any[] = [];
+    let postFilterNameRegex: RegExp | undefined;
 
     // Apply filters
     if (query.filters) {
@@ -333,10 +384,27 @@ export class GraphStorageImpl implements GraphStorage {
 
       if (query.filters.name) {
         if (query.filters.name instanceof RegExp) {
-          // Use LIKE for regex-like matching
-          const pattern = query.filters.name.source.replace(/\*/g, "%");
-          sql += " AND name LIKE ?";
-          params.push(pattern);
+          const parsed = this.tryParseSimpleLiteralNameRegExp(query.filters.name);
+          if (!parsed) {
+            postFilterNameRegex = query.filters.name;
+          } else if (parsed.anchorStart && parsed.anchorEnd) {
+            if (parsed.ignoreCase) {
+              sql += " AND LOWER(name) = LOWER(?)";
+            } else {
+              sql += " AND name = ?";
+            }
+            params.push(parsed.literal);
+          } else {
+            let pattern = this.escapeSqlLikeLiteral(parsed.literal);
+            if (!parsed.anchorStart) pattern = `%${pattern}`;
+            if (!parsed.anchorEnd) pattern = `${pattern}%`;
+            if (parsed.ignoreCase) {
+              sql += " AND LOWER(name) LIKE LOWER(?) ESCAPE '\\'";
+            } else {
+              sql += " AND name LIKE ? ESCAPE '\\'";
+            }
+            params.push(pattern);
+          }
         } else {
           sql += " AND name = ?";
           params.push(query.filters.name);
@@ -345,12 +413,23 @@ export class GraphStorageImpl implements GraphStorage {
     }
 
     // Apply limit and offset
-    const limit = Math.min(query.limit || DEFAULT_QUERY_LIMIT, MAX_QUERY_LIMIT);
+    const requestedLimit = Math.min(query.limit || DEFAULT_QUERY_LIMIT, MAX_QUERY_LIMIT);
+    const requestedOffset = query.offset || 0;
+    const limit = postFilterNameRegex ? MAX_QUERY_LIMIT : requestedLimit;
+    const offset = postFilterNameRegex ? 0 : requestedOffset;
     sql += " LIMIT ? OFFSET ?";
-    params.push(limit, query.offset || 0);
+    params.push(limit, offset);
 
     const rows = this.db.prepare(sql).all(...params) as any[];
-    return rows.map((row) => this.rowToEntity(row));
+    let entities = rows.map((row) => this.rowToEntity(row));
+
+    if (postFilterNameRegex) {
+      const safe = this.ensureNonGlobalRegExp(postFilterNameRegex);
+      entities = entities.filter((entity) => safe.test(entity.name ?? ""));
+      entities = entities.slice(requestedOffset, requestedOffset + requestedLimit);
+    }
+
+    return entities;
   }
 
   // =============================================================================
@@ -510,6 +589,67 @@ export class GraphStorageImpl implements GraphStorage {
       lastIndexed: row.last_indexed,
       entityCount: row.entity_count,
     }));
+  }
+
+  /**
+   * Delete all graph data associated with a file path.
+   * This is used by incremental/batched indexing to replace a file's entities safely.
+   */
+  async deleteFileData(
+    filePath: string,
+    options?: {
+      preserveEntityIds?: string[];
+    },
+  ): Promise<{
+    entitiesDeleted: number;
+    relationshipsDeleted: number;
+    fileInfoDeleted: number;
+  }> {
+    this.ensureReady();
+
+    const preserveIds = options?.preserveEntityIds ?? [];
+    const preserveSet = preserveIds.length > 0 ? new Set(preserveIds) : null;
+    const existingIds = this.db.prepare("SELECT id FROM entities WHERE file_path = ?").all(filePath) as Array<{
+      id: string;
+    }>;
+    const removedIds = preserveSet ? existingIds.map((r) => r.id).filter((id) => !preserveSet.has(id)) : null;
+
+    const tx = this.db.transaction((fp: string, removed: string[] | null) => {
+      let relationshipsDeleted = 0;
+
+      const relFrom = this.db
+        .prepare("DELETE FROM relationships WHERE from_id IN (SELECT id FROM entities WHERE file_path = ?)")
+        .run(fp) as any;
+      relationshipsDeleted += relFrom?.changes ?? 0;
+
+      if (!removed) {
+        const relTo = this.db
+          .prepare("DELETE FROM relationships WHERE to_id IN (SELECT id FROM entities WHERE file_path = ?)")
+          .run(fp) as any;
+        relationshipsDeleted += relTo?.changes ?? 0;
+      } else if (removed.length > 0) {
+        const chunkSize = 900;
+        for (let i = 0; i < removed.length; i += chunkSize) {
+          const chunk = removed.slice(i, i + chunkSize);
+          if (chunk.length === 0) continue;
+          const placeholders = chunk.map(() => "?").join(", ");
+          const stmt = this.db.prepare(`DELETE FROM relationships WHERE to_id IN (${placeholders})`);
+          const relTo = stmt.run(...chunk) as any;
+          relationshipsDeleted += relTo?.changes ?? 0;
+        }
+      }
+
+      const ent = this.db.prepare("DELETE FROM entities WHERE file_path = ?").run(fp) as any;
+      const file = this.db.prepare("DELETE FROM files WHERE path = ?").run(fp) as any;
+
+      return {
+        entitiesDeleted: ent?.changes ?? 0,
+        relationshipsDeleted,
+        fileInfoDeleted: file?.changes ?? 0,
+      };
+    });
+
+    return tx(filePath, removedIds);
   }
 
   // =============================================================================

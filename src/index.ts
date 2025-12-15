@@ -35,7 +35,7 @@ createSafeEnvironment();
 // Ensure stdout is reserved exclusively for MCP JSON-RPC messages (Codex/VSCode is strict).
 import "./utils/stdio-console.js";
 
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,6 +52,7 @@ import { ConductorOrchestrator } from "./agents/conductor-orchestrator.js";
 import { type AppConfig, ConfigLoader, initializeConfig, validateConfig } from "./config/yaml-config.js";
 import { knowledgeBus } from "./core/knowledge-bus.js";
 import { resourceManager } from "./core/resource-manager.js";
+import { isFileSupported } from "./parsers/language-configs.js";
 import { getGraphStorage, initializeGraphStorage } from "./storage/graph-storage-factory.js";
 import { getSQLiteManager, type SQLiteManager } from "./storage/sqlite-manager.js";
 import { collectAgentMetrics } from "./tools/agent-metrics.js";
@@ -67,7 +68,7 @@ import type { CloneGroup } from "./types/semantic.js";
 import type { Entity, GraphQuery, Relationship } from "./types/storage.js";
 import { EntityType, RelationType } from "./types/storage.js";
 import { createRequestId, logger } from "./utils/logger.js";
-import { appendGlobalTmpLog, getGlobalTmpLogFile } from "./utils/tmp-log.js";
+import { appendGlobalTmpLog, getGlobalTmpLogDir, getGlobalTmpLogFile } from "./utils/tmp-log.js";
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -740,60 +741,336 @@ function normalizeEntityTypes(types?: string[]): EntityType[] | undefined {
 
 // GraphStorage singleton is now managed by graph-storage-factory.ts
 
+const DEFAULT_INDEX_EXCLUDE_PATTERNS = [
+  // Standard ignore patterns for large codebases
+  "node_modules/**",
+  ".git/**",
+  ".code-graph-rag/**",
+  "dist/**",
+  "build/**",
+  "out/**",
+  ".next/**",
+  ".nuxt/**",
+  "coverage/**",
+  ".nyc_output/**",
+  "__pycache__/**",
+  "*.pyc",
+  ".pytest_cache/**",
+  "venv/**",
+  "env/**",
+  ".venv/**",
+  ".env/**",
+  "vendor/**",
+  "target/**",
+  ".gradle/**",
+  ".idea/**",
+  ".vscode/**",
+  "**/test/**",
+  "**/tests/**",
+  "**/__tests__/**",
+  "**/.memory_bank/**",
+  "tmp/**",
+  "temp/**",
+  "**/tmp/**",
+  "**/temp/**",
+  "*.log",
+  "*.tmp",
+  "*.cache",
+  "**/*.md",
+  "*.zip",
+  "*.tar",
+  "*.tar.gz",
+  "*.tgz",
+  "*.gz",
+  "*.bz2",
+  "*.xz",
+  "*.7z",
+  "*.rar",
+  "*.zst",
+  ".DS_Store",
+  "Thumbs.db",
+] as const;
+
+const DEFAULT_INDEX_PRUNE_DIR_NAMES = [
+  // Keep this aligned with DEFAULT_INDEX_EXCLUDE_PATTERNS (prune affects only heuristics like fileCount/du).
+  "node_modules",
+  ".git",
+  ".code-graph-rag",
+  "dist",
+  "build",
+  "out",
+  ".next",
+  ".nuxt",
+  "coverage",
+  ".nyc_output",
+  "__pycache__",
+  ".pytest_cache",
+  "venv",
+  "env",
+  ".venv",
+  ".env",
+  "vendor",
+  "target",
+  ".gradle",
+  ".idea",
+  ".vscode",
+  ".memory_bank",
+  "tmp",
+  "temp",
+] as const;
+
+function mergeUniqueStrings(a: readonly string[], b: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+
+  for (const value of a) {
+    if (!value) continue;
+    if (seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+
+  for (const value of b) {
+    if (!value) continue;
+    if (seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+
+  return out;
+}
+
+function buildFindSourceFileCountCommand(targetDir: string): string {
+  const pruneExpr = DEFAULT_INDEX_PRUNE_DIR_NAMES.map((name) => `-path "*/${name}" -o -path "*/${name}/*"`).join(
+    " -o ",
+  );
+
+  const nameExpr = [
+    '-name "*.js"',
+    '-o -name "*.ts"',
+    '-o -name "*.py"',
+    '-o -name "*.java"',
+    '-o -name "*.cpp"',
+    '-o -name "*.c"',
+    '-o -name "*.go"',
+    '-o -name "*.rs"',
+  ].join(" ");
+
+  return `find "${targetDir}" \\( ${pruneExpr} \\) -prune -o -type f \\( ${nameExpr} \\) -print | wc -l`;
+}
+
+type BatchIndexSessionMeta = {
+  version: 1;
+  sessionId: string;
+  directory: string;
+  excludePatterns: string[];
+  incremental: boolean;
+  fullScan: boolean;
+  reset: boolean;
+  createdAt: number;
+  updatedAt: number;
+  cursor: number;
+  totalFiles: number;
+  filesPath: string;
+  stats: {
+    batches: number;
+    attempted: number;
+    indexed: number;
+    skipped: number;
+    lastBatchMs?: number;
+    lastError?: string;
+  };
+};
+
+type BatchIndexSessionState = {
+  meta: BatchIndexSessionMeta;
+  files: string[];
+  inProgress: boolean;
+};
+
+const batchIndexSessions = new Map<string, BatchIndexSessionState>();
+
+function createBatchIndexSessionId(): string {
+  return `batch_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function getBatchIndexSessionsDir(): string {
+  return join(getGlobalTmpLogDir(), "index-sessions");
+}
+
+function getBatchIndexSessionMetaPath(sessionId: string): string {
+  return join(getBatchIndexSessionsDir(), `${sessionId}.json`);
+}
+
+function getBatchIndexSessionFilesPath(sessionId: string): string {
+  return join(getBatchIndexSessionsDir(), `${sessionId}.files.json`);
+}
+
+function ensureBatchIndexSessionsDir(): string {
+  const dir = getBatchIndexSessionsDir();
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function safeReadJsonFile<T>(filePath: string): T {
+  return JSON.parse(readFileSync(filePath, { encoding: "utf8" })) as T;
+}
+
+function safeWriteJsonFile(filePath: string, data: unknown, pretty = true): void {
+  const text = pretty ? JSON.stringify(data, null, 2) : JSON.stringify(data);
+  writeFileSync(filePath, text, { encoding: "utf8" });
+}
+
+function normalizeGlobPath(p: string): string {
+  return p.split("\\").join("/");
+}
+
+function globPatternToRegExp(pattern: string): RegExp {
+  const normalized = normalizeGlobPath(pattern);
+  const hasSlash = normalized.includes("/");
+  const prefix = hasSlash ? "" : "(?:^|.*/)";
+
+  let source = prefix;
+  for (let i = 0; i < normalized.length; i++) {
+    const ch = normalized[i]!;
+    if (ch === "*") {
+      const next = normalized[i + 1];
+      if (next === "*") {
+        source += ".*";
+        i++;
+        continue;
+      }
+      source += "[^/]*";
+      continue;
+    }
+    if (ch === "?") {
+      source += "[^/]";
+      continue;
+    }
+    source += ch.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+  }
+
+  return new RegExp(`^${source}$`);
+}
+
+function collectIndexableFiles(targetDir: string, excludePatterns: string[]): string[] {
+  const dir = resolve(targetDir);
+  const regexes = excludePatterns
+    .filter((pattern) => pattern && pattern !== "__batch_processing_enabled__")
+    .map((pattern) => globPatternToRegExp(pattern));
+
+  const shouldExclude = (relPath: string, isDir: boolean): boolean => {
+    const normalized = normalizeGlobPath(relPath);
+    const candidate = isDir && normalized.length > 0 && !normalized.endsWith("/") ? `${normalized}/` : normalized;
+    return regexes.some((re) => re.test(candidate) || re.test(normalized));
+  };
+
+  const files: string[] = [];
+  const stack: string[] = [dir];
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+
+    let entries: Array<{
+      name: string;
+      isDirectory: () => boolean;
+      isFile: () => boolean;
+      isSymbolicLink: () => boolean;
+    }>;
+    try {
+      entries = readdirSync(current, { withFileTypes: true }) as any;
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry?.name) continue;
+      const fullPath = join(current, entry.name);
+      const relPath = normalizeGlobPath(relative(dir, fullPath));
+
+      if (entry.isSymbolicLink()) continue;
+      if (relPath === "" || relPath.startsWith("..")) continue;
+
+      if (entry.isDirectory()) {
+        const lower = entry.name.toLowerCase();
+        if (DEFAULT_INDEX_PRUNE_DIR_NAMES.includes(lower as (typeof DEFAULT_INDEX_PRUNE_DIR_NAMES)[number])) {
+          continue;
+        }
+        if (shouldExclude(relPath, true)) continue;
+        stack.push(fullPath);
+        continue;
+      }
+
+      if (!entry.isFile()) continue;
+      if (shouldExclude(relPath, false)) continue;
+      if (!isFileSupported(fullPath)) continue;
+      files.push(fullPath);
+    }
+  }
+
+  return files;
+}
+
+function loadBatchIndexSession(sessionId: string): BatchIndexSessionState {
+  const existing = batchIndexSessions.get(sessionId);
+  if (existing) return existing;
+
+  const metaPath = getBatchIndexSessionMetaPath(sessionId);
+  if (!existsSync(metaPath)) {
+    throw new Error(`Unknown batch_index sessionId: ${sessionId}`);
+  }
+  const meta = safeReadJsonFile<BatchIndexSessionMeta>(metaPath);
+  const filesPath = meta.filesPath || getBatchIndexSessionFilesPath(sessionId);
+  if (!existsSync(filesPath)) {
+    throw new Error(`Missing batch_index session files for sessionId: ${sessionId}`);
+  }
+  const files = safeReadJsonFile<string[]>(filesPath);
+  const state: BatchIndexSessionState = { meta, files, inProgress: false };
+  batchIndexSessions.set(sessionId, state);
+  return state;
+}
+
+function persistBatchIndexSessionMeta(meta: BatchIndexSessionMeta): void {
+  meta.updatedAt = Date.now();
+  safeWriteJsonFile(getBatchIndexSessionMetaPath(meta.sessionId), meta);
+}
+
+function deleteBatchIndexSession(sessionId: string): void {
+  batchIndexSessions.delete(sessionId);
+  const metaPath = getBatchIndexSessionMetaPath(sessionId);
+  const filesPath = getBatchIndexSessionFilesPath(sessionId);
+  rmSync(metaPath, { force: true });
+  rmSync(filesPath, { force: true });
+}
+
 // Tool schemas
 const IndexToolSchema = z.object({
   directory: z.string().describe("Directory to index").optional(),
   incremental: z.boolean().describe("Perform incremental indexing").optional().default(false),
   reset: z.boolean().describe("Clear existing graph before indexing").optional().default(false),
-  excludePatterns: z.array(z.string()).describe("Patterns to exclude").optional().default([
-    // Standard ignore patterns for large codebases
-    "node_modules/**",
-    ".git/**",
-    "dist/**",
-    "build/**",
-    "out/**",
-    ".next/**",
-    ".nuxt/**",
-    "coverage/**",
-    ".nyc_output/**",
-    "__pycache__/**",
-    "*.pyc",
-    ".pytest_cache/**",
-    "venv/**",
-    "env/**",
-    ".venv/**",
-    ".env/**",
-    "vendor/**",
-    "target/**",
-    ".gradle/**",
-    ".idea/**",
-    ".vscode/**",
-    "**/test/**",
-    "**/tests/**",
-    "**/__tests__/**",
-    "**/.memory_bank/**",
-    "tmp/**",
-    "temp/**",
-    "**/tmp/**",
-    "**/temp/**",
-    "*.log",
-    "*.tmp",
-    "*.cache",
-    "**/*.md",
-    "*.zip",
-    "*.tar",
-    "*.tar.gz",
-    "*.tgz",
-    "*.gz",
-    "*.bz2",
-    "*.xz",
-    "*.7z",
-    "*.rar",
-    "*.zst",
-    ".DS_Store",
-    "Thumbs.db",
-  ]),
+  excludePatterns: z
+    .array(z.string())
+    .describe("Patterns to exclude (merged with built-in defaults; tmp/ is always excluded)")
+    .optional()
+    .default([...DEFAULT_INDEX_EXCLUDE_PATTERNS]),
   fullScan: z.boolean().optional().default(false),
+});
+
+const BatchIndexSchema = z.object({
+  sessionId: z.string().optional().describe("Resume an existing batch indexing session"),
+  directory: z.string().optional().describe("Directory to index (new sessions only; defaults to server root)"),
+  excludePatterns: z
+    .array(z.string())
+    .optional()
+    .default([...DEFAULT_INDEX_EXCLUDE_PATTERNS])
+    .describe("Patterns to exclude (merged with built-in defaults; tmp/ is always excluded)"),
+  incremental: z.boolean().optional().default(true).describe("Reindex only changed files (mtime-based)"),
+  fullScan: z.boolean().optional().default(false).describe("Disable incremental filtering and index everything"),
+  reset: z.boolean().optional().default(false).describe("Clear the graph before starting a new session"),
+  maxFilesPerBatch: z.number().int().positive().max(500).optional().default(25).describe("Max files per tool call"),
+  statusOnly: z.boolean().optional().default(false).describe("Return current progress without processing a batch"),
+  abort: z.boolean().optional().default(false).describe("Abort and delete the session"),
 });
 
 const ListEntitiesToolSchema = z.object({
@@ -929,7 +1206,11 @@ const ClearBusTopicSchema = z.object({
 // Convenience tool: clean index (reset + index)
 const CleanIndexSchema = z.object({
   directory: z.string().describe("Directory to index after reset").optional(),
-  excludePatterns: z.array(z.string()).describe("Patterns to exclude during indexing").optional().default([]),
+  excludePatterns: z
+    .array(z.string())
+    .describe("Patterns to exclude during indexing (merged with built-in defaults; tmp/ is always excluded)")
+    .optional()
+    .default([...DEFAULT_INDEX_EXCLUDE_PATTERNS]),
   fullScan: z.boolean().optional().default(false),
 });
 
@@ -1002,6 +1283,12 @@ server.setRequestHandler(ListToolsRequestSchema as any, async () => {
         name: "index",
         description: "Index a codebase using multi-agent parsing and analysis",
         inputSchema: toJsonSchema(IndexToolSchema),
+      },
+      {
+        name: "batch_index",
+        description:
+          "Index a codebase in small, resumable batches with progress reporting (avoids strict client timeouts); returns a sessionId to continue.",
+        inputSchema: toJsonSchema(BatchIndexSchema),
       },
       {
         name: "list_file_entities",
@@ -1203,16 +1490,16 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             await getSemanticAgent();
           }
 
-          // Enhanced exclude patterns for large codebases
-          const enhancedExcludePatterns = [...excludePatterns];
+          // Indexing requires a DevAgent; initialize it on-demand so indexing is never "queued" due to background init timing.
+          await getDevAgent();
+
+          // Always merge user exclude patterns with built-in defaults (tmp/ and other work dirs are always excluded).
+          const enhancedExcludePatterns = mergeUniqueStrings(DEFAULT_INDEX_EXCLUDE_PATTERNS, excludePatterns);
 
           // Check codebase size and add adaptive patterns
           try {
             const { execSync } = await import("node:child_process");
-            const fileCount = execSync(
-              `find "${targetDir}" -type f \\( -name "*.js" -o -name "*.ts" -o -name "*.py" -o -name "*.java" -o -name "*.cpp" -o -name "*.c" -o -name "*.go" -o -name "*.rs" \\) | wc -l`,
-              { encoding: "utf8" },
-            ).trim();
+            const fileCount = execSync(buildFindSourceFileCountCommand(targetDir), { encoding: "utf8" }).trim();
             const numFiles = parseInt(fileCount, 10);
 
             logger.info(
@@ -1236,7 +1523,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
                 { fileCount: numFiles },
                 requestId,
               );
-              enhancedExcludePatterns.push(
+              for (const pattern of [
                 "**/test/**",
                 "**/tests/**",
                 "**/*_test.*",
@@ -1257,7 +1544,9 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
                 "**/*.min.css",
                 "**/bundle.*",
                 "**/vendor.*",
-              );
+              ]) {
+                if (!enhancedExcludePatterns.includes(pattern)) enhancedExcludePatterns.push(pattern);
+              }
             }
 
             // For extremely large codebases (>5000 files), enable incremental by default
@@ -1278,7 +1567,9 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
                   { fileCount: numFiles },
                   requestId,
                 );
-                enhancedExcludePatterns.push("__batch_processing_enabled__"); // Special marker for batch processing
+                if (!enhancedExcludePatterns.includes("__batch_processing_enabled__")) {
+                  enhancedExcludePatterns.push("__batch_processing_enabled__"); // Special marker for batch processing
+                }
               }
             } else {
               logger.info("INDEXING", "Full scan requested, batch mode disabled", { fileCount: numFiles }, requestId);
@@ -1300,6 +1591,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             payload: {
               directory: targetDir,
               incremental,
+              fullScan,
               excludePatterns: enhancedExcludePatterns,
             },
             createdAt: Date.now(),
@@ -1323,7 +1615,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             {
               directory: targetDir,
               incremental,
-              excludePatterns,
+              excludePatterns: enhancedExcludePatterns,
               entitiesFound: Array.isArray((result as any)?.entities) ? (result as any).entities.length : 0,
             },
             requestId,
@@ -1353,6 +1645,295 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           };
         }
 
+        case "batch_index": {
+          const {
+            sessionId: sessionIdArg,
+            directory: indexDir,
+            excludePatterns,
+            incremental,
+            fullScan,
+            reset,
+            maxFilesPerBatch,
+            statusOnly,
+            abort,
+          } = BatchIndexSchema.parse(args);
+
+          const enhancedExcludePatterns = mergeUniqueStrings(DEFAULT_INDEX_EXCLUDE_PATTERNS, excludePatterns);
+          const targetDir = indexDir || directory;
+
+          try {
+            ensureBatchIndexSessionsDir();
+          } catch (error) {
+            throw new Error(
+              `batch_index could not create sessions dir under tmp: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+
+          if (abort) {
+            if (!sessionIdArg) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: JSON.stringify(
+                      {
+                        success: false,
+                        error: "batch_index abort requires sessionId",
+                      },
+                      null,
+                      2,
+                    ),
+                  },
+                ],
+              };
+            }
+
+            deleteBatchIndexSession(sessionIdArg);
+            appendGlobalTmpLog("batch_index: session aborted", { sessionId: sessionIdArg });
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({ success: true, sessionId: sessionIdArg, aborted: true }, null, 2),
+                },
+              ],
+            };
+          }
+
+          let session: BatchIndexSessionState;
+
+          if (sessionIdArg) {
+            session = loadBatchIndexSession(sessionIdArg);
+          } else {
+            if (reset) {
+              const storage = await getGraphStorage(globalSQLiteManager);
+              await storage.clear();
+              logger.systemEvent("Graph storage cleared before batch_index", { directory: targetDir });
+            }
+
+            const sessionId = createBatchIndexSessionId();
+            const filesPath = getBatchIndexSessionFilesPath(sessionId);
+            const meta: BatchIndexSessionMeta = {
+              version: 1,
+              sessionId,
+              directory: targetDir,
+              excludePatterns: enhancedExcludePatterns,
+              incremental,
+              fullScan,
+              reset,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              cursor: 0,
+              totalFiles: 0,
+              filesPath,
+              stats: { batches: 0, attempted: 0, indexed: 0, skipped: 0 },
+            };
+
+            const files = collectIndexableFiles(targetDir, enhancedExcludePatterns);
+            meta.totalFiles = files.length;
+
+            safeWriteJsonFile(filesPath, files, false);
+            persistBatchIndexSessionMeta(meta);
+
+            session = { meta, files, inProgress: false };
+            batchIndexSessions.set(sessionId, session);
+
+            appendGlobalTmpLog("batch_index: session created", {
+              sessionId,
+              directory: targetDir,
+              totalFiles: files.length,
+              incremental,
+              fullScan,
+            });
+          }
+
+          if (session.inProgress) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify(
+                    {
+                      success: false,
+                      errorType: "session_busy",
+                      error: "batch_index session is already running",
+                      sessionId: session.meta.sessionId,
+                    },
+                    null,
+                    2,
+                  ),
+                },
+              ],
+            };
+          }
+
+          const total = session.meta.totalFiles;
+          const cursor = session.meta.cursor;
+          const percent = total > 0 ? Math.min(100, Math.round((cursor / total) * 10000) / 100) : 100;
+          const done = cursor >= total;
+
+          if (statusOnly || done) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify(
+                    {
+                      success: true,
+                      sessionId: session.meta.sessionId,
+                      directory: session.meta.directory,
+                      progress: { percent, cursor, totalFiles: total, done },
+                      stats: session.meta.stats,
+                      next: done
+                        ? null
+                        : {
+                            tool: "batch_index",
+                            arguments: { sessionId: session.meta.sessionId, maxFilesPerBatch },
+                          },
+                    },
+                    null,
+                    2,
+                  ),
+                },
+              ],
+            };
+          }
+
+          const batchFiles = session.files.slice(cursor, cursor + maxFilesPerBatch);
+          if (batchFiles.length === 0) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify(
+                    {
+                      success: true,
+                      sessionId: session.meta.sessionId,
+                      directory: session.meta.directory,
+                      progress: { percent: 100, cursor: total, totalFiles: total, done: true },
+                      stats: session.meta.stats,
+                      next: null,
+                    },
+                    null,
+                    2,
+                  ),
+                },
+              ],
+            };
+          }
+
+          session.inProgress = true;
+          const batchStart = Date.now();
+          try {
+            // Ensure DevAgent exists before delegating; otherwise Conductor may queue the task.
+            await getDevAgent();
+
+            const task: AgentTask = {
+              id: `batch-index-${session.meta.sessionId}-${Date.now()}`,
+              type: "index",
+              priority: 8,
+              payload: {
+                directory: session.meta.directory,
+                files: batchFiles,
+                incremental: session.meta.incremental,
+                fullScan: session.meta.fullScan,
+                excludePatterns: session.meta.excludePatterns,
+              },
+              createdAt: Date.now(),
+            };
+
+            const cond = await getConductor();
+            await cond.initialize();
+
+            const configuredTimeout = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
+            const timeoutMs = Math.min(configuredTimeout, 12000);
+            const result = await withTimeout(cond.process(task), timeoutMs, "batch_index", requestId);
+
+            const batchMs = Date.now() - batchStart;
+            const filesProcessed = (() => {
+              const r = result as any;
+              if (typeof r?.filesProcessed === "number") return r.filesProcessed;
+              if (Array.isArray(r?.results)) {
+                return r.results.reduce((sum: number, item: any) => sum + Number(item?.filesProcessed ?? 0), 0);
+              }
+              return 0;
+            })();
+            const skipped = Math.max(0, batchFiles.length - filesProcessed);
+
+            session.meta.cursor += batchFiles.length;
+            session.meta.stats.batches += 1;
+            session.meta.stats.attempted += batchFiles.length;
+            session.meta.stats.indexed += Math.max(0, filesProcessed);
+            session.meta.stats.skipped += skipped;
+            session.meta.stats.lastBatchMs = batchMs;
+            session.meta.stats.lastError = undefined;
+            persistBatchIndexSessionMeta(session.meta);
+
+            appendGlobalTmpLog("batch_index: batch processed", {
+              sessionId: session.meta.sessionId,
+              directory: session.meta.directory,
+              batchFiles: batchFiles.length,
+              filesProcessed,
+              skipped,
+              cursor: session.meta.cursor,
+              totalFiles: session.meta.totalFiles,
+              ms: batchMs,
+            });
+
+            const nextPercent =
+              session.meta.totalFiles > 0
+                ? Math.min(100, Math.round((session.meta.cursor / session.meta.totalFiles) * 10000) / 100)
+                : 100;
+            const nextDone = session.meta.cursor >= session.meta.totalFiles;
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify(
+                    {
+                      success: true,
+                      sessionId: session.meta.sessionId,
+                      directory: session.meta.directory,
+                      batch: {
+                        maxFilesPerBatch,
+                        attempted: batchFiles.length,
+                        filesProcessed,
+                        skipped,
+                        ms: batchMs,
+                      },
+                      progress: {
+                        percent: nextPercent,
+                        cursor: session.meta.cursor,
+                        totalFiles: session.meta.totalFiles,
+                        done: nextDone,
+                      },
+                      stats: session.meta.stats,
+                      result,
+                      next: nextDone
+                        ? null
+                        : {
+                            tool: "batch_index",
+                            arguments: { sessionId: session.meta.sessionId, maxFilesPerBatch },
+                          },
+                    },
+                    null,
+                    2,
+                  ),
+                },
+              ],
+            };
+          } catch (error) {
+            const errMessage = error instanceof Error ? error.message : String(error);
+            session.meta.stats.lastError = errMessage;
+            persistBatchIndexSessionMeta(session.meta);
+            appendGlobalTmpLog("batch_index: batch failed", { sessionId: session.meta.sessionId, error: errMessage });
+            throw error;
+          } finally {
+            session.inProgress = false;
+          }
+        }
+
         case "reset_graph": {
           const storage = await getGraphStorage(globalSQLiteManager);
           await storage.clear();
@@ -1380,16 +1961,16 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             await getSemanticAgent();
           }
 
+          // Ensure DevAgent exists before delegating; otherwise Conductor may queue the task.
+          await getDevAgent();
+
           // Perform index with reset semantics (already cleared), non-incremental
-          const enhancedExcludePatterns = [...(excludePatterns || [])];
+          const enhancedExcludePatterns = mergeUniqueStrings(DEFAULT_INDEX_EXCLUDE_PATTERNS, excludePatterns);
 
           // Adaptive patterns as in index tool
           try {
             const { execSync } = await import("node:child_process");
-            const fileCount = execSync(
-              `find "${targetDir}" -type f \\( -name "*.js" -o -name "*.ts" -o -name "*.py" -o -name "*.java" -o -name "*.cpp" -o -name "*.c" -o -name "*.go" -o -name "*.rs" \\) | wc -l`,
-              { encoding: "utf8" },
-            ).trim();
+            const fileCount = execSync(buildFindSourceFileCountCommand(targetDir), { encoding: "utf8" }).trim();
             const numFiles = parseInt(fileCount, 10);
             logger.info(
               "INDEXING",
@@ -1402,7 +1983,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             const projectSizeMB = Math.floor(parseInt(projectSizeBytes, 10) / (1024 * 1024));
             resourceManager.adjustForCodebaseSize(numFiles, projectSizeMB);
             if (numFiles > 2000) {
-              enhancedExcludePatterns.push(
+              for (const pattern of [
                 "**/test/**",
                 "**/tests/**",
                 "**/*_test.*",
@@ -1423,7 +2004,9 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
                 "**/*.min.css",
                 "**/bundle.*",
                 "**/vendor.*",
-              );
+              ]) {
+                if (!enhancedExcludePatterns.includes(pattern)) enhancedExcludePatterns.push(pattern);
+              }
             }
 
             if (!fullScan) {
@@ -1434,7 +2017,9 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
                   { fileCount: numFiles },
                   requestId,
                 );
-                enhancedExcludePatterns.push("__batch_processing_enabled__");
+                if (!enhancedExcludePatterns.includes("__batch_processing_enabled__")) {
+                  enhancedExcludePatterns.push("__batch_processing_enabled__");
+                }
               }
             } else {
               logger.info(
@@ -1460,6 +2045,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             payload: {
               directory: targetDir,
               incremental: false,
+              fullScan,
               excludePatterns: enhancedExcludePatterns,
             },
             createdAt: Date.now(),
@@ -2828,7 +3414,7 @@ async function main() {
   logger.systemEvent("MCP Server Ready", {
     directory,
     transport: "stdio",
-    toolsCount: 13,
+    toolsCount: 26,
     readyTime: Date.now(),
   });
 

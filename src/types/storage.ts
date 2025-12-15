@@ -296,6 +296,16 @@ export interface GraphStorage {
   updateFileInfo(info: FileInfo): Promise<void>;
   getFileInfo(path: string): Promise<FileInfo | null>;
   getOutdatedFiles(since: number): Promise<FileInfo[]>;
+  deleteFileData(
+    filePath: string,
+    options?: {
+      preserveEntityIds?: string[];
+    },
+  ): Promise<{
+    entitiesDeleted: number;
+    relationshipsDeleted: number;
+    fileInfoDeleted: number;
+  }>;
 
   // Query operations
   executeQuery(query: GraphQuery): Promise<GraphQueryResult>;

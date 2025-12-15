@@ -234,7 +234,8 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
     console.log(`[${this.id}] Using ${dimensions} dimensions for vector store`);
 
     // Initialize components
-    const dbPath = config.database?.path || "./vectors.db";
+    const defaultVectorDbPath = "./.code-graph-rag/vectors.db";
+    const dbPath = config.database?.path || defaultVectorDbPath;
     console.log(`[${this.id}] Initializing VectorStore with dbPath: ${dbPath}`);
     this.vectorStore = new VectorStore({
       dbPath: dbPath,
