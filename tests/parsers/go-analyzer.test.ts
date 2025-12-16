@@ -207,7 +207,7 @@ type Admin struct {
     expect(userIDType).toBeDefined();
 
     // Check for struct embedding relationship
-    const embedRelations = result.relationships?.filter((r) => r.type === "embeds");
+    const embedRelations = result.relationships?.filter((r) => r.type === "contains" && r.metadata?.embeddingType);
     expect(embedRelations?.length).toBeGreaterThan(0);
 
     const adminEmbeds = embedRelations?.find((r) => r.from.includes("Admin"));

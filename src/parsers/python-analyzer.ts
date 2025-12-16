@@ -1245,7 +1245,7 @@ export class PythonAnalyzer {
           const relationship: EntityRelationship = {
             from: className,
             to: baseClass,
-            type: "inherits",
+            type: "extends",
             sourceFile: context.filePath,
             metadata: {
               isDirectRelation: true,
@@ -1276,7 +1276,7 @@ export class PythonAnalyzer {
             const relationship: EntityRelationship = {
               from: `${className}.${m}`,
               to: `${base}.${m}`,
-              type: "overrides",
+              type: "references",
               sourceFile: context.filePath,
               metadata: { isDirectRelation: true },
             };

@@ -419,7 +419,7 @@ export class GoAnalyzer {
         relationships.push({
           from: methodId,
           to: `${filePath}:type:${receiverType}`,
-          type: "member_of",
+          type: "contains",
           metadata: {
             memberType: "method",
           },
@@ -562,7 +562,7 @@ export class GoAnalyzer {
           relationships.push({
             from: fieldId,
             to: structId,
-            type: "member_of",
+            type: "contains",
             metadata: {
               memberType: "field",
             },
@@ -622,7 +622,7 @@ export class GoAnalyzer {
         relationships.push({
           from: methodId,
           to: interfaceId,
-          type: "member_of",
+          type: "contains",
           metadata: {
             memberType: "method",
           },
@@ -657,7 +657,7 @@ export class GoAnalyzer {
             relationships.push({
               from: structId,
               to: `${filePath}:type:${embeddedType}`,
-              type: "embeds",
+              type: "contains",
               metadata: {
                 embeddingType: "struct",
               },

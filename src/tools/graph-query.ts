@@ -15,6 +15,7 @@ export async function queryGraphEntities(
   storage: GraphStorageImpl,
   query?: string,
   limit: number = 100,
+  offset: number = 0,
 ): Promise<{
   entities: Entity[];
   relationships: Relationship[];
@@ -27,6 +28,7 @@ export async function queryGraphEntities(
   const q = await storage.executeQuery({
     type: "entity",
     limit,
+    offset,
     filters: query
       ? {
           // Pass LIKE-compatible pattern via RegExp source consumed by storage

@@ -361,6 +361,34 @@ export class IndexerAgent extends BaseAgent {
         }
         return best?.id;
       }
+      const normalizeRelationshipType = (raw: string): RelationType | null => {
+        switch (raw) {
+          case "imports":
+            return RelationType.IMPORTS;
+          case "exports":
+            return RelationType.EXPORTS;
+          case "calls":
+            return RelationType.CALLS;
+          case "references":
+            return RelationType.REFERENCES;
+          case "contains":
+            return RelationType.CONTAINS;
+          case "extends":
+          case "inherits":
+            return RelationType.EXTENDS;
+          case "implements":
+            return RelationType.IMPLEMENTS;
+          case "depends_on":
+            return RelationType.DEPENDS_ON;
+          case "decorates":
+          case "overrides":
+          case "embeds":
+          case "member_of":
+            return RelationType.REFERENCES;
+          default:
+            return null;
+        }
+      };
       for (const rel of providedRelationships) {
         const fromId = resolveByNameAndLine(rel.from, rel.metadata?.line);
         let toId = resolveByNameAndLine(rel.to, rel.metadata?.line);
@@ -370,13 +398,14 @@ export class IndexerAgent extends BaseAgent {
           toId = `external:${src}:${rel.to}`;
         }
 
-        if (fromId && toId) {
+        const normalizedType = normalizeRelationshipType(rel.type);
+        if (fromId && toId && normalizedType) {
           relationships.push({
-            id: stableRelationshipId(fromId, toId, rel.type as any),
+            id: stableRelationshipId(fromId, toId, normalizedType),
             fromId,
             toId,
-            type: rel.type as any,
-            metadata: { line: rel.metadata?.line, context: rel.type },
+            type: normalizedType,
+            metadata: { line: rel.metadata?.line, context: rel.type, rawType: rel.type },
             createdAt: Date.now(),
           } as Relationship);
         }

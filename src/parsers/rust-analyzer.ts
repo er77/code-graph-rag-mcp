@@ -273,7 +273,7 @@ export class RustAnalyzer {
         relationships.push({
           from: `${filePath}:trait:${name}`,
           to: `${filePath}:trait:${supertrait}`,
-          type: "inherits",
+          type: "extends",
           sourceFile: filePath,
         });
       }

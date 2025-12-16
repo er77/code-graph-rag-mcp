@@ -336,7 +336,7 @@ export class JavaAnalyzer {
           relationships.push({
             from: classId,
             to: `${filePath}:class:${superclassName}`,
-            type: "inherits",
+            type: "extends",
             metadata: {
               inheritanceType: "extends",
             },
@@ -415,7 +415,7 @@ export class JavaAnalyzer {
           relationships.push({
             from: interfaceId,
             to: `${filePath}:interface:${iface.text}`,
-            type: "inherits",
+            type: "extends",
             metadata: {
               inheritanceType: "extends",
             },
@@ -500,7 +500,7 @@ export class JavaAnalyzer {
             relationships.push({
               from: constantId,
               to: enumId,
-              type: "member_of",
+              type: "contains",
               metadata: {
                 memberType: "enum_constant",
               },
@@ -586,7 +586,7 @@ export class JavaAnalyzer {
             relationships.push({
               from: componentId,
               to: recordId,
-              type: "member_of",
+              type: "contains",
               metadata: {
                 memberType: "record_component",
               },
@@ -697,7 +697,7 @@ export class JavaAnalyzer {
       relationships.push({
         from: methodId,
         to: `${filePath}:class:${parentClass}`,
-        type: "member_of",
+        type: "contains",
         metadata: {
           memberType: "method",
         },
@@ -756,7 +756,7 @@ export class JavaAnalyzer {
       relationships.push({
         from: constructorId,
         to: `${filePath}:class:${parentClass}`,
-        type: "member_of",
+        type: "contains",
         metadata: {
           memberType: "constructor",
         },
@@ -816,7 +816,7 @@ export class JavaAnalyzer {
         relationships.push({
           from: fieldId,
           to: `${filePath}:class:${parentClass}`,
-          type: "member_of",
+          type: "contains",
           metadata: {
             memberType: "field",
           },

@@ -644,7 +644,7 @@ export class KotlinAnalyzer {
     relationships.push({
       from: companionId,
       to: parentClassId,
-      type: "member_of",
+      type: "contains",
       metadata: {
         memberType: "companion",
       },
@@ -782,7 +782,7 @@ export class KotlinAnalyzer {
       relationships.push({
         from: functionId,
         to: `${filePath}:class:${this.currentClass}`,
-        type: "member_of",
+        type: "contains",
         metadata: {
           memberType: "method",
         },
@@ -794,7 +794,7 @@ export class KotlinAnalyzer {
       relationships.push({
         from: functionId,
         to: functionName,
-        type: "overrides",
+        type: "references",
         metadata: {
           methodName: functionName,
         },
@@ -936,7 +936,7 @@ export class KotlinAnalyzer {
       relationships.push({
         from: propertyId,
         to: `${filePath}:class:${this.currentClass}`,
-        type: "member_of",
+        type: "contains",
         metadata: {
           memberType: "property",
         },
@@ -1033,7 +1033,7 @@ export class KotlinAnalyzer {
         relationships.push({
           from: propertyId,
           to: `${filePath}:class:${parentClass}`,
-          type: "member_of",
+          type: "contains",
           metadata: {
             memberType: "property",
             fromConstructor: true,
@@ -1062,7 +1062,7 @@ export class KotlinAnalyzer {
     relationships.push({
       from: constructorId,
       to: `${filePath}:class:${parentClass}`,
-      type: "member_of",
+      type: "contains",
       metadata: {
         memberType: "constructor",
       },
@@ -1110,7 +1110,7 @@ export class KotlinAnalyzer {
     relationships.push({
       from: constructorId,
       to: `${filePath}:class:${this.currentClass}`,
-      type: "member_of",
+      type: "contains",
       metadata: {
         memberType: "constructor",
       },
@@ -1148,7 +1148,7 @@ export class KotlinAnalyzer {
     relationships.push({
       from: initId,
       to: `${filePath}:class:${this.currentClass}`,
-      type: "member_of",
+      type: "contains",
       metadata: {
         memberType: "init",
       },
@@ -1250,7 +1250,7 @@ export class KotlinAnalyzer {
     relationships.push({
       from: entryId,
       to: `${filePath}:class:${this.currentClass}`,
-      type: "member_of",
+      type: "contains",
       metadata: {
         memberType: "enum_entry",
       },
@@ -1435,7 +1435,7 @@ export class KotlinAnalyzer {
       relationships.push({
         from: classId,
         to: `${filePath}:class:${superclassName}`,
-        type: "inherits",
+        type: "extends",
         metadata: {
           inheritanceType: "extends",
         },

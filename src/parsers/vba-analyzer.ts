@@ -433,7 +433,7 @@ export class VbaAnalyzer {
           relationships.push({
             from: `${filePath}:type:${currentType}:field:${fieldName}`,
             to: `${filePath}:type:${currentType}`,
-            type: "member_of",
+            type: "contains",
             metadata: {
               memberType: "field",
             },

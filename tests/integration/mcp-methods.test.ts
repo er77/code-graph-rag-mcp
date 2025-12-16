@@ -12,6 +12,8 @@ describe("MCP CodeGraph Methods - Validation Tests", () => {
     "clean_index",
     "list_file_entities",
     "list_entity_relationships",
+    "resolve_entity",
+    "get_entity_source",
     "query",
     "get_metrics",
     "get_version",
@@ -32,13 +34,13 @@ describe("MCP CodeGraph Methods - Validation Tests", () => {
   ];
 
   describe("Method Count and Uniqueness", () => {
-    it("should have exactly 22 MCP methods", () => {
-      expect(ALL_MCP_METHODS).toHaveLength(22);
+    it("should have exactly 24 MCP methods", () => {
+      expect(ALL_MCP_METHODS).toHaveLength(24);
     });
 
     it("should have all unique method names", () => {
       const uniqueMethods = new Set(ALL_MCP_METHODS);
-      expect(uniqueMethods.size).toBe(22);
+      expect(uniqueMethods.size).toBe(24);
     });
 
     it("should use snake_case naming convention", () => {
@@ -50,7 +52,14 @@ describe("MCP CodeGraph Methods - Validation Tests", () => {
 
   describe("Method Categories", () => {
     const coreOps = ["index", "reset_graph", "clean_index"];
-    const queryOps = ["list_file_entities", "list_entity_relationships", "query", "get_graph"];
+    const queryOps = [
+      "list_file_entities",
+      "list_entity_relationships",
+      "resolve_entity",
+      "get_entity_source",
+      "query",
+      "get_graph",
+    ];
     const graphInfo = ["get_graph_stats", "get_graph_health", "get_metrics", "get_version"];
     const semanticOps = [
       "semantic_search",
@@ -71,8 +80,8 @@ describe("MCP CodeGraph Methods - Validation Tests", () => {
       });
     });
 
-    it("should have 4 query operations", () => {
-      expect(queryOps).toHaveLength(4);
+    it("should have 6 query operations", () => {
+      expect(queryOps).toHaveLength(6);
       queryOps.forEach((method) => {
         expect(ALL_MCP_METHODS).toContain(method);
       });
@@ -99,10 +108,10 @@ describe("MCP CodeGraph Methods - Validation Tests", () => {
       });
     });
 
-    it("categories should sum to total (3+4+4+8+3 = 22)", () => {
+    it("categories should sum to total (3+6+4+8+3 = 24)", () => {
       const totalCategorized =
         coreOps.length + queryOps.length + graphInfo.length + semanticOps.length + monitoringOps.length;
-      expect(totalCategorized).toBe(22);
+      expect(totalCategorized).toBe(24);
     });
   });
 

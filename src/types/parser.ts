@@ -483,6 +483,7 @@ export interface EntityRelationship {
 
   /** Relationship type */
   type:
+    | "extends"
     | "inherits"
     | "implements"
     | "overrides"

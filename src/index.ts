@@ -56,19 +56,26 @@ import { isFileSupported } from "./parsers/language-configs.js";
 import { getGraphStorage, initializeGraphStorage } from "./storage/graph-storage-factory.js";
 import { getSQLiteManager, type SQLiteManager } from "./storage/sqlite-manager.js";
 import { collectAgentMetrics } from "./tools/agent-metrics.js";
+import { analyzeCodeImpactTraversal } from "./tools/analyze-code-impact.js";
+import { getEntitySource } from "./tools/get-entity-source.js";
 // Import graph query functions
 import { getGraphStats, queryGraphEntities } from "./tools/graph-query.js";
+import { rerankSemanticHits } from "./tools/hybrid-ranking.js";
 import { runJscpdCloneDetection } from "./tools/jscpd.js";
 import { ingestLernaGraph } from "./tools/lerna-graph-ingest.js";
 import { getLernaProjectGraph } from "./tools/lerna-project-graph.js";
+import { listEntityRelationshipsTraversal } from "./tools/list-entity-relationships.js";
+import { resolveEntityCandidates } from "./tools/resolve-entity.js";
 import type { AgentTask } from "./types/agent.js";
 import { AgentType } from "./types/agent.js";
 import { AgentBusyError } from "./types/errors.js";
 import type { CloneGroup } from "./types/semantic.js";
 import type { Entity, GraphQuery, Relationship } from "./types/storage.js";
-import { EntityType, RelationType } from "./types/storage.js";
+import { EntityType } from "./types/storage.js";
+import { decodeCursor, encodeCursor } from "./utils/cursor.js";
 import { createRequestId, logger } from "./utils/logger.js";
 import { appendGlobalTmpLog, getGlobalTmpLogDir, getGlobalTmpLogFile } from "./utils/tmp-log.js";
+import { toolFail, toolOk } from "./utils/tool-response.js";
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -1091,15 +1098,46 @@ const ListRelationshipsToolSchema = z
     path: ["entityId"],
   });
 
+const ResolveEntitySchema = z.object({
+  name: z.string().min(1).describe("Entity name to resolve (ambiguous names may return multiple candidates)"),
+  filePathHint: z.string().optional().describe("Optional file path hint to boost matching candidates"),
+  entityTypes: z.array(z.string()).optional().describe("Optional entity types to filter to"),
+  limit: z.number().int().positive().max(50).optional().default(10).describe("Maximum candidates to return"),
+});
+
+const GetEntitySourceSchema = z
+  .object({
+    entityId: z.string().optional().describe("Exact entity ID (preferred)"),
+    entityName: z.string().optional().describe("Entity name to resolve if entityId is not provided"),
+    filePathHint: z.string().optional().describe("Optional file path hint when resolving by name"),
+    contextLines: z.number().int().min(0).max(200).optional().default(5).describe("Extra context lines before/after"),
+    maxBytes: z
+      .number()
+      .int()
+      .min(1024)
+      .max(512000)
+      .optional()
+      .default(64000)
+      .describe("Max bytes returned for snippet"),
+  })
+  .refine((value) => Boolean(value.entityId || value.entityName), {
+    message: "Provide either entityId or entityName",
+    path: ["entityId"],
+  });
+
 const QueryToolSchema = z.object({
   query: z.string().describe("Natural language or structured query"),
-  limit: z.number().describe("Maximum number of results").optional().default(10),
+  limit: z.number().describe("Maximum number of results (page size when cursor is used)").optional().default(10),
+  cursor: z.string().optional().describe("Opaque cursor for pagination"),
+  pageSize: z.number().int().positive().max(200).optional().describe("Page size (overrides limit)"),
 });
 
 // New semantic tool schemas - TASK-002
 const SemanticSearchSchema = z.object({
   query: z.string().describe("Natural language search query"),
-  limit: z.number().optional().default(10).describe("Maximum results to return"),
+  limit: z.number().optional().default(10).describe("Maximum results to return (page size when cursor is used)"),
+  cursor: z.string().optional().describe("Opaque cursor for pagination"),
+  pageSize: z.number().int().positive().max(200).optional().describe("Page size (overrides limit)"),
 });
 
 const FindSimilarCodeSchema = z.object({
@@ -1177,7 +1215,9 @@ const FindRelatedConceptsSchema = z.object({
 
 const GetGraphSchema = z.object({
   query: z.string().optional().describe("Optional search query"),
-  limit: z.number().optional().default(100).describe("Maximum entities to return"),
+  limit: z.number().optional().default(100).describe("Maximum entities to return (page size when cursor is used)"),
+  cursor: z.string().optional().describe("Opaque cursor for pagination"),
+  pageSize: z.number().int().positive().max(500).optional().describe("Page size (overrides limit)"),
 });
 
 const GetGraphStatsSchema = z.object({});
@@ -1275,145 +1315,221 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string, re
 // Keep compile-time types light for large Zod schemas (performance/memory).
 const toJsonSchema = (schema: z.ZodTypeAny) => (zodToJsonSchema as any)(schema) as any;
 
+function asMcpJson(payload: unknown) {
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify(payload, null, 2),
+      },
+    ],
+  };
+}
+
+function toolMeta(requestId: string, startTime: number, extra?: Record<string, unknown>) {
+  return { requestId, ms: Date.now() - startTime, ...extra };
+}
+
+async function collectRelationsWithin(storage: Awaited<ReturnType<typeof getGraphStorage>>, entityIds: Set<string>) {
+  const rels: Relationship[] = [];
+  const seen = new Set<string>();
+  for (const id of entityIds) {
+    const rs = await storage.getRelationshipsForEntity(id);
+    for (const r of rs) {
+      if (!entityIds.has(r.fromId) || !entityIds.has(r.toId)) continue;
+      const key = r.id || `${r.fromId}|${r.toId}|${r.type}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rels.push(r);
+    }
+  }
+  return rels;
+}
+
+function annotateStructuralMatch(summary: ReturnType<typeof mapEntitySummary>, q: string) {
+  const queryText = q.trim();
+  const qLower = queryText.toLowerCase();
+  const nameLower = String((summary as any).name ?? "").toLowerCase();
+
+  let matchType: "exact_name" | "name_contains" | "query_contains" | "unknown" = "unknown";
+  if (qLower && nameLower === qLower) matchType = "exact_name";
+  else if (qLower && nameLower.includes(qLower)) matchType = "name_contains";
+  else if (qLower?.includes(nameLower) && nameLower.length >= 3) matchType = "query_contains";
+
+  return { ...summary, matchType };
+}
+
 // Handler for listing available tools
 server.setRequestHandler(ListToolsRequestSchema as any, async () => {
   return {
     tools: [
       {
         name: "index",
-        description: "Index a codebase using multi-agent parsing and analysis",
+        description:
+          "Use when: you want a one-shot index of a repo and your client can tolerate a long-running tool call. Avoid when: strict transports may time out—use batch_index instead. Typical flow: clean_index → index or batch_index. Output: JSON status + counts; indexing is required for most graph tools.",
         inputSchema: toJsonSchema(IndexToolSchema),
       },
       {
         name: "batch_index",
         description:
-          "Index a codebase in small, resumable batches with progress reporting (avoids strict client timeouts); returns a sessionId to continue.",
+          "Use when: you need reliable indexing on strict clients/timeouts. Typical flow: batch_index(reset:true) → keep calling batch_index(sessionId) until done:true. Output: progress + stats + next arguments; returns sessionId for resumable sessions.",
         inputSchema: toJsonSchema(BatchIndexSchema),
       },
       {
         name: "list_file_entities",
         description:
-          "List parsed entities within a single file (imports, functions, classes, etc.). Use this first to discover the exact entity id for a symbol before calling list_entity_relationships or analyze_code_impact.",
+          "Use when: you have a file and need the exact entityId for follow-up graph tools. Typical flow: list_file_entities(filePath) → pick entityId → list_entity_relationships/analyze_code_impact. Output: entity list with locations/metadata; requires indexing.",
         inputSchema: toJsonSchema(ListEntitiesToolSchema),
       },
       {
         name: "list_entity_relationships",
         description:
-          "List raw graph relationships for an entity (imports, references, containment) based on the code index. Best for structural questions about a module/class; may be empty for functions or symbols if no relationships were indexed.",
+          "Use when: you need structural neighbors (imports/references/containment) for an entityId/entityName. Typical flow: list_file_entities → list_entity_relationships(depth, relationshipTypes) → analyze_code_impact. Output: entity + relationships; may be sparse if a relationship type is not indexed for that language.",
         inputSchema: toJsonSchema(ListRelationshipsToolSchema),
       },
       {
+        name: "resolve_entity",
+        description:
+          "Use when: a name is ambiguous and you need the correct entityId before deeper graph tools. Typical flow: resolve_entity(name, filePathHint) → pick entityId → get_entity_source/list_entity_relationships. Output: ranked candidates with reasons; requires indexing.",
+        inputSchema: toJsonSchema(ResolveEntitySchema),
+      },
+      {
+        name: "get_entity_source",
+        description:
+          "Use when: you need the exact source snippet for an entity to ground answers. Typical flow: resolve_entity/list_file_entities → get_entity_source(entityId, contextLines) → analyze_code_impact. Output: snippet + line ranges; requires file access and indexing.",
+        inputSchema: toJsonSchema(GetEntitySourceSchema),
+      },
+      {
         name: "query",
-        description: "Query the code graph using natural language or structured queries",
+        description:
+          "Use when: you want a best-effort hybrid answer (semantic + structural) for discovery. Typical flow: query → refine with list_file_entities/list_entity_relationships/analyze_code_impact. Output: combined semantic and structural matches (semantic may be unavailable/disabled).",
         inputSchema: toJsonSchema(QueryToolSchema),
       },
       {
         name: "get_metrics",
-        description: "Get system metrics and agent performance statistics",
+        description:
+          "Use when: you need runtime resource usage and agent queue snapshots for debugging. Typical flow: get_metrics → get_agent_metrics for deeper agent telemetry. Output: CPU/memory/resource manager + knowledge bus stats.",
         inputSchema: toJsonSchema(z.object({})),
       },
       {
         name: "get_version",
-        description: "Get MCP server version information and runtime details",
+        description:
+          "Use when: you need server version/runtime info (node/platform/memory/uptime) for debugging. Output: version + runtime details; does not require indexing.",
         inputSchema: toJsonSchema(z.object({})),
       },
       // New semantic tools - TASK-002
       {
         name: "semantic_search",
         description:
-          "Search the codebase using natural language keywords or file/module paths. Useful for discovery before diving into structural graph queries.",
+          "Use when: you want semantic discovery across the codebase. Typical flow: semantic_search → list_file_entities (for exact IDs) → list_entity_relationships. Output: ranked matches; semantic may be disabled; ground results with graph/source follow-ups.",
         inputSchema: toJsonSchema(SemanticSearchSchema),
       },
       {
         name: "find_similar_code",
-        description: "Find code similar to a given snippet using semantic analysis",
+        description:
+          "Use when: you have a snippet and want near-duplicate or conceptually similar code. Typical flow: find_similar_code → open candidate file(s) → suggest_refactoring/detect_code_clones. Output: ranked similar snippets with scores (semantic must be available).",
         inputSchema: toJsonSchema(FindSimilarCodeSchema),
       },
       {
         name: "analyze_code_impact",
         description:
-          "Analyze who depends on a given symbol and which files are affected (reverse dependency/callers view). Typical flow: list_file_entities → pick entityId of the symbol → analyze_code_impact(entityId, optional filePath hint).",
+          "Use when: you need a reverse-dependency view (who uses/depends on this). Typical flow: list_file_entities → analyze_code_impact(entityId, filePath hint) → inspect affected files. Output: dependents and affected files; requires indexing.",
         inputSchema: toJsonSchema(AnalyzeCodeImpactSchema),
       },
       {
         name: "list_module_importers",
         description:
-          "List all files and import entities that import a given module source path (e.g. ./editorWebWorker.js). Use when you care about module-level dependents rather than a specific symbol.",
+          "Use when: you care about module-level dependents (who imports ./x). Typical flow: list_module_importers(moduleSource) → inspect importer files/entities. Output: importing files/entities; requires indexing.",
         inputSchema: toJsonSchema(AnalyzeModuleDependentsSchema),
       },
       {
         name: "detect_code_clones",
-        description: "Find duplicate or similar code blocks across the codebase",
+        description:
+          "Use when: you want semantic clone groups across the codebase. Typical flow: detect_code_clones → prioritize hotspots → suggest_refactoring. Output: clone groups; consider jscpd_detect_clones for fast tokenizer-based scanning.",
         inputSchema: toJsonSchema(DetectCodeClonesSchema),
       },
       {
         name: "jscpd_detect_clones",
-        description: "Run JSCPD clone detection using a lightweight tokenizer",
+        description:
+          "Use when: you want fast, tokenizer-based duplicate detection (no embeddings). Typical flow: jscpd_detect_clones(paths, formats) → review clone blocks → refactor. Output: clone blocks with locations; best for quick duplication sweeps.",
         inputSchema: toJsonSchema(JscpdCloneDetectionSchema),
       },
       {
         name: "suggest_refactoring",
-        description: "Get refactoring suggestions for improving code quality",
+        description:
+          "Use when: you want refactoring suggestions for a file or snippet. Typical flow: identify target via semantic_search/query → suggest_refactoring(filePath, focusArea/entityId). Output: suggestions; validate against real code context.",
         inputSchema: toJsonSchema(SuggestRefactoringSchema),
       },
       {
         name: "cross_language_search",
-        description: "Search across multiple programming languages",
+        description:
+          "Use when: you want discovery constrained to specific languages. Typical flow: cross_language_search(query, languages) → open results → list_file_entities. Output: results filtered by language set; semantic must be available for best quality.",
         inputSchema: toJsonSchema(CrossLanguageSearchSchema),
       },
       {
         name: "analyze_hotspots",
-        description: "Find code hotspots based on complexity, changes, or coupling",
+        description:
+          "Use when: you want a quick list of risky areas (complexity/changes/coupling). Typical flow: analyze_hotspots(metric) → inspect top files/entities → suggest_refactoring. Output: ranked hotspots with the chosen metric.",
         inputSchema: toJsonSchema(AnalyzeHotspotsSchema),
       },
       {
         name: "find_related_concepts",
-        description: "Find conceptually related code to a given entity",
+        description:
+          "Use when: you want conceptually related code for an entity (semantic neighbors). Typical flow: list_file_entities → find_related_concepts(entityId) → open candidates. Output: related entities/snippets; semantic must be available.",
         inputSchema: toJsonSchema(FindRelatedConceptsSchema),
       },
       {
         name: "get_graph",
-        description: "Get the code graph with all entities and relationships",
+        description:
+          "Use when: you need a bounded snapshot of entities and relationships for inspection/debugging. Avoid when: exporting entire large graphs—use a query filter/limit. Output: entities + relations + stats; requires indexing.",
         inputSchema: toJsonSchema(GetGraphSchema),
       },
       {
         name: "get_graph_stats",
-        description: "Get statistics about the code graph",
+        description:
+          "Use when: you need counts/summary stats for the indexed graph. Typical flow: get_graph_stats → get_graph_health if counts look suspicious. Output: counts and DB metrics; requires indexing.",
         inputSchema: toJsonSchema(GetGraphStatsSchema),
       },
       {
         name: "lerna_project_graph",
-        description: "Generate a Lerna workspace dependency graph (if configured)",
+        description:
+          "Use when: you want a package/workspace dependency graph from Lerna config. Typical flow: lerna_project_graph(force?) → optionally ingest → query graph. Output: package DAG; may require Lerna setup in the repo.",
         inputSchema: toJsonSchema(GetLernaProjectGraphSchema),
       },
       {
         name: "reset_graph",
-        description: "Clear all graph data (entities, relationships, files)",
+        description:
+          "Use when: you need a clean slate (schema reset, corrupted index, or changing indexing config). Typical flow: reset_graph → clean_index/batch_index. Output: confirmation; destructive to indexed data.",
         inputSchema: toJsonSchema(z.object({})),
       },
       {
         name: "clean_index",
-        description: "Reset graph and then perform a full index",
+        description:
+          "Use when: you want a guaranteed clean rebuild (reset + full index). Typical flow: clean_index → query/semantic_search. Output: indexing result; may time out on strict clients—use batch_index if needed.",
         inputSchema: toJsonSchema(CleanIndexSchema),
       },
       {
         name: "get_graph_health",
-        description: "Health check for graph storage (totals + sample)",
+        description:
+          "Use when: you need to verify DB health (counts + sample read). Typical flow: get_graph_health → if unhealthy, clean_index/reset_graph. Output: health status, totals, and sample verification.",
         inputSchema: toJsonSchema(GetGraphHealthSchema),
       },
       {
         name: "get_agent_metrics",
-        description: "Collect runtime telemetry for conductor and registered agents",
+        description:
+          "Use when: you need per-agent telemetry (queues, memory, CPU) to debug slow/failed tool calls. Typical flow: get_agent_metrics → adjust concurrency/memory limits. Output: agent snapshots and coordinator metrics.",
         inputSchema: toJsonSchema(GetAgentMetricsSchema),
       },
       {
         name: "get_bus_stats",
-        description: "Inspect knowledge bus statistics (topics, entries, subscriptions)",
+        description:
+          "Use when: you need to debug caching/events and topic growth. Typical flow: get_bus_stats → clear_bus_topic for hot/large topics. Output: topic/entry/subscription counts.",
         inputSchema: toJsonSchema(GetBusStatsSchema),
       },
       {
         name: "clear_bus_topic",
-        description: "Remove cached knowledge entries for a specific topic",
+        description:
+          "Use when: you need to invalidate cached knowledge bus entries for a topic. Typical flow: get_bus_stats → clear_bus_topic(topic). Output: confirmation + updated stats.",
         inputSchema: toJsonSchema(ClearBusTopicSchema),
       },
     ],
@@ -1427,45 +1543,39 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
       const uptime = process.uptime();
       const memoryUsage = process.memoryUsage();
 
-      return {
-        content: [
+      return asMcpJson(
+        toolOk(
           {
-            type: "text",
-            text: JSON.stringify(
-              {
-                server: {
-                  name: versionInfo.name,
-                  version: versionInfo.version,
-                  description: versionInfo.description,
-                  homepage: versionInfo.homepage,
-                  repository: versionInfo.repository,
-                },
-                runtime: {
-                  nodeVersion: versionInfo.nodeVersion,
-                  platform: versionInfo.platform,
-                  arch: versionInfo.arch,
-                  pid: process.pid,
-                  uptime: {
-                    seconds: Math.floor(uptime),
-                    formatted: `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m ${Math.floor(uptime % 60)}s`,
-                  },
-                },
-                memory: {
-                  rss: `${Math.round(memoryUsage.rss / 1024 / 1024)}MB`,
-                  heapTotal: `${Math.round(memoryUsage.heapTotal / 1024 / 1024)}MB`,
-                  heapUsed: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)}MB`,
-                  external: `${Math.round(memoryUsage.external / 1024 / 1024)}MB`,
-                },
-                indexedDirectory: directory,
-                runtimeInitialized,
-                configEnvironment: config?.environment ?? null,
+            server: {
+              name: versionInfo.name,
+              version: versionInfo.version,
+              description: versionInfo.description,
+              homepage: versionInfo.homepage,
+              repository: versionInfo.repository,
+            },
+            runtime: {
+              nodeVersion: versionInfo.nodeVersion,
+              platform: versionInfo.platform,
+              arch: versionInfo.arch,
+              pid: process.pid,
+              uptime: {
+                seconds: Math.floor(uptime),
+                formatted: `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m ${Math.floor(uptime % 60)}s`,
               },
-              null,
-              2,
-            ),
+            },
+            memory: {
+              rss: `${Math.round(memoryUsage.rss / 1024 / 1024)}MB`,
+              heapTotal: `${Math.round(memoryUsage.heapTotal / 1024 / 1024)}MB`,
+              heapUsed: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)}MB`,
+              external: `${Math.round(memoryUsage.external / 1024 / 1024)}MB`,
+            },
+            indexedDirectory: directory,
+            runtimeInitialized,
+            configEnvironment: config?.environment ?? null,
           },
-        ],
-      };
+          toolMeta(requestId, startTime),
+        ),
+      );
     }
 
     await ensureRuntimeInitialized();
@@ -1627,22 +1737,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           const duration = Date.now() - startTime;
           logger.mcpResponse(name, result, duration, requestId);
 
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(
-                  {
-                    success: true,
-                    message: "Indexing completed",
-                    result,
-                  },
-                  null,
-                  2,
-                ),
-              },
-            ],
-          };
+          return asMcpJson(toolOk({ message: "Indexing completed", result }, toolMeta(requestId, startTime)));
         }
 
         case "batch_index": {
@@ -1671,33 +1766,19 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
           if (abort) {
             if (!sessionIdArg) {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: JSON.stringify(
-                      {
-                        success: false,
-                        error: "batch_index abort requires sessionId",
-                      },
-                      null,
-                      2,
-                    ),
-                  },
-                ],
-              };
+              return asMcpJson(
+                toolFail(
+                  "invalid_args",
+                  "batch_index abort requires sessionId",
+                  { tool: "batch_index", abort: true },
+                  toolMeta(requestId, startTime),
+                ),
+              );
             }
 
             deleteBatchIndexSession(sessionIdArg);
             appendGlobalTmpLog("batch_index: session aborted", { sessionId: sessionIdArg });
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: JSON.stringify({ success: true, sessionId: sessionIdArg, aborted: true }, null, 2),
-                },
-              ],
-            };
+            return asMcpJson(toolOk({ sessionId: sessionIdArg, aborted: true }, toolMeta(requestId, startTime)));
           }
 
           let session: BatchIndexSessionState;
@@ -1748,23 +1829,14 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           }
 
           if (session.inProgress) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: JSON.stringify(
-                    {
-                      success: false,
-                      errorType: "session_busy",
-                      error: "batch_index session is already running",
-                      sessionId: session.meta.sessionId,
-                    },
-                    null,
-                    2,
-                  ),
-                },
-              ],
-            };
+            return asMcpJson(
+              toolFail(
+                "session_busy",
+                "batch_index session is already running",
+                { sessionId: session.meta.sessionId },
+                toolMeta(requestId, startTime),
+              ),
+            );
           }
 
           const total = session.meta.totalFiles;
@@ -1773,53 +1845,39 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           const done = cursor >= total;
 
           if (statusOnly || done) {
-            return {
-              content: [
+            return asMcpJson(
+              toolOk(
                 {
-                  type: "text",
-                  text: JSON.stringify(
-                    {
-                      success: true,
-                      sessionId: session.meta.sessionId,
-                      directory: session.meta.directory,
-                      progress: { percent, cursor, totalFiles: total, done },
-                      stats: session.meta.stats,
-                      next: done
-                        ? null
-                        : {
-                            tool: "batch_index",
-                            arguments: { sessionId: session.meta.sessionId, maxFilesPerBatch },
-                          },
-                    },
-                    null,
-                    2,
-                  ),
+                  sessionId: session.meta.sessionId,
+                  directory: session.meta.directory,
+                  progress: { percent, cursor, totalFiles: total, done },
+                  stats: session.meta.stats,
+                  next: done
+                    ? null
+                    : {
+                        tool: "batch_index",
+                        arguments: { sessionId: session.meta.sessionId, maxFilesPerBatch },
+                      },
                 },
-              ],
-            };
+                toolMeta(requestId, startTime),
+              ),
+            );
           }
 
           const batchFiles = session.files.slice(cursor, cursor + maxFilesPerBatch);
           if (batchFiles.length === 0) {
-            return {
-              content: [
+            return asMcpJson(
+              toolOk(
                 {
-                  type: "text",
-                  text: JSON.stringify(
-                    {
-                      success: true,
-                      sessionId: session.meta.sessionId,
-                      directory: session.meta.directory,
-                      progress: { percent: 100, cursor: total, totalFiles: total, done: true },
-                      stats: session.meta.stats,
-                      next: null,
-                    },
-                    null,
-                    2,
-                  ),
+                  sessionId: session.meta.sessionId,
+                  directory: session.meta.directory,
+                  progress: { percent: 100, cursor: total, totalFiles: total, done: true },
+                  stats: session.meta.stats,
+                  next: null,
                 },
-              ],
-            };
+                toolMeta(requestId, startTime),
+              ),
+            );
           }
 
           session.inProgress = true;
@@ -1886,43 +1944,36 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
                 : 100;
             const nextDone = session.meta.cursor >= session.meta.totalFiles;
 
-            return {
-              content: [
+            return asMcpJson(
+              toolOk(
                 {
-                  type: "text",
-                  text: JSON.stringify(
-                    {
-                      success: true,
-                      sessionId: session.meta.sessionId,
-                      directory: session.meta.directory,
-                      batch: {
-                        maxFilesPerBatch,
-                        attempted: batchFiles.length,
-                        filesProcessed,
-                        skipped,
-                        ms: batchMs,
+                  sessionId: session.meta.sessionId,
+                  directory: session.meta.directory,
+                  batch: {
+                    maxFilesPerBatch,
+                    attempted: batchFiles.length,
+                    filesProcessed,
+                    skipped,
+                    ms: batchMs,
+                  },
+                  progress: {
+                    percent: nextPercent,
+                    cursor: session.meta.cursor,
+                    totalFiles: session.meta.totalFiles,
+                    done: nextDone,
+                  },
+                  stats: session.meta.stats,
+                  result,
+                  next: nextDone
+                    ? null
+                    : {
+                        tool: "batch_index",
+                        arguments: { sessionId: session.meta.sessionId, maxFilesPerBatch },
                       },
-                      progress: {
-                        percent: nextPercent,
-                        cursor: session.meta.cursor,
-                        totalFiles: session.meta.totalFiles,
-                        done: nextDone,
-                      },
-                      stats: session.meta.stats,
-                      result,
-                      next: nextDone
-                        ? null
-                        : {
-                            tool: "batch_index",
-                            arguments: { sessionId: session.meta.sessionId, maxFilesPerBatch },
-                          },
-                    },
-                    null,
-                    2,
-                  ),
                 },
-              ],
-            };
+                toolMeta(requestId, startTime),
+              ),
+            );
           } catch (error) {
             const errMessage = error instanceof Error ? error.message : String(error);
             session.meta.stats.lastError = errMessage;
@@ -1938,14 +1989,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           const storage = await getGraphStorage(globalSQLiteManager);
           await storage.clear();
           logger.systemEvent("Graph storage cleared via tool");
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify({ success: true, message: "Graph storage cleared" }, null, 2),
-              },
-            ],
-          };
+          return asMcpJson(toolOk({ message: "Graph storage cleared" }, toolMeta(requestId, startTime)));
         }
 
         case "clean_index": {
@@ -2064,22 +2108,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           const duration = Date.now() - startTime;
           logger.mcpResponse(name, result, duration, requestId);
 
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(
-                  {
-                    success: true,
-                    message: "Clean indexing completed",
-                    result,
-                  },
-                  null,
-                  2,
-                ),
-              },
-            ],
-          };
+          return asMcpJson(toolOk({ message: "Clean indexing completed", result }, toolMeta(requestId, startTime)));
         }
 
         case "list_file_entities": {
@@ -2091,14 +2120,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           if (cached.length > 0) {
             const entry = cached[0];
             if (entry && Date.now() - entry.timestamp < 60000) {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: JSON.stringify(entry.data, null, 2),
-                  },
-                ],
-              };
+              return asMcpJson(toolOk(entry.data, toolMeta(requestId, startTime, { cached: true })));
             }
           }
 
@@ -2127,19 +2149,13 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
           knowledgeBus.publish(cacheKey, response, "mcp-server", 60000);
 
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(response, null, 2),
-              },
-            ],
-          };
+          return asMcpJson(toolOk(response, toolMeta(requestId, startTime, { cached: false })));
         }
         case "list_entity_relationships": {
           const {
             entityId: directId,
             entityName,
+            depth,
             relationshipTypes,
             filePath: hintFilePath,
           } = ListRelationshipsToolSchema.parse(args);
@@ -2154,69 +2170,153 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             entity = await resolveEntityWithHint(storage, entityName ?? directId ?? "", resolvedHintPath);
           }
           if (!entity) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: JSON.stringify({ success: false, error: `Entity not found: ${entityName}` }, null, 2),
-                },
-              ],
-            };
+            return asMcpJson(
+              toolFail(
+                "not_found",
+                `Entity not found: ${entityName ?? directId ?? ""}`,
+                { entityName, entityId: directId },
+                toolMeta(requestId, startTime),
+              ),
+            );
           }
 
-          const relationships = await storage.getRelationshipsForEntity(entity.id);
-          const filtered =
-            Array.isArray(relationshipTypes) && relationshipTypes.length > 0
-              ? relationships.filter((rel) => relationshipTypes.includes(rel.type))
-              : relationships;
+          const traversal = await listEntityRelationshipsTraversal(storage, entity, { depth, relationshipTypes });
 
-          const neighborIds = new Set<string>();
-          for (const rel of filtered) {
-            neighborIds.add(rel.fromId);
-            neighborIds.add(rel.toId);
-          }
+          const nodes = Array.from(traversal.nodes.values())
+            .map((e) => mapEntitySummary(e))
+            .sort(
+              (a: any, b: any) =>
+                String(a.filePath).localeCompare(String(b.filePath)) || String(a.name).localeCompare(String(b.name)),
+            );
 
-          const neighborMap = new Map<string, Entity>();
-          neighborMap.set(entity.id, entity);
-          for (const id of neighborIds) {
-            if (neighborMap.has(id)) continue;
-            const neighbor = await storage.getEntity(id);
-            if (neighbor) {
-              neighborMap.set(id, neighbor);
-            }
-          }
-
-          return {
-            content: [
+          return asMcpJson(
+            toolOk(
               {
-                type: "text",
-                text: JSON.stringify(
-                  {
-                    entity: mapEntitySummary(entity),
-                    relationships: summarizeRelationships(filtered, neighborMap),
-                  },
-                  null,
-                  2,
-                ),
+                entity: mapEntitySummary(entity),
+                relationships: summarizeRelationships(traversal.relationships, traversal.nodes),
+                nodes,
+                depthUsed: traversal.depthUsed,
+                relationshipTypesUsed: traversal.relationshipTypesUsed,
+                stats: { nodeCount: traversal.nodes.size, edgeCount: traversal.relationships.length },
               },
-            ],
-          };
+              toolMeta(requestId, startTime),
+            ),
+          );
+        }
+
+        case "resolve_entity": {
+          const { name: rawName, filePathHint, entityTypes, limit } = ResolveEntitySchema.parse(args);
+          const storage = await getGraphStorage(globalSQLiteManager);
+          const normalizedHint = filePathHint ? normalizeInputPath(filePathHint) : undefined;
+          const normalizedTypes = normalizeEntityTypes(entityTypes);
+
+          const exactName = rawName.trim();
+          const scored = await resolveEntityCandidates({
+            storage,
+            name: exactName,
+            filePathHint: normalizedHint,
+            entityTypes: normalizedTypes,
+            limit: limit ?? 10,
+          });
+
+          return asMcpJson(
+            toolOk(
+              {
+                name: exactName,
+                filePathHint: normalizedHint ?? null,
+                entityTypes: normalizedTypes ?? null,
+                candidates: scored
+                  .slice(0, limit ?? 10)
+                  .map((c) => ({ entity: mapEntitySummary(c.entity), score: c.score, reasons: c.reasons })),
+              },
+              toolMeta(requestId, startTime),
+            ),
+          );
+        }
+
+        case "get_entity_source": {
+          const { entityId, entityName, filePathHint, contextLines, maxBytes } = GetEntitySourceSchema.parse(args);
+          const storage = await getGraphStorage(globalSQLiteManager);
+          const resolvedHintPath = filePathHint ? normalizeInputPath(filePathHint) : undefined;
+
+          let entity: Entity | null = null;
+          if (entityId) {
+            entity = await storage.getEntity(entityId);
+          }
+          if (!entity) {
+            entity = await resolveEntityWithHint(storage, entityName ?? entityId ?? "", resolvedHintPath);
+          }
+          if (!entity) {
+            return asMcpJson(
+              toolFail(
+                "not_found",
+                `Entity not found: ${entityId ?? entityName ?? ""}`,
+                { entityId: entityId ?? null, entityName: entityName ?? null, filePathHint: resolvedHintPath ?? null },
+                toolMeta(requestId, startTime),
+              ),
+            );
+          }
+
+          const targetFilePath = normalizeInputPath(entity.filePath) ?? entity.filePath;
+          try {
+            const extracted = await getEntitySource({
+              storage,
+              entity,
+              filePath: targetFilePath,
+              contextLines,
+              maxBytes,
+            });
+
+            return asMcpJson(
+              toolOk(
+                {
+                  entity: mapEntitySummary(entity),
+                  filePath: targetFilePath,
+                  entityRange: extracted.entityRange,
+                  snippetRange: extracted.snippetRange,
+                  snippet: extracted.snippet,
+                  truncated: extracted.truncated,
+                },
+                toolMeta(requestId, startTime),
+                extracted.truncated ? ["snippet_truncated"] : undefined,
+              ),
+            );
+          } catch (error) {
+            return asMcpJson(
+              toolFail(
+                "file_read_failed",
+                `Cannot read file: ${targetFilePath}`,
+                { filePath: targetFilePath, error: error instanceof Error ? error.message : String(error) },
+                toolMeta(requestId, startTime),
+              ),
+            );
+          }
         }
 
         case "query": {
-          const { query, limit } = QueryToolSchema.parse(args);
+          const { query, limit, cursor, pageSize } = QueryToolSchema.parse(args);
           await ensureSemanticsReady(1, 20000);
           const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
-          let semanticResult: unknown = [];
+          const effectivePageSize = pageSize ?? limit ?? 10;
+          const cursorState = decodeCursor<{ so?: number; go?: number }>(cursor) ?? {};
+          const semanticOffset = Math.max(0, Number(cursorState.so ?? 0) || 0);
+          const structuralOffset = Math.max(0, Number(cursorState.go ?? 0) || 0);
+
+          let semanticAll: any[] = [];
+          let semanticFailed = false;
+          let semanticProcessingTime: number | undefined;
 
           try {
             const semanticAgent = await getSemanticAgent();
-            semanticResult = await withTimeout(
-              semanticAgent.semanticSearch(query, limit),
+            const fetchLimit = Math.min(500, semanticOffset + effectivePageSize + 1);
+            const semanticResult = await withTimeout(
+              semanticAgent.semanticSearch(query, fetchLimit),
               timeoutMs,
               "query:semantic_search",
               requestId,
             );
+            semanticAll = Array.isArray(semanticResult) ? semanticResult : ((semanticResult as any)?.results ?? []);
+            semanticProcessingTime = (semanticResult as any)?.processingTime;
           } catch (error) {
             logger.warn(
               "SEMANTIC_QUERY",
@@ -2224,31 +2324,94 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
               { query, error: (error as Error).message },
               requestId,
             );
-            semanticResult = [];
+            semanticFailed = true;
+            semanticAll = [];
           }
 
           const storage = await getGraphStorage(globalSQLiteManager);
-          const structural = await queryGraphEntities(storage, query, limit ?? 10);
+          const structuralRaw = await queryGraphEntities(storage, query, effectivePageSize + 1, structuralOffset);
+          const hasMoreStructural = structuralRaw.entities.length > effectivePageSize;
+          const structuralEntitiesPage = hasMoreStructural
+            ? structuralRaw.entities.slice(0, effectivePageSize)
+            : structuralRaw.entities;
+          const structuralFileSet = new Set(
+            structuralEntitiesPage.map((e) => normalizeInputPath(e.filePath) ?? e.filePath).filter(Boolean),
+          );
+          const entityIdSet = new Set(structuralEntitiesPage.map((e) => e.id));
+          const relations = await collectRelationsWithin(storage, entityIdSet);
 
-          return {
-            content: [
+          const semanticNormalized = rerankSemanticHits(
+            semanticAll,
+            structuralFileSet,
+            (p) => normalizeInputPath(p) ?? p,
+          ).map((ranked) => {
+            const hit: any = ranked.hit as any;
+            const meta: any = hit?.metadata ?? {};
+            const rawPath = String(meta?.path ?? hit?.path ?? hit?.filePath ?? "");
+            const normalizedPath = rawPath ? (normalizeInputPath(rawPath) ?? rawPath) : "";
+            const content = String(hit?.content ?? "");
+            return {
+              id: hit?.id,
+              filePath: normalizedPath || null,
+              score: ranked.rankingSignals.semanticScore,
+              finalScore: ranked.finalScore,
+              excerpt: content ? content.slice(0, 400) : "",
+              metadata: meta ?? null,
+              rankingSignals: ranked.rankingSignals,
+              raw: hit,
+            };
+          });
+
+          const semanticSlice = semanticNormalized.slice(semanticOffset, semanticOffset + effectivePageSize);
+          const hasMoreSemantic = semanticNormalized.length > semanticOffset + effectivePageSize;
+
+          const nextCursor =
+            hasMoreSemantic || hasMoreStructural
+              ? encodeCursor({
+                  so: semanticOffset + (hasMoreSemantic ? effectivePageSize : 0),
+                  go: structuralOffset + (hasMoreStructural ? effectivePageSize : 0),
+                })
+              : null;
+
+          return asMcpJson(
+            toolOk(
               {
-                type: "text",
-                text: JSON.stringify(
-                  {
-                    semantic: semanticResult,
-                    structural: {
-                      entities: structural.entities.map((entity) => mapEntitySummary(entity)),
-                      relationships: structural.relationships.length,
-                      stats: structural.stats,
-                    },
-                  },
-                  null,
-                  2,
-                ),
+                semantic: {
+                  items: semanticSlice,
+                  nextCursor,
+                  total: semanticNormalized.length,
+                },
+                structural: {
+                  items: structuralEntitiesPage
+                    .map((entity) => annotateStructuralMatch(mapEntitySummary(entity), query))
+                    .sort(
+                      (a: any, b: any) =>
+                        String(a.filePath).localeCompare(String(b.filePath)) ||
+                        String(a.name).localeCompare(String(b.name)),
+                    ),
+                  nextCursor,
+                  total: structuralRaw.stats.totalEntities,
+                },
+                stats: {
+                  semanticFailed,
+                  semanticProcessingTime,
+                  structural: structuralRaw.stats,
+                  relationsCount: relations.length,
+                },
+                relations,
+                paging: {
+                  cursor: cursor ?? null,
+                  nextCursor,
+                  pageSize: effectivePageSize,
+                  offsets: { semanticOffset, structuralOffset },
+                  hasMoreSemantic,
+                  hasMoreStructural,
+                  semanticFailed,
+                },
               },
-            ],
-          };
+              toolMeta(requestId, startTime),
+            ),
+          );
         }
 
         case "get_metrics": {
@@ -2257,75 +2420,71 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           const cond = await getConductor();
           const conductorMetrics = cond.getMetrics();
 
-          return {
-            content: [
+          return asMcpJson(
+            toolOk(
               {
-                type: "text",
-                text: JSON.stringify(
-                  {
-                    resources: resourceStats,
-                    knowledge: knowledgeStats,
-                    conductor: conductorMetrics,
-                    agents: Array.from(cond.agents.values()).map((agent) => ({
-                      id: agent.id,
-                      type: agent.type,
-                      status: agent.status,
-                      memoryUsage: agent.getMemoryUsage(),
-                      cpuUsage: agent.getCpuUsage(),
-                      queueSize: agent.getTaskQueue().length,
-                    })),
-                  },
-                  null,
-                  2,
-                ),
+                resources: resourceStats,
+                knowledge: knowledgeStats,
+                conductor: conductorMetrics,
+                agents: Array.from(cond.agents.values()).map((agent) => ({
+                  id: agent.id,
+                  type: agent.type,
+                  status: agent.status,
+                  memoryUsage: agent.getMemoryUsage(),
+                  cpuUsage: agent.getCpuUsage(),
+                  queueSize: agent.getTaskQueue().length,
+                })),
               },
-            ],
-          };
+              toolMeta(requestId, startTime),
+            ),
+          );
         }
 
         // New semantic tool handlers - TASK-002
         case "semantic_search": {
-          const { query, limit } = SemanticSearchSchema.parse(args);
+          const { query, limit, cursor, pageSize } = SemanticSearchSchema.parse(args);
           await ensureSemanticsReady(1, 20000);
 
+          const effectivePageSize = pageSize ?? limit ?? 10;
+          const cursorState = decodeCursor<{ o?: number }>(cursor) ?? {};
+          const offset = Math.max(0, Number(cursorState.o ?? 0) || 0);
+
           // Check cache first
-          const cacheKey = `semantic:search:${query}:${limit}`;
+          const cacheKey = `semantic:search:${query}:${effectivePageSize}:${offset}`;
           const cached = knowledgeBus.query(cacheKey, 1);
           if (cached.length > 0) {
             const firstCache = cached[0];
             if (firstCache && Date.now() - firstCache.timestamp < 30000) {
               // 30s cache
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: JSON.stringify(firstCache.data, null, 2),
-                  },
-                ],
-              };
+              return asMcpJson(toolOk(firstCache.data, toolMeta(requestId, startTime, { cached: true })));
             }
           }
 
           const semanticAgent = await getSemanticAgent();
           const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
+          const fetchLimit = Math.min(500, offset + effectivePageSize + 1);
           const result = await withTimeout(
-            semanticAgent.semanticSearch(query, limit),
+            semanticAgent.semanticSearch(query, fetchLimit),
             timeoutMs,
             "semantic_search",
             requestId,
           );
 
           // Cache result
-          knowledgeBus.publish(cacheKey, result, "mcp-server", 30000);
+          const all = Array.isArray(result) ? result : ((result as any)?.results ?? []);
+          const items = all.slice(offset, offset + effectivePageSize);
+          const hasMore = all.length > offset + effectivePageSize;
+          const nextCursor = hasMore ? encodeCursor({ o: offset + effectivePageSize }) : null;
 
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(result, null, 2),
-              },
-            ],
+          const payload = {
+            query,
+            items,
+            page: { offset, pageSize: effectivePageSize, nextCursor },
+            processingTime: (result as any)?.processingTime,
           };
+
+          knowledgeBus.publish(cacheKey, payload, "mcp-server", 30000);
+          return asMcpJson(toolOk(payload, toolMeta(requestId, startTime, { cached: false })));
         }
 
         case "find_similar_code": {
@@ -2341,14 +2500,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           );
           const result = Array.isArray(sim) && limit ? sim.slice(0, limit) : sim;
 
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(result, null, 2),
-              },
-            ],
-          };
+          return asMcpJson(toolOk(result, toolMeta(requestId, startTime)));
         }
 
         // analyze_code_impact handled below (single implementation with fallback)
@@ -2396,14 +2548,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             },
           };
 
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(combined, null, 2),
-              },
-            ],
-          };
+          return asMcpJson(toolOk(combined, toolMeta(requestId, startTime)));
         }
 
         case "jscpd_detect_clones": {
@@ -2424,14 +2569,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             ignoreCase: parsed.ignoreCase,
           });
 
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(result, null, 2),
-              },
-            ],
-          };
+          return asMcpJson(toolOk(result, toolMeta(requestId, startTime)));
         }
 
         case "suggest_refactoring": {
@@ -2502,14 +2640,14 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           const fileText = await readFileSafe(targetFilePath);
 
           if (!fileText) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: JSON.stringify({ success: false, error: `Cannot read file: ${targetFilePath}` }, null, 2),
-                },
-              ],
-            };
+            return asMcpJson(
+              toolFail(
+                "file_read_failed",
+                `Cannot read file: ${targetFilePath}`,
+                { filePath: targetFilePath },
+                toolMeta(requestId, startTime),
+              ),
+            );
           }
 
           if (startLine != null && endLine != null) {
@@ -2517,49 +2655,37 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             const suggestions = await runSuggest(snippet);
             analyzed.push({ range, suggestions });
 
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: JSON.stringify(
-                    { filePath: targetFilePath, focus: { mode: "range", range }, analyzed },
-                    null,
-                    2,
-                  ),
-                },
-              ],
-            };
+            return asMcpJson(
+              toolOk(
+                { filePath: targetFilePath, focus: { mode: "range", range }, analyzed },
+                toolMeta(requestId, startTime),
+              ),
+            );
           }
 
           if (entityId) {
             const ent = await storage.getEntity(entityId);
             if (!ent) {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: JSON.stringify({ success: false, error: `Entity not found by id: ${entityId}` }, null, 2),
-                  },
-                ],
-              };
+              return asMcpJson(
+                toolFail(
+                  "not_found",
+                  `Entity not found by id: ${entityId}`,
+                  { entityId },
+                  toolMeta(requestId, startTime),
+                ),
+              );
             }
 
             const { snippet, range } = sliceByEntity(fileText, ent);
             const suggestions = await runSuggest(snippet);
             analyzed.push({ entity: mapEntitySummary(ent), range, suggestions });
 
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: JSON.stringify(
-                    { filePath: targetFilePath, focus: { mode: "entityId", entityId: ent.id }, analyzed },
-                    null,
-                    2,
-                  ),
-                },
-              ],
-            };
+            return asMcpJson(
+              toolOk(
+                { filePath: targetFilePath, focus: { mode: "entityId", entityId: ent.id }, analyzed },
+                toolMeta(requestId, startTime),
+              ),
+            );
           }
 
           if (focusArea) {
@@ -2569,18 +2695,12 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
               const suggestions = await runSuggest(snippet);
               analyzed.push({ entity: mapEntitySummary(ent), range, suggestions });
 
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: JSON.stringify(
-                      { filePath: targetFilePath, focus: { mode: "focusArea", focusArea }, analyzed },
-                      null,
-                      2,
-                    ),
-                  },
-                ],
-              };
+              return asMcpJson(
+                toolOk(
+                  { filePath: targetFilePath, focus: { mode: "focusArea", focusArea }, analyzed },
+                  toolMeta(requestId, startTime),
+                ),
+              );
             }
           }
 
@@ -2605,14 +2725,9 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             const suggestions = await runSuggest(fileText);
             analyzed.push({ range: { startIndex: 0, endIndex: Math.min(fileText.length, MAX_SNIPPET) }, suggestions });
 
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: JSON.stringify({ filePath: targetFilePath, focus: { mode: "file" }, analyzed }, null, 2),
-                },
-              ],
-            };
+            return asMcpJson(
+              toolOk({ filePath: targetFilePath, focus: { mode: "file" }, analyzed }, toolMeta(requestId, startTime)),
+            );
           }
 
           for (const ent of sorted) {
@@ -2621,18 +2736,12 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             analyzed.push({ entity: mapEntitySummary(ent), range, suggestions });
           }
 
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(
-                  { filePath: targetFilePath, focus: { mode: "auto-top-entities", count: analyzed.length }, analyzed },
-                  null,
-                  2,
-                ),
-              },
-            ],
-          };
+          return asMcpJson(
+            toolOk(
+              { filePath: targetFilePath, focus: { mode: "auto-top-entities", count: analyzed.length }, analyzed },
+              toolMeta(requestId, startTime),
+            ),
+          );
         }
 
         case "cross_language_search": {
@@ -2647,14 +2756,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             requestId,
           );
 
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(result, null, 2),
-              },
-            ],
-          };
+          return asMcpJson(toolOk(result, toolMeta(requestId, startTime)));
         }
 
         case "analyze_hotspots": {
@@ -2701,23 +2803,12 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             });
           }
 
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(
-                  {
-                    metric,
-                    limit: limit ?? 10,
-                    hotspots,
-                    sampleSize: relationshipSample.relationships.length,
-                  },
-                  null,
-                  2,
-                ),
-              },
-            ],
-          };
+          return asMcpJson(
+            toolOk(
+              { metric, limit: limit ?? 10, hotspots, sampleSize: relationshipSample.relationships.length },
+              toolMeta(requestId, startTime),
+            ),
+          );
         }
 
         case "find_related_concepts": {
@@ -2726,14 +2817,9 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           const storage = await getGraphStorage(globalSQLiteManager);
           const entity = await resolveEntity(storage, entityId);
           if (!entity) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: JSON.stringify({ success: false, error: `Entity not found: ${entityId}` }, null, 2),
-                },
-              ],
-            };
+            return asMcpJson(
+              toolFail("not_found", `Entity not found: ${entityId}`, { entityId }, toolMeta(requestId, startTime)),
+            );
           }
 
           // Read code snippet for this entity using stored location
@@ -2784,61 +2870,63 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             results = [];
           }
 
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(
-                  { entity: { id: entity.id, name: entity.name, filePath: entityFilePath }, related: results },
-                  null,
-                  2,
-                ),
-              },
-            ],
-          };
+          return asMcpJson(
+            toolOk(
+              { entity: { id: entity.id, name: entity.name, filePath: entityFilePath }, related: results },
+              toolMeta(requestId, startTime),
+            ),
+          );
         }
 
         case "get_graph": {
-          const { query, limit } = GetGraphSchema.parse(args);
+          const { query, limit, cursor, pageSize } = GetGraphSchema.parse(args);
+          const effectivePageSize = pageSize ?? limit ?? 100;
+          const cursorState = decodeCursor<{ o?: number }>(cursor) ?? {};
+          const offset = Math.max(0, Number(cursorState.o ?? 0) || 0);
 
           // Use direct database query instead of going through agents
           const storage = await getGraphStorage(globalSQLiteManager);
-          const result = await queryGraphEntities(storage, query, limit);
+          const raw = await queryGraphEntities(storage, query, effectivePageSize + 1, offset);
+          const hasMore = raw.entities.length > effectivePageSize;
+          const entities = hasMore ? raw.entities.slice(0, effectivePageSize) : raw.entities;
+          const idSet = new Set(entities.map((e) => e.id));
+          const relations = await collectRelationsWithin(storage, idSet);
 
           logger.info(
             "GRAPH_QUERY",
-            `Retrieved graph with ${result.entities.length} entities and ${result.relationships.length} relationships`,
+            `Retrieved graph with ${entities.length} entities and ${relations.length} relationships`,
             {
               query,
-              limit,
-              stats: result.stats,
+              limit: effectivePageSize,
+              offset,
+              stats: raw.stats,
             },
             requestId,
           );
 
-          return {
-            content: [
+          return asMcpJson(
+            toolOk(
               {
-                type: "text",
-                text: JSON.stringify(
-                  {
-                    entities: result.entities,
-                    relations: result.relationships,
-                    stats: {
-                      totalNodes: result.stats.totalEntities,
-                      totalRelations: result.stats.totalRelationships,
-                    },
-                  },
-                  null,
-                  2,
-                ),
+                query,
+                page: {
+                  offset,
+                  pageSize: effectivePageSize,
+                  nextCursor: hasMore ? encodeCursor({ o: offset + effectivePageSize }) : null,
+                },
+                entities,
+                relations,
+                stats: {
+                  totalNodes: raw.stats.totalEntities,
+                  totalRelations: raw.stats.totalRelationships,
+                },
               },
-            ],
-          };
+              toolMeta(requestId, startTime),
+            ),
+          );
         }
 
         case "analyze_code_impact": {
-          const { entityId, filePath: hintFilePath } = AnalyzeCodeImpactSchema.parse(args);
+          const { entityId, filePath: hintFilePath, depth } = AnalyzeCodeImpactSchema.parse(args);
           const storage = await getGraphStorage(globalSQLiteManager);
           const resolvedHintPath = hintFilePath ? normalizeInputPath(hintFilePath) : undefined;
 
@@ -2848,100 +2936,21 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           }
 
           if (!entity) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: JSON.stringify({ success: false, error: `Entity not found: ${entityId}` }, null, 2),
-                },
-              ],
-            };
+            return asMcpJson(
+              toolFail("not_found", `Entity not found: ${entityId}`, { entityId }, toolMeta(requestId, startTime)),
+            );
           }
 
-          const relationships = await storage.getRelationshipsForEntity(entity.id);
-          const directIds = new Set<string>();
-          const outboundIds = new Set<string>();
+          const traversal = await analyzeCodeImpactTraversal(storage, entity.id, depth ?? 2);
 
-          for (const rel of relationships) {
-            if (rel.toId === entity.id) {
-              directIds.add(rel.fromId);
-            }
-            if (rel.fromId === entity.id) {
-              outboundIds.add(rel.toId);
-            }
-          }
-
-          const directEntities = (await Promise.all(Array.from(directIds).map((id) => storage.getEntity(id)))).filter(
-            (e): e is Entity => Boolean(e),
-          );
-
-          const symbolDependents: Entity[] = [];
-          const symbolLikeTypes: EntityType[] = [
-            EntityType.FUNCTION,
-            EntityType.METHOD,
-            EntityType.CLASS,
-            EntityType.INTERFACE,
-            EntityType.TYPE,
-            EntityType.CONSTANT,
-            EntityType.VARIABLE,
-          ];
-
-          if (symbolLikeTypes.includes(entity.type)) {
-            try {
-              const symbolQuery = await storage.executeQuery({
-                type: "entity",
-                filters: {
-                  entityType: EntityType.IMPORT,
-
-                  name: entity.name,
-                },
-              });
-
-              const externalSymbols = symbolQuery.entities.filter(
-                (e) => e.filePath?.startsWith("external://") || (e.metadata as any)?.isExternal,
-              );
-
-              for (const symbolEntity of externalSymbols) {
-                const symbolRels = await storage.getRelationshipsForEntity(symbolEntity.id, RelationType.IMPORTS);
-                for (const rel of symbolRels) {
-                  const importerId = rel.fromId === symbolEntity.id ? rel.toId : rel.fromId;
-                  if (!importerId || importerId === entity.id) continue;
-                  const importer = await storage.getEntity(importerId);
-                  if (importer) {
-                    symbolDependents.push(importer);
-                  }
-                }
-              }
-            } catch {}
-          }
-
-          const mergedDirectMap = new Map<string, Entity>();
-          for (const e of directEntities) {
-            mergedDirectMap.set(e.id, e);
-          }
-          for (const e of symbolDependents) {
-            if (!mergedDirectMap.has(e.id)) {
-              mergedDirectMap.set(e.id, e);
-            }
-          }
-          const mergedDirectEntities = Array.from(mergedDirectMap.values());
-
-          const indirectIds = new Set<string>();
-          for (const direct of mergedDirectEntities) {
-            const rels = await storage.getRelationshipsForEntity(direct.id);
-            for (const rel of rels) {
-              const candidate = rel.fromId === direct.id ? rel.toId : rel.fromId;
-              if (candidate !== entity.id && !directIds.has(candidate)) {
-                indirectIds.add(candidate);
-              }
-            }
-          }
-
+          const directEntities = (
+            await Promise.all(Array.from(traversal.directDependents).map((id) => storage.getEntity(id)))
+          ).filter((e): e is Entity => Boolean(e));
           const indirectEntities = (
-            await Promise.all(Array.from(indirectIds).map((id) => storage.getEntity(id)))
+            await Promise.all(Array.from(traversal.transitiveDependents).map((id) => storage.getEntity(id)))
           ).filter((e): e is Entity => Boolean(e));
 
-          const visibleDirectEntities = mergedDirectEntities.filter((e) => !(e.metadata as any)?.isExternal);
+          const visibleDirectEntities = directEntities.filter((e) => !(e.metadata as any)?.isExternal);
           const visibleIndirectEntities = indirectEntities.filter((e) => !(e.metadata as any)?.isExternal);
 
           const affectedFiles = new Set<string>();
@@ -2955,7 +2964,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
           const outboundSummaries = (
             await Promise.all(
-              Array.from(outboundIds).map(async (id) => {
+              Array.from(traversal.outboundDependencies).map(async (id) => {
                 const dep = await storage.getEntity(id);
                 return dep ? mapEntitySummary(dep) : null;
               }),
@@ -2969,21 +2978,15 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             outboundDependencies: outboundSummaries,
             affectedFiles: Array.from(affectedFiles),
             riskLevel,
+            depthUsed: traversal.depthUsed,
             totals: {
               direct: visibleDirectEntities.length,
               indirect: visibleIndirectEntities.length,
-              outbound: outboundIds.size,
+              outbound: traversal.outboundDependencies.size,
             },
           };
 
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(impact, null, 2),
-              },
-            ],
-          };
+          return asMcpJson(toolOk(impact, toolMeta(requestId, startTime)));
         }
 
         case "list_module_importers": {
@@ -3015,14 +3018,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             },
           };
 
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(payload, null, 2),
-              },
-            ],
-          };
+          return asMcpJson(toolOk(payload, toolMeta(requestId, startTime)));
         }
 
         case "get_graph_stats": {
@@ -3031,14 +3027,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
           logger.info("GRAPH_STATS", "Retrieved graph statistics", stats, requestId);
 
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(stats, null, 2),
-              },
-            ],
-          };
+          return asMcpJson(toolOk(stats, toolMeta(requestId, startTime)));
         }
 
         case "lerna_project_graph": {
@@ -3075,27 +3064,20 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
               requestId,
             );
 
-            return {
-              content: [
+            return asMcpJson(
+              toolOk(
                 {
-                  type: "text",
-                  text: JSON.stringify(
-                    {
-                      success: true,
-                      cwd: result.cwd,
-                      lernaVersion: result.lernaVersion,
-                      nodeCount: Object.keys(result.graph).length,
-                      graph: result.graph,
-                      ingestSummary,
-                      cached: result.cached ?? false,
-                      force,
-                    },
-                    null,
-                    2,
-                  ),
+                  cwd: result.cwd,
+                  lernaVersion: result.lernaVersion,
+                  nodeCount: Object.keys(result.graph).length,
+                  graph: result.graph,
+                  ingestSummary,
+                  cached: result.cached ?? false,
+                  force,
                 },
-              ],
-            };
+                toolMeta(requestId, startTime),
+              ),
+            );
           }
 
           logger.warn(
@@ -3111,27 +3093,21 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             requestId,
           );
 
-          return {
-            content: [
+          return asMcpJson(
+            toolFail(
+              "lerna_graph_unavailable",
+              result.message || "Lerna project graph unavailable",
               {
-                type: "text",
-                text: JSON.stringify(
-                  {
-                    success: false,
-                    cwd: result.cwd,
-                    reason: result.reason,
-                    message: result.message,
-                    stdout: result.stdout,
-                    stderr: result.stderr,
-                    cached: result.cached ?? false,
-                    force,
-                  },
-                  null,
-                  2,
-                ),
+                cwd: result.cwd,
+                reason: result.reason,
+                stdout: result.stdout,
+                stderr: result.stderr,
+                cached: result.cached ?? false,
+                force,
               },
-            ],
-          };
+              toolMeta(requestId, startTime),
+            ),
+          );
         }
 
         case "get_graph_health": {
@@ -3167,27 +3143,21 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             requestId,
           );
 
-          return {
-            content: [
+          return asMcpJson(
+            toolOk(
               {
-                type: "text",
-                text: JSON.stringify(
-                  {
-                    healthy,
-                    reason,
-                    totals: {
-                      entities: metrics.totalEntities,
-                      relationships: metrics.totalRelationships,
-                      files: metrics.totalFiles,
-                    },
-                    sampleCount: sampleQuery.entities.length,
-                  },
-                  null,
-                  2,
-                ),
+                healthy,
+                reason,
+                totals: {
+                  entities: metrics.totalEntities,
+                  relationships: metrics.totalRelationships,
+                  files: metrics.totalFiles,
+                },
+                sampleCount: sampleQuery.entities.length,
               },
-            ],
-          };
+              toolMeta(requestId, startTime),
+            ),
+          );
         }
 
         case "get_agent_metrics": {
@@ -3202,14 +3172,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             knowledgeBus,
           });
 
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(snapshot, null, 2),
-              },
-            ],
-          };
+          return asMcpJson(toolOk(snapshot, toolMeta(requestId, startTime)));
         }
 
         case "get_bus_stats": {
@@ -3217,14 +3180,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
           const stats = knowledgeBus.getStats();
 
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(stats, null, 2),
-              },
-            ],
-          };
+          return asMcpJson(toolOk(stats, toolMeta(requestId, startTime)));
         }
 
         case "clear_bus_topic": {
@@ -3233,22 +3189,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           knowledgeBus.clearTopic(topic);
           const stats = knowledgeBus.getStats();
 
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(
-                  {
-                    success: true,
-                    topicCleared: topic,
-                    stats,
-                  },
-                  null,
-                  2,
-                ),
-              },
-            ],
-          };
+          return asMcpJson(toolOk({ topicCleared: topic, stats }, toolMeta(requestId, startTime)));
         }
 
         default:
@@ -3266,42 +3207,12 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         requestId,
       );
 
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                success: false,
-                errorType: "agent_busy",
-                error: errorMessage,
-                details: error.details,
-              },
-              null,
-              2,
-            ),
-          },
-        ],
-      };
+      return asMcpJson(toolFail("agent_busy", errorMessage, error.details, toolMeta(requestId, startTime)));
     }
 
     logger.mcpError(name, error instanceof Error ? error : new Error(errorMessage), requestId);
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(
-            {
-              success: false,
-              error: errorMessage,
-            },
-            null,
-            2,
-          ),
-        },
-      ],
-    };
+    return asMcpJson(toolFail("tool_error", errorMessage, undefined, toolMeta(requestId, startTime)));
   }
 }
 

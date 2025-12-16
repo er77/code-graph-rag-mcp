@@ -749,7 +749,7 @@ export class CppAnalyzer {
           relationships.push({
             from: derivedClass,
             to: baseClassName,
-            type: "inherits",
+            type: "extends",
             metadata: {
               access: accessSpecifier,
               isVirtual: isVirtual,

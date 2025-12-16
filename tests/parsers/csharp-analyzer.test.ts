@@ -93,14 +93,14 @@ describe("CSharpAnalyzer", () => {
       const result = await analyzer.analyze(mockNode, "test.cs");
 
       expect(result.relationships).toHaveLength(1);
-      expect(result.relationships[0].type).toBe("inherits");
+      expect(result.relationships[0].type).toBe("extends");
     });
 
     it("should extract interface implementations", async () => {
       const mockNode = createMockImplementationNode("TestClass", "ITestInterface");
       const result = await analyzer.analyze(mockNode, "test.cs");
 
-      expect(result.relationships.some((r) => r.type === "inherits")).toBe(true);
+      expect(result.relationships.some((r) => r.type === "extends")).toBe(true);
     });
   });
 

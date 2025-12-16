@@ -109,7 +109,7 @@ describe("RustAnalyzer", () => {
       const mockNode = createMockTraitExtensionNode("SubTrait", "SuperTrait");
       const result = await analyzer.analyze(mockNode, "test.rs");
 
-      expect(result.relationships.some((r) => r.type === "inherits")).toBe(true);
+      expect(result.relationships.some((r) => r.type === "extends")).toBe(true);
     });
 
     it("should extract module containment", async () => {

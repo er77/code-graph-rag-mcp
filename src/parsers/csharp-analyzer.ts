@@ -151,7 +151,7 @@ export class CSharpAnalyzer {
           relationships.push({
             from: `${filePath}:class:${name}`,
             to: `${filePath}:type:${baseType}`,
-            type: "inherits",
+            type: "extends",
             sourceFile: filePath,
             metadata: {},
           });
@@ -221,7 +221,7 @@ export class CSharpAnalyzer {
           relationships.push({
             from: `${filePath}:interface:${name}`,
             to: `${filePath}:interface:${baseInterface}`,
-            type: "inherits",
+            type: "extends",
             sourceFile: filePath,
             metadata: {},
           });
