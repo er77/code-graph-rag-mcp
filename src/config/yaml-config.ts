@@ -342,12 +342,12 @@ const DEFAULT_CONFIG: AppConfig = {
   },
   coordinator: {
     maxConcurrency: 100,
-    memoryLimit: 128,
+    memoryLimit: 1024,
     priority: 10,
     taskQueueLimit: 100,
     loadBalancingStrategy: "least-loaded",
     resourceConstraints: {
-      maxMemoryMB: 1024,
+      maxMemoryMB: 4096,
       maxCpuPercent: 80,
       maxConcurrentAgents: 10,
       maxTaskQueueSize: 100,
@@ -355,12 +355,12 @@ const DEFAULT_CONFIG: AppConfig = {
   },
   conductor: {
     maxConcurrency: 100,
-    memoryLimit: 128,
+    memoryLimit: 1024,
     priority: 10,
     taskQueueLimit: 100,
     loadBalancingStrategy: "least-loaded",
     resourceConstraints: {
-      maxMemoryMB: 1024,
+      maxMemoryMB: 4096,
       maxCpuPercent: 80,
       maxConcurrentAgents: 10,
       maxTaskQueueSize: 100,

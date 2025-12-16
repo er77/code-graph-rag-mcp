@@ -37,7 +37,7 @@ type CoordinatorConfigOverrides = Partial<Omit<CoordinatorConfig, "resourceConst
 };
 
 const DEFAULT_RESOURCE_CONSTRAINTS: ResourceConstraints = {
-  maxMemoryMB: 1024,
+  maxMemoryMB: 4096,
   maxCpuPercent: 80,
   maxConcurrentAgents: 10,
   maxTaskQueueSize: 100,
@@ -48,7 +48,7 @@ const DEFAULT_COORDINATOR_CONFIG: CoordinatorConfig = {
   taskQueueLimit: 100,
   loadBalancingStrategy: "least-loaded",
   maxConcurrency: 100,
-  memoryLimit: 128,
+  memoryLimit: 1024,
   priority: 10,
 };
 
@@ -282,13 +282,17 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
   }
 
   private checkResourceAvailability(): boolean {
-    const totalMemory = Array.from(this.agents.values()).reduce((sum, agent) => sum + agent.getMemoryUsage(), 0);
-
-    const totalCpu = Array.from(this.agents.values()).reduce((sum, agent) => sum + agent.getCpuUsage(), 0);
+    // All agents currently run in the same Node.js process, so summing per-agent memory/cpu
+    // overcounts shared process usage (each agent reports process metrics).
+    const memUsedMb = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+    const maxCpuPercent = Array.from(this.agents.values()).reduce(
+      (max, agent) => Math.max(max, agent.getCpuUsage()),
+      0,
+    );
 
     return (
-      totalMemory < this.config.resourceConstraints.maxMemoryMB &&
-      totalCpu < this.config.resourceConstraints.maxCpuPercent
+      memUsedMb < this.config.resourceConstraints.maxMemoryMB &&
+      maxCpuPercent < this.config.resourceConstraints.maxCpuPercent
     );
   }
 

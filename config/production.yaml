@@ -114,12 +114,12 @@ semanticAgent:
 # Coordinator Agent Configuration
 coordinator:
   maxConcurrency: 120
-  memoryLimit: 128
+  memoryLimit: 1024
   priority: 10
   taskQueueLimit: 120
   loadBalancingStrategy: "least-loaded"
   resourceConstraints:
-    maxMemoryMB: 2048
+    maxMemoryMB: 4096
     maxCpuPercent: 80
     maxConcurrentAgents: 10
     maxTaskQueueSize: 120
@@ -127,12 +127,12 @@ coordinator:
 # Conductor Orchestrator Configuration
 conductor:
   maxConcurrency: 120
-  memoryLimit: 128
+  memoryLimit: 1024
   priority: 10
   taskQueueLimit: 120
   loadBalancingStrategy: "least-loaded"
   resourceConstraints:
-    maxMemoryMB: 2048
+    maxMemoryMB: 4096
     maxCpuPercent: 80
     maxConcurrentAgents: 10
     maxTaskQueueSize: 120

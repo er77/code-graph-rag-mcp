@@ -213,6 +213,10 @@ export MCP_SEMANTIC_WARMUP_LIMIT=25
   If you must see logs on stdout for local debugging, set `MCP_STDIO_ALLOW_STDOUT_LOGS=1` (not recommended for strict clients).
   If startup still fails, check the global tmp log mirror: `/tmp/code-graph-rag-mcp/mcp-server-YYYY-MM-DD.log` (Linux/macOS; uses `os.tmpdir()`).
 
+- **`batch_index` fails with `agent_busy` / `memory_limit`**  
+  Increase the coordinator/conductor limits (these gate task routing in-process): set `COORDINATOR_MEMORY_LIMIT` / `CONDUCTOR_MEMORY_LIMIT` and `COORDINATOR_MAX_MEMORY_MB` / `CONDUCTOR_MAX_MEMORY_MB`, or edit `config/default.yaml`.  
+  If you see a real Node.js OOM, also start the server with a larger heap, e.g. `NODE_OPTIONS="--max-old-space-size=4096" code-graph-rag-mcp`.
+
 - **Database location / multi-repo isolation**
   By default, the server stores its SQLite DB under `./.code-graph-rag/vectors.db` (per repo). Add `/.code-graph-rag/` to your project’s `.gitignore`.
 

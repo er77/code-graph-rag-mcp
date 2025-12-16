@@ -74,7 +74,7 @@ type ConductorConfigOverrides = Partial<Omit<ConductorConfig, "resourceConstrain
 };
 
 const DEFAULT_RESOURCE_CONSTRAINTS: ResourceConstraints = {
-  maxMemoryMB: 1024,
+  maxMemoryMB: 4096,
   maxCpuPercent: 80,
   maxConcurrentAgents: 10,
   maxTaskQueueSize: 100,
@@ -87,7 +87,7 @@ const DEFAULT_CONDUCTOR_CONFIG: ConductorConfig = {
   complexityThreshold: 8,
   mandatoryDelegation: true,
   maxConcurrency: 100,
-  memoryLimit: 128,
+  memoryLimit: 1024,
   priority: 10,
 };
 

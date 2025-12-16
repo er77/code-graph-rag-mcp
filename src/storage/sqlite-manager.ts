@@ -82,7 +82,7 @@ export class SQLiteManager {
 
   constructor(config: SQLiteConfig = {}) {
     this.config = {
-      path: config.path || DEFAULT_DB_PATH,
+      path: config.path || process.env.DATABASE_PATH || DEFAULT_DB_PATH,
       readonly: config.readonly || false,
       memory: config.memory || false,
       verbose: config.verbose || false,
@@ -242,14 +242,18 @@ export class SQLiteManager {
   private applyOptimizations(): void {
     if (!this.db) throw new Error("Database not initialized");
 
-    // WAL mode for concurrent reads during writes
-    this.db.pragma("journal_mode = WAL");
+    // Read-only connections cannot run many PRAGMAs that mutate connection or database state.
+    if (this.config.readonly) {
+      try {
+        this.db.pragma("foreign_keys = ON");
+      } catch {
+        // Best-effort: some SQLite builds may disallow PRAGMA changes in readonly mode.
+      }
+      return;
+    }
 
     // 64MB cache for better performance
     this.db.pragma(`cache_size = -${CACHE_SIZE_KB}`);
-
-    // NORMAL synchronous for balance between safety and speed
-    this.db.pragma("synchronous = NORMAL");
 
     // Store temp tables in memory
     this.db.pragma("temp_store = MEMORY");
@@ -257,11 +261,20 @@ export class SQLiteManager {
     // Memory-mapped I/O for faster access
     this.db.pragma(`mmap_size = ${MMAP_SIZE}`);
 
-    // 4KB page size (optimal for most systems)
-    this.db.pragma(`page_size = ${PAGE_SIZE}`);
+    // WAL mode and related PRAGMAs require a writable connection.
+    if (!this.config.readonly && !this.config.memory) {
+      // WAL mode for concurrent reads during writes
+      this.db.pragma("journal_mode = WAL");
 
-    // Auto-checkpoint WAL after 1000 pages
-    this.db.pragma(`wal_autocheckpoint = ${WAL_AUTOCHECKPOINT}`);
+      // NORMAL synchronous for balance between safety and speed
+      this.db.pragma("synchronous = NORMAL");
+
+      // 4KB page size (optimal for most systems)
+      this.db.pragma(`page_size = ${PAGE_SIZE}`);
+
+      // Auto-checkpoint WAL after 1000 pages
+      this.db.pragma(`wal_autocheckpoint = ${WAL_AUTOCHECKPOINT}`);
+    }
 
     // Enable foreign key constraints
     this.db.pragma("foreign_keys = ON");
