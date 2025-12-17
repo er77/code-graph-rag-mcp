@@ -1,11 +1,11 @@
-# Release Notes (Consolidated) — `@er77/code-graph-rag-mcp` v2.7.9 → v2.7.15
+# Release Notes (Consolidated) — `@er77/code-graph-rag-mcp` v2.7.9 → v2.7.18
 
 This file consolidates recent release notes into a single document for easier tracking.
 
 ## Install / Upgrade (latest)
 
-- npm: `npm install -g @er77/code-graph-rag-mcp@2.7.15`
-- local artifact: `npm install -g ./er77-code-graph-rag-mcp-2.7.15.tgz` (if present)
+- npm: `npm install -g @er77/code-graph-rag-mcp@2.7.18`
+- local artifact: `npm install -g ./er77-code-graph-rag-mcp-2.7.18.tgz` (if present)
 
 Node.js: `>=24`
 
@@ -14,6 +14,19 @@ Node.js: `>=24`
 ## v2.7.15 (2025-12-17)
 
 - Maintenance release (version bump + rebuild).
+
+## v2.7.16 (2025-12-17)
+
+- Timeout defaults: raise MCP tool-call timeouts to 600s in code defaults and shipped YAML configs to avoid premature `clean_index` / `batch_index` failures on larger repos.
+
+## v2.7.17 (2025-12-17)
+
+- Docs: refresh contributor guidelines (`AGENTS.md`) and update consolidated release notes.
+
+## v2.7.18 (2025-12-17)
+
+- Indexing: stop excluding Markdown by default; `.md` / `.mdx` are now discoverable via `index`, `clean_index`, and `batch_index`.
+- Diagnostics: log file-discovery stats for `batch_index` sessions and reduce false-positive “Agent heartbeat stale” warnings when agents are idle.
 
 ## v2.7.14 (2025-12-17)
 
@@ -58,4 +71,3 @@ Reliability release focused on stricter MCP clients and big repos:
 - Incremental indexing: `incremental:true` reindexes only changed files and safely replaces per-file graph rows.
 - Vector DB location: YAML supports `~` and defaults were improved for predictable paths.
 - Graph query fix: RegExp name filtering supports exact `^...$` and substring matches (unblocks relationship tools).
-

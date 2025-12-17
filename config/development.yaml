@@ -19,11 +19,11 @@ mcp:
   server:
     host: "localhost"       # Local development only
     port: 3000             # Standard development port
-    timeout: 15000         # Shorter timeout for quick feedback
+    timeout: 600000        # 600 seconds default timeout
     
   agents:
     maxConcurrent: 10      # Allow sufficient agents for parallel operations
-    defaultTimeout: 5000   # Quick timeout for development
+    defaultTimeout: 600000 # 600 seconds default timeout
     useParser: true        # Enable ParserAgent for AST parsing (MCP_USE_PARSER)
     devIndexBatch: 100     # Batch size for file processing (MCP_DEV_INDEX_BATCH)
 

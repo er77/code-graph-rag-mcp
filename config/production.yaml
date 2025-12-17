@@ -23,11 +23,11 @@ mcp:
   server:
     host: "0.0.0.0"     # Accept connections from any interface
     port: 8080          # Standard HTTP port for containers
-    timeout: 60000      # 60 seconds timeout for production workloads
+    timeout: 600000     # 600 seconds timeout for production workloads
     
   agents:
     maxConcurrent: 10   # Higher concurrency for production
-    defaultTimeout: 30000  # 30 seconds for complex operations
+    defaultTimeout: 600000 # 600 seconds for complex operations
     useParser: true     # Enable ParserAgent for AST parsing (MCP_USE_PARSER)
     devIndexBatch: 100  # Batch size for file processing (MCP_DEV_INDEX_BATCH)
 

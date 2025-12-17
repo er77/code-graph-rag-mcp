@@ -242,12 +242,12 @@ const DEFAULT_CONFIG: AppConfig = {
     server: {
       host: "localhost",
       port: 3000,
-      timeout: 30000,
+      timeout: 600000,
     },
     agents: {
       // Allow more registered agents by default; conductor still reuses by type
       maxConcurrent: 12,
-      defaultTimeout: 15000,
+      defaultTimeout: 600000,
       useParser: true, // MCP_USE_PARSER: Enable ParserAgent by default
       devIndexBatch: 100, // MCP_DEV_INDEX_BATCH: Default batch size for indexing
     },

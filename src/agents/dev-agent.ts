@@ -8,6 +8,7 @@ import { lstatSync, readdirSync } from "node:fs";
 import { extname, join } from "node:path";
 import { ConfigLoader, getConfig } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
+import { isFileSupported } from "../parsers/language-configs.js";
 import { getGraphStorage } from "../storage/graph-storage-factory.js";
 import { getSQLiteManager } from "../storage/sqlite-manager.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
@@ -16,22 +17,6 @@ import { BaseAgent } from "./base.js";
 import { IndexerAgent } from "./indexer-agent.js";
 // Temporarily disable ParserAgent due to web-tree-sitter ESM issues
 import { ParserAgent } from "./parser-agent.js";
-
-const SUPPORTED_CODE_EXTENSIONS = [
-  ".js",
-  ".ts",
-  ".jsx",
-  ".tsx",
-  ".py",
-  ".java",
-  ".kt",
-  ".kts",
-  ".cpp",
-  ".c",
-  ".go",
-  ".rs",
-  ".cs",
-] as const;
 
 function getDevAgentConfig() {
   const config = getConfig();
@@ -364,14 +349,11 @@ export class DevAgent extends BaseAgent {
           const relationships: any[] = [];
 
           for (const file of batch) {
-            const extWithDot = extname(file).toLowerCase();
-            if (!SUPPORTED_CODE_EXTENSIONS.includes(extWithDot as (typeof SUPPORTED_CODE_EXTENSIONS)[number])) {
-              continue;
-            }
+            if (!isFileSupported(file)) continue;
 
             const fileName = file.split("/").pop() || "unknown";
             const fileNameNoExt = fileName.replace(/\.[^/.]+$/, "");
-            const ext = extWithDot.slice(1);
+            const ext = extname(file).toLowerCase().slice(1);
 
             // file entity
             entities.push({
@@ -542,6 +524,17 @@ export class DevAgent extends BaseAgent {
       "backup",
     ]);
     const agentId = this.id; // Capture this.id for use in nested function
+    const stats = {
+      scannedEntries: 0,
+      scannedFiles: 0,
+      includedFiles: 0,
+      excludedByPatterns: 0,
+      excludedByPruneDir: 0,
+      excludedHiddenDir: 0,
+      skippedSymlinks: 0,
+      unsupportedExtensions: 0,
+      unreadableDirs: 0,
+    };
 
     function shouldExclude(path: string): boolean {
       for (const pattern of excludePatterns) {
@@ -559,39 +552,52 @@ export class DevAgent extends BaseAgent {
       try {
         const items = readdirSync(dir);
         for (const item of items) {
+          stats.scannedEntries += 1;
           const fullPath = join(dir, item);
 
-          if (shouldExclude(fullPath)) continue;
+          if (shouldExclude(fullPath)) {
+            stats.excludedByPatterns += 1;
+            continue;
+          }
 
           const lstat = lstatSync(fullPath, { throwIfNoEntry: false });
           if (!lstat) {
             continue;
           }
           if (lstat.isSymbolicLink()) {
+            stats.skippedSymlinks += 1;
             continue;
           }
 
           if (lstat.isDirectory()) {
             const lowerItem = item.toLowerCase();
             if (defaultExcludedDirNames.has(lowerItem)) {
+              stats.excludedByPruneDir += 1;
               continue;
             }
             if (!item.startsWith(".")) {
               walkDir(fullPath);
+            } else {
+              stats.excludedHiddenDir += 1;
             }
           } else if (lstat.isFile()) {
-            const ext = extname(fullPath).toLowerCase();
-            if (SUPPORTED_CODE_EXTENSIONS.includes(ext as (typeof SUPPORTED_CODE_EXTENSIONS)[number])) {
-              files.push(fullPath);
+            stats.scannedFiles += 1;
+            if (!isFileSupported(fullPath)) {
+              stats.unsupportedExtensions += 1;
+              continue;
             }
+            files.push(fullPath);
+            stats.includedFiles += 1;
           }
         }
       } catch (error) {
+        stats.unreadableDirs += 1;
         console.error(`[DevAgent ${agentId}] Error reading directory ${dir}:`, error);
       }
     }
 
     walkDir(directory);
+    console.log(`[DevAgent ${this.id}] File discovery stats:`, stats);
     return files;
   }
 

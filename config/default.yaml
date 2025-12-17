@@ -19,11 +19,11 @@ mcp:
   server:
     host: "localhost"
     port: 3000
-    timeout: 30000      # 30 seconds
+    timeout: 600000     # 600 seconds
     
   agents:
     maxConcurrent: 5    # Maximum concurrent agent operations
-    defaultTimeout: 10000  # 10 seconds default timeout for agent tasks
+    defaultTimeout: 600000 # 600 seconds default timeout for agent tasks
     useParser: true     # Enable ParserAgent for AST parsing (MCP_USE_PARSER)
     devIndexBatch: 100  # Batch size for file processing (MCP_DEV_INDEX_BATCH)
 

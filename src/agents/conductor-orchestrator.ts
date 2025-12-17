@@ -753,7 +753,9 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
         const metrics: any = (agent as any).getMetrics ? (agent as any).getMetrics() : undefined;
         const last = metrics?.lastActivity ?? Date.now();
         this.agentLastSeen.set(agentId, last);
-        if (Date.now() - last > this.AGENT_STALE_MS) {
+        const queueLen = agent.getTaskQueue().length;
+        const shouldAlert = agent.status !== AgentStatus.IDLE || queueLen > 0;
+        if (shouldAlert && Date.now() - last > this.AGENT_STALE_MS) {
           logger.incident("Agent heartbeat stale", { agentId, lastActivity: last });
         }
       } catch {

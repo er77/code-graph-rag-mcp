@@ -186,7 +186,6 @@ vectors.db-wal
 
 /.github
 /.codex
-AGENTS.md
 /tmp
 /tmp
 /.memory_bank/logs_llm
@@ -204,3 +203,5 @@ data/query_cache.db-shm
 vectors.db-shm
 vectors.db-wal
 vectors.db-shm
+/excel_plugins
+*.md
