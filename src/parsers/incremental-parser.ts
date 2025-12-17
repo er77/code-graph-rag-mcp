@@ -437,6 +437,7 @@ export class IncrementalParser {
    */
   private detectLanguage(filePath: string): SupportedLanguage {
     const ext = extname(filePath).toLowerCase();
+    if (ext === ".md" || ext === ".mdx") return "markdown";
     if (ext === ".ts" || ext === ".tsx") return "typescript";
     if (ext === ".js" || ext === ".jsx" || ext === ".mjs" || ext === ".cjs") return "javascript";
     if (ext === ".py" || ext === ".pyi" || ext === ".pyw") return "python";

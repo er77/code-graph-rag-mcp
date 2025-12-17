@@ -36,6 +36,8 @@ export enum EntityType {
   METHOD = "method",
   INTERFACE = "interface",
   TYPE = "type",
+  DOCUMENT = "document",
+  HEADING = "heading",
   IMPORT = "import",
   EXPORT = "export",
   VARIABLE = "variable",

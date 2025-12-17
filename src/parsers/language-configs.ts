@@ -39,6 +39,10 @@ export const FILE_EXTENSIONS: Record<string, SupportedLanguage> = {
   jsx: "jsx",
   tsx: "tsx",
 
+  // Markdown
+  md: "markdown",
+  mdx: "markdown",
+
   // Python
   py: "python",
   pyi: "python",
@@ -94,6 +98,14 @@ export const LANGUAGE_KEYWORDS: Record<
     types: string[];
   }
 > = {
+  markdown: {
+    functions: [],
+    classes: [],
+    imports: [],
+    exports: [],
+    types: [],
+  },
+
   javascript: {
     functions: ["function", "async", "generator", "=>"],
     classes: ["class", "constructor", "extends"],
@@ -488,6 +500,32 @@ const TSX_CONFIG: LanguageConfig = {
   nodeTypes: {
     ...TYPESCRIPT_CONFIG.nodeTypes,
     functions: [...TYPESCRIPT_CONFIG.nodeTypes.functions, "jsx_element", "jsx_self_closing_element"],
+  },
+};
+
+/**
+ * Markdown configuration (lightweight; parsing handled by MarkdownAnalyzer)
+ */
+const MARKDOWN_CONFIG: LanguageConfig = {
+  language: "markdown",
+  extensions: ["md", "mdx"],
+  keywords: LANGUAGE_KEYWORDS.markdown,
+  nodeTypes: {
+    functions: [],
+    classes: [],
+    methods: [],
+    imports: [],
+    exports: [],
+    variables: [],
+    types: [],
+    interfaces: [],
+  },
+  extractors: {
+    extractName: () => ["identifier"],
+    extractModifiers: () => [],
+    extractParameters: false,
+    extractReturnType: false,
+    extractReferences: false,
   },
 };
 
@@ -1305,6 +1343,7 @@ export const LANGUAGE_CONFIGS: Record<SupportedLanguage, LanguageConfig> = {
   typescript: TYPESCRIPT_CONFIG,
   jsx: JSX_CONFIG,
   tsx: TSX_CONFIG,
+  markdown: MARKDOWN_CONFIG,
   python: PYTHON_CONFIG,
   c: C_CONFIG,
   cpp: CPP_CONFIG,

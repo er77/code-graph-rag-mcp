@@ -25,6 +25,7 @@ export const SUPPORTED_LANGUAGES = [
   "typescript",
   "tsx",
   "jsx",
+  "markdown",
   "python",
   "c",
   "cpp",
@@ -108,6 +109,8 @@ export interface ParsedEntity {
     | "method"
     | "interface"
     | "type"
+    | "document"
+    | "heading"
     | "import"
     | "export"
     | "variable"

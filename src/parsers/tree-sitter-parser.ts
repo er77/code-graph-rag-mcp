@@ -21,6 +21,7 @@ import { CSharpAnalyzer } from "./csharp-analyzer.js";
 import { GoAnalyzer } from "./go-analyzer.js";
 import { JavaAnalyzer } from "./java-analyzer.js";
 import { KotlinAnalyzer } from "./kotlin-analyzer.js";
+import { MarkdownAnalyzer } from "./markdown-analyzer.js";
 import { createPythonAnalyzer } from "./python-analyzer.js";
 import { RustAnalyzer } from "./rust-analyzer.js";
 import { VbaAnalyzer } from "./vba-analyzer.js";
@@ -124,6 +125,9 @@ function detectLanguage(filePath: string): SupportedLanguage {
       return "tsx";
     case "jsx":
       return "jsx";
+    case "md":
+    case "mdx":
+      return "markdown";
     case "py":
     case "pyi":
     case "pyw":
@@ -186,6 +190,7 @@ export class TreeSitterParser {
   private javaAnalyzer = new JavaAnalyzer();
   private kotlinAnalyzer = new KotlinAnalyzer();
   private vbaAnalyzer = new VbaAnalyzer();
+  private markdownAnalyzer = new MarkdownAnalyzer();
 
   private cacheHits = 0;
   private cacheMisses = 0;
@@ -291,6 +296,29 @@ export class TreeSitterParser {
         contentHash,
         timestamp: Date.now(),
         parseTimeMs,
+        fromCache: false,
+      };
+      if (relationships.length) {
+        (result as any).relationships = relationships;
+      }
+      return result;
+    }
+
+    if (language === "markdown") {
+      const md = this.markdownAnalyzer.analyze(content, filePath);
+      const entities = (md.entities || []).map((e) => ({ ...e, language }));
+      const relationships = md.relationships || [];
+
+      this.cacheMisses++;
+      this.setCache(cacheKey, { tree: null, entities, hash: internalHash, timestamp: Date.now(), relationships });
+
+      const result: ParseResult = {
+        filePath,
+        language,
+        entities,
+        contentHash,
+        timestamp: Date.now(),
+        parseTimeMs: Date.now() - startTime,
         fromCache: false,
       };
       if (relationships.length) {
