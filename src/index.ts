@@ -3168,6 +3168,17 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.log("MCP server running on stdio transport");
+
+  // Exit when the MCP client disconnects (closes stdin). Without this, the
+  // process keeps the event loop alive forever — leaking one node process per
+  // session when the server is launched via `docker exec -i`, which does not
+  // propagate client disconnect to the in-container process.
+  const exitOnStdinClose = (reason: string) => {
+    logger.systemEvent("MCP Server Stdin Closed — Exiting", { reason });
+    process.exit(0);
+  };
+  process.stdin.on("end", () => exitOnStdinClose("stdin end"));
+  process.stdin.on("close", () => exitOnStdinClose("stdin close"));
   logger.systemEvent("MCP Server Ready", {
     directory,
     transport: "stdio",
